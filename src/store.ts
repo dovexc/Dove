@@ -1,20 +1,38 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Game, NewGame } from "./types";
+import type { Game, NewGame, UpdateGame, SteamGame } from "./types";
 
 interface LibraryState {
   games: Game[];
   selectedGameId: number | null;
   isAddDialogOpen: boolean;
+  editingGameId: number | null;
+  deletingGameId: number | null;
+  isSteamImportOpen: boolean;
+  steamGames: SteamGame[];
+  steamScanError: string | null;
+  steamScanLoading: boolean;
+  contextMenu: { game: Game; x: number; y: number } | null;
   error: string | null;
   fetchGames: () => Promise<void>;
   addGame: (game: NewGame) => Promise<void>;
   launchGame: (id: number) => Promise<void>;
-  deleteGame: (id: number) => Promise<void>;
+  editGame: (id: number, game: UpdateGame) => Promise<void>;
+  deleteGame: (id: number, deleteFiles: boolean) => Promise<void>;
   selectGame: (id: number | null) => void;
   openAddDialog: () => void;
   closeAddDialog: () => void;
+  openEditDialog: (id: number) => void;
+  closeEditDialog: () => void;
+  openDeleteDialog: (id: number) => void;
+  closeDeleteDialog: () => void;
+  openSteamImport: () => Promise<void>;
+  closeSteamImport: () => void;
+  importSteamGames: (games: SteamGame[]) => Promise<void>;
+  openContextMenu: (game: Game, x: number, y: number) => void;
+  closeContextMenu: () => void;
+  reportError: (message: string) => void;
   clearError: () => void;
 }
 
@@ -22,6 +40,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   games: [],
   selectedGameId: null,
   isAddDialogOpen: false,
+  editingGameId: null,
+  deletingGameId: null,
+  isSteamImportOpen: false,
+  steamGames: [],
+  steamScanError: null,
+  steamScanLoading: false,
+  contextMenu: null,
   error: null,
 
   fetchGames: async () => {
@@ -52,12 +77,23 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
   },
 
-  deleteGame: async (id) => {
+  editGame: async (id, game) => {
     try {
-      await invoke("delete_game", { id });
+      await invoke<Game>("update_game", { id, updatedGame: game });
+      await get().fetchGames();
+      set({ editingGameId: null });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  deleteGame: async (id, deleteFiles) => {
+    try {
+      await invoke("delete_game", { id, deleteFiles });
       if (get().selectedGameId === id) {
         set({ selectedGameId: null });
       }
+      set({ deletingGameId: null });
       await get().fetchGames();
     } catch (e) {
       set({ error: String(e) });
@@ -67,6 +103,53 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   selectGame: (id) => set({ selectedGameId: id }),
   openAddDialog: () => set({ isAddDialogOpen: true }),
   closeAddDialog: () => set({ isAddDialogOpen: false }),
+  openEditDialog: (id) => set({ editingGameId: id }),
+  closeEditDialog: () => set({ editingGameId: null }),
+  openDeleteDialog: (id) => set({ deletingGameId: id }),
+  closeDeleteDialog: () => set({ deletingGameId: null }),
+
+  openSteamImport: async () => {
+    set({
+      isSteamImportOpen: true,
+      steamScanLoading: true,
+      steamScanError: null,
+      steamGames: [],
+    });
+    try {
+      const steamGames = await invoke<SteamGame[]>("find_steam_games");
+      set({ steamGames, steamScanLoading: false });
+    } catch (e) {
+      set({ steamScanError: String(e), steamScanLoading: false });
+    }
+  },
+
+  closeSteamImport: () => set({ isSteamImportOpen: false }),
+
+  importSteamGames: async (games) => {
+    try {
+      for (const game of games) {
+        await invoke<Game>("add_game", {
+          newGame: {
+            name: game.name,
+            exe_path: `steam://rungameid/${game.appid}`,
+            cover_path: game.cover_path,
+            description: game.description,
+            size_on_disk_bytes: game.size_on_disk_bytes,
+            steam_install_dir: game.install_dir,
+          },
+        });
+      }
+      await get().fetchGames();
+      set({ isSteamImportOpen: false });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  openContextMenu: (game, x, y) => set({ contextMenu: { game, x, y } }),
+  closeContextMenu: () => set({ contextMenu: null }),
+  reportError: (message) => set({ error: message }),
+
   clearError: () => set({ error: null }),
 }));
 

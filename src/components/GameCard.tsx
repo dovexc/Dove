@@ -1,4 +1,5 @@
 import { convertFileSrc } from "../utils";
+import { useLibraryStore } from "../store";
 import type { Game } from "../types";
 
 interface Props {
@@ -9,9 +10,16 @@ interface Props {
 }
 
 export function GameCard({ game, isSelected, onSelect, onPlay }: Props) {
+  const openContextMenu = useLibraryStore((s) => s.openContextMenu);
+
   return (
     <button
       onClick={onSelect}
+      onDoubleClick={onPlay}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        openContextMenu(game, e.clientX, e.clientY);
+      }}
       className={`group relative flex flex-col overflow-hidden rounded-lg border text-left transition ${
         isSelected
           ? "border-sky-500 ring-2 ring-sky-500"

@@ -2,6 +2,7 @@ mod commands;
 mod db;
 mod models;
 mod state;
+mod steam;
 
 use state::AppState;
 use std::sync::{Arc, Mutex};
@@ -28,8 +29,11 @@ pub fn run() {
             commands::add_game,
             commands::list_games,
             commands::get_game,
+            commands::update_game,
             commands::delete_game,
             commands::launch_game,
+            commands::find_steam_games,
+            commands::reveal_game_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

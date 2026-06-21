@@ -1,17 +1,27 @@
 import { convertFileSrc, formatPlaytime } from "../utils";
+import { useLibraryStore } from "../store";
 import type { Game } from "../types";
 
 interface Props {
   game: Game;
   onPlay: () => void;
+  onEdit: () => void;
   onDelete: () => void;
 }
 
-export function GameDetail({ game, onPlay, onDelete }: Props) {
+export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
+  const openContextMenu = useLibraryStore((s) => s.openContextMenu);
+
   return (
     <div className="flex h-full flex-col gap-4 p-6">
       <div className="flex gap-6">
-        <div className="h-64 w-48 shrink-0 overflow-hidden rounded-lg bg-zinc-800">
+        <div
+          onContextMenu={(e) => {
+            e.preventDefault();
+            openContextMenu(game, e.clientX, e.clientY);
+          }}
+          className="h-64 w-48 shrink-0 overflow-hidden rounded-lg bg-zinc-800"
+        >
           {game.cover_path ? (
             <img
               src={convertFileSrc(game.cover_path)}
@@ -43,6 +53,12 @@ export function GameDetail({ game, onPlay, onDelete }: Props) {
               }`}
             >
               {game.is_running ? "Läuft..." : "Spielen"}
+            </button>
+            <button
+              onClick={onEdit}
+              className="rounded px-4 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-sky-400"
+            >
+              Bearbeiten
             </button>
             <button
               onClick={onDelete}
