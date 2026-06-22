@@ -12,6 +12,7 @@ pub struct Game {
     pub size_on_disk_bytes: i64,
     pub last_played_at: Option<String>,
     pub is_running: bool,
+    pub catalog_game_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -22,6 +23,7 @@ pub struct NewGame {
     pub description: Option<String>,
     pub size_on_disk_bytes: Option<i64>,
     pub steam_install_dir: Option<String>,
+    pub catalog_game_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

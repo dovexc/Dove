@@ -13,6 +13,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
 const MAX_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
+const MAX_GAME_FILE_BYTES: usize = 1024 * 1024 * 1024;
 
 #[tokio::main]
 async fn main() {
@@ -23,12 +24,19 @@ async fn main() {
             .unwrap_or_else(|_| "dev-secret-change-me".to_string()),
     };
 
-    std::fs::create_dir_all("data/uploads").expect("failed to create uploads dir");
+    std::fs::create_dir_all("data/uploads/games").expect("failed to create uploads dir");
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
+
+    // The game-file upload route needs a much higher body limit than the rest
+    // of the API (avatars/screenshots), so it gets its own sub-router layer —
+    // layers added closer to the handler win over the outer, smaller default.
+    let upload_routes = Router::new()
+        .route("/api/games/:id/upload", post(handlers::upload_game_file))
+        .layer(DefaultBodyLimit::max(MAX_GAME_FILE_BYTES));
 
     let app = Router::new()
         .route("/api/auth/register", post(handlers::register))
@@ -49,6 +57,13 @@ async fn main() {
             "/api/games",
             get(handlers::list_games).post(handlers::create_game),
         )
+        .route("/api/games/:id", get(handlers::get_game))
+        .route(
+            "/api/games/:id/purchase",
+            post(handlers::purchase_game).delete(handlers::revoke_ownership),
+        )
+        .route("/api/me/library", get(handlers::list_library))
+        .merge(upload_routes)
         .nest_service("/uploads", ServeDir::new("data/uploads"))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .layer(cors)

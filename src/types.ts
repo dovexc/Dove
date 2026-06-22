@@ -9,6 +9,7 @@ export interface Game {
   size_on_disk_bytes: number;
   last_played_at: string | null;
   is_running: boolean;
+  catalog_game_id: number | null;
 }
 
 export interface NewGame {
@@ -18,6 +19,7 @@ export interface NewGame {
   description: string | null;
   size_on_disk_bytes?: number | null;
   steam_install_dir?: string | null;
+  catalog_game_id?: number | null;
 }
 
 export interface UpdateGame {
@@ -72,6 +74,8 @@ export interface CatalogGame {
   cover_url: string | null;
   price_cents: number;
   created_at: string;
+  file_url: string | null;
+  file_size_bytes: number | null;
 }
 
 export interface NewCatalogGame {

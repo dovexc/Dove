@@ -7,6 +7,7 @@ export function GameContextMenu() {
   const contextMenu = useLibraryStore((s) => s.contextMenu);
   const closeContextMenu = useLibraryStore((s) => s.closeContextMenu);
   const openDeleteDialog = useLibraryStore((s) => s.openDeleteDialog);
+  const openRemoveAccountDialog = useLibraryStore((s) => s.openRemoveAccountDialog);
   const editGame = useLibraryStore((s) => s.editGame);
   const reportError = useLibraryStore((s) => s.reportError);
   const ref = useRef<HTMLDivElement>(null);
@@ -65,6 +66,11 @@ export function GameContextMenu() {
     openDeleteDialog(game.id);
   }
 
+  function handleRemoveFromAccount() {
+    closeContextMenu();
+    openRemoveAccountDialog(game.id);
+  }
+
   return (
     <div
       ref={ref}
@@ -87,8 +93,16 @@ export function GameContextMenu() {
         onClick={handleDelete}
         className="block w-full px-3 py-2 text-left text-red-400 hover:bg-zinc-800"
       >
-        Löschen
+        {game.catalog_game_id != null ? "Deinstallieren" : "Löschen"}
       </button>
+      {game.catalog_game_id != null && (
+        <button
+          onClick={handleRemoveFromAccount}
+          className="block w-full px-3 py-2 text-left text-red-400 hover:bg-zinc-800"
+        >
+          Komplett vom Account löschen
+        </button>
+      )}
     </div>
   );
 }

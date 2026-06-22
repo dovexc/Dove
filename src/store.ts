@@ -20,6 +20,10 @@ interface LibraryState {
   launchGame: (id: number) => Promise<void>;
   editGame: (id: number, game: UpdateGame) => Promise<void>;
   deleteGame: (id: number, deleteFiles: boolean) => Promise<void>;
+  uninstallGame: (id: number) => Promise<void>;
+  removingAccountGameId: number | null;
+  openRemoveAccountDialog: (id: number) => void;
+  closeRemoveAccountDialog: () => void;
   selectGame: (id: number | null) => void;
   openAddDialog: () => void;
   closeAddDialog: () => void;
@@ -32,6 +36,8 @@ interface LibraryState {
   importSteamGames: (games: SteamGame[]) => Promise<void>;
   openContextMenu: (game: Game, x: number, y: number) => void;
   closeContextMenu: () => void;
+  installingId: number | null;
+  installCatalogGame: (id: number) => Promise<void>;
   reportError: (message: string) => void;
   clearError: () => void;
 }
@@ -42,11 +48,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   isAddDialogOpen: false,
   editingGameId: null,
   deletingGameId: null,
+  removingAccountGameId: null,
   isSteamImportOpen: false,
   steamGames: [],
   steamScanError: null,
   steamScanLoading: false,
   contextMenu: null,
+  installingId: null,
   error: null,
 
   fetchGames: async () => {
@@ -93,6 +101,16 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       if (get().selectedGameId === id) {
         set({ selectedGameId: null });
       }
+      set({ deletingGameId: null, removingAccountGameId: null });
+      await get().fetchGames();
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  uninstallGame: async (id) => {
+    try {
+      await invoke<Game>("uninstall_game", { id });
       set({ deletingGameId: null });
       await get().fetchGames();
     } catch (e) {
@@ -107,6 +125,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   closeEditDialog: () => set({ editingGameId: null }),
   openDeleteDialog: (id) => set({ deletingGameId: id }),
   closeDeleteDialog: () => set({ deletingGameId: null }),
+  openRemoveAccountDialog: (id) => set({ removingAccountGameId: id }),
+  closeRemoveAccountDialog: () => set({ removingAccountGameId: null }),
 
   openSteamImport: async () => {
     set({
@@ -148,6 +168,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   openContextMenu: (game, x, y) => set({ contextMenu: { game, x, y } }),
   closeContextMenu: () => set({ contextMenu: null }),
+
+  installCatalogGame: async (id) => {
+    set({ installingId: id, error: null });
+    try {
+      await invoke<Game>("install_catalog_game", { id });
+      await get().fetchGames();
+    } catch (e) {
+      set({ error: String(e) });
+      await get().fetchGames();
+    } finally {
+      set({ installingId: null });
+    }
+  },
+
   reportError: (message) => set({ error: message }),
 
   clearError: () => set({ error: null }),

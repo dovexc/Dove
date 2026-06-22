@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use sysinfo::{ProcessesToUpdate, System};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 fn row_to_game(row: &rusqlite::Row, running: &HashSet<i64>) -> rusqlite::Result<Game> {
     let id: i64 = row.get(0)?;
@@ -22,13 +22,15 @@ fn row_to_game(row: &rusqlite::Row, running: &HashSet<i64>) -> rusqlite::Result<
         size_on_disk_bytes: row.get(7)?,
         last_played_at: row.get(8)?,
         is_running: running.contains(&id),
+        catalog_game_id: row.get(9)?,
     })
 }
 
 const GAME_SELECT: &str = "
     SELECT g.id, g.name, g.exe_path, g.cover_path, g.description, g.total_playtime_seconds,
            g.created_at, g.size_on_disk_bytes,
-           (SELECT MAX(started_at) FROM play_sessions ps WHERE ps.game_id = g.id) AS last_played_at
+           (SELECT MAX(started_at) FROM play_sessions ps WHERE ps.game_id = g.id) AS last_played_at,
+           g.catalog_game_id
     FROM games g
 ";
 
@@ -48,7 +50,7 @@ fn compute_dir_size(path: &std::path::Path) -> i64 {
 }
 
 fn compute_size_on_disk(exe_path: &str) -> i64 {
-    if exe_path.starts_with("steam://") {
+    if exe_path.starts_with("steam://") || exe_path.starts_with("store://") {
         return 0;
     }
     std::path::Path::new(exe_path)
@@ -64,14 +66,15 @@ pub fn add_game(state: State<AppState>, new_game: NewGame) -> Result<Game, Strin
         .size_on_disk_bytes
         .unwrap_or_else(|| compute_size_on_disk(&new_game.exe_path));
     conn.execute(
-        "INSERT INTO games (name, exe_path, cover_path, description, size_on_disk_bytes, steam_install_dir) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO games (name, exe_path, cover_path, description, size_on_disk_bytes, steam_install_dir, catalog_game_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             new_game.name,
             new_game.exe_path,
             new_game.cover_path,
             new_game.description,
             size_on_disk_bytes,
-            new_game.steam_install_dir
+            new_game.steam_install_dir,
+            new_game.catalog_game_id
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -161,7 +164,7 @@ pub fn delete_game(state: State<AppState>, id: i64, delete_files: bool) -> Resul
             .map_err(|e| e.to_string())?;
     }
 
-    if delete_files && !exe_path.starts_with("steam://") {
+    if delete_files && !exe_path.starts_with("steam://") && !exe_path.starts_with("store://") {
         if let Some(dir) = std::path::Path::new(&exe_path).parent() {
             let _ = std::fs::remove_dir_all(dir);
         }
@@ -171,6 +174,55 @@ pub fn delete_game(state: State<AppState>, id: i64, delete_files: bool) -> Resul
     }
 
     Ok(())
+}
+
+/// Removes the locally installed files for a store-purchased game and resets
+/// it back to the downloadable placeholder, without touching server-side
+/// ownership — the game stays in the library and can be re-downloaded.
+#[tauri::command]
+pub fn uninstall_game(state: State<AppState>, id: i64) -> Result<Game, String> {
+    let (exe_path, cover_path, catalog_game_id): (String, Option<String>, Option<i64>) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT exe_path, cover_path, catalog_game_id FROM games WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|e| e.to_string())?
+    };
+
+    let catalog_game_id =
+        catalog_game_id.ok_or("Dieses Spiel ist nicht mit dem Store verknüpft")?;
+
+    if !exe_path.starts_with("store://") {
+        if let Some(dir) = std::path::Path::new(&exe_path).parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        if let Some(cover) = &cover_path {
+            if !cover.starts_with("http") {
+                let _ = std::fs::remove_file(cover);
+            }
+        }
+    }
+
+    let placeholder = format!("store://catalog/{catalog_game_id}");
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE games SET exe_path = ?1, size_on_disk_bytes = 0 WHERE id = ?2",
+            params![placeholder, id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let running = state.running.lock().map_err(|e| e.to_string())?;
+    conn.query_row(
+        &format!("{GAME_SELECT} WHERE g.id = ?1"),
+        params![id],
+        |row| row_to_game(row, &running),
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -189,6 +241,10 @@ pub fn reveal_game_folder(state: State<AppState>, id: i64) -> Result<(), String>
         )
         .map_err(|e| e.to_string())?
     };
+
+    if exe_path.starts_with("store://") {
+        return Err("Für dieses Spiel wurde noch keine lokale Datei zugewiesen".into());
+    }
 
     let folder = if exe_path.starts_with("steam://") {
         steam_install_dir.ok_or("Kein Installationsordner bekannt")?
@@ -213,6 +269,13 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
         )
         .map_err(|e| e.to_string())?
     };
+
+    if exe_path.starts_with("store://") {
+        return Err(
+            "Für dieses gekaufte Spiel muss zuerst die ausführbare Datei zugewiesen werden (Bearbeiten -> Durchsuchen)"
+                .into(),
+        );
+    }
 
     if exe_path.starts_with("steam://") {
         open::that(&exe_path).map_err(|e| format!("Steam konnte nicht gestartet werden: {e}"))?;
@@ -366,4 +429,130 @@ fn watch_steam_game(
         running.remove(&id);
     }
     app.emit("game-stopped", id).ok();
+}
+
+const STORE_API_BASE: &str = "http://127.0.0.1:4000";
+
+/// Walks a directory recursively and returns every regular file found.
+fn collect_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_files(&path, out);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub fn install_catalog_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<Game, String> {
+    let catalog_game_id: Option<i64> = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT catalog_game_id FROM games WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?
+    };
+    let catalog_game_id =
+        catalog_game_id.ok_or("Dieses Spiel ist nicht mit dem Store verknüpft")?;
+
+    let info: serde_json::Value = ureq::get(&format!("{STORE_API_BASE}/api/games/{catalog_game_id}"))
+        .call()
+        .map_err(|e| format!("Spiel-Infos konnten nicht geladen werden: {e}"))?
+        .into_json()
+        .map_err(|e| e.to_string())?;
+
+    let file_url = info
+        .get("file_url")
+        .and_then(|v| v.as_str())
+        .ok_or("Für dieses Spiel wurde noch keine Datei vom Publisher hochgeladen")?;
+
+    let download_url = format!("{STORE_API_BASE}{file_url}");
+    let response = ureq::get(&download_url)
+        .call()
+        .map_err(|e| format!("Download fehlgeschlagen: {e}"))?;
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let install_dir = app_data_dir.join("installed").join(id.to_string());
+    std::fs::create_dir_all(&install_dir).map_err(|e| e.to_string())?;
+
+    let zip_path = install_dir.join("download.zip");
+    {
+        let mut zip_file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
+        std::io::copy(&mut response.into_reader(), &mut zip_file).map_err(|e| e.to_string())?;
+    }
+
+    {
+        let zip_file = std::fs::File::open(&zip_path).map_err(|e| e.to_string())?;
+        let mut archive =
+            zip::ZipArchive::new(zip_file).map_err(|e| format!("Ungültige ZIP-Datei: {e}"))?;
+        archive
+            .extract(&install_dir)
+            .map_err(|e| format!("Entpacken fehlgeschlagen: {e}"))?;
+    }
+    let _ = std::fs::remove_file(&zip_path);
+
+    let mut files = Vec::new();
+    collect_files(&install_dir, &mut files);
+
+    let exe_path = if files.len() == 1 {
+        let only_file = &files[0];
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = std::fs::metadata(only_file) {
+                let mut perms = meta.permissions();
+                perms.set_mode(perms.mode() | 0o111);
+                let _ = std::fs::set_permissions(only_file, perms);
+            }
+        }
+        Some(only_file.to_string_lossy().into_owned())
+    } else {
+        None
+    };
+
+    let size_on_disk_bytes = compute_dir_size(&install_dir);
+
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(exe_path) = &exe_path {
+            conn.execute(
+                "UPDATE games SET exe_path = ?1, size_on_disk_bytes = ?2 WHERE id = ?3",
+                params![exe_path, size_on_disk_bytes, id],
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            conn.execute(
+                "UPDATE games SET size_on_disk_bytes = ?1 WHERE id = ?2",
+                params![size_on_disk_bytes, id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    if exe_path.is_none() {
+        return Err(format!(
+            "Spiel wurde installiert, aber es wurden mehrere Dateien gefunden ({} Stück). \
+             Bitte über \"Bearbeiten\" die richtige Programmdatei in {} auswählen.",
+            files.len(),
+            install_dir.display()
+        ));
+    }
+
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let running = state.running.lock().map_err(|e| e.to_string())?;
+    conn.query_row(
+        &format!("{GAME_SELECT} WHERE g.id = ?1"),
+        params![id],
+        |row| row_to_game(row, &running),
+    )
+    .map_err(|e| e.to_string())
 }

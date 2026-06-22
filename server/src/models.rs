@@ -69,6 +69,8 @@ pub struct CatalogGame {
     pub cover_url: Option<String>,
     pub price_cents: i64,
     pub created_at: String,
+    pub file_url: Option<String>,
+    pub file_size_bytes: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

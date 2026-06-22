@@ -11,6 +11,11 @@ interface Props {
 
 export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
   const openContextMenu = useLibraryStore((s) => s.openContextMenu);
+  const installingId = useLibraryStore((s) => s.installingId);
+  const installCatalogGame = useLibraryStore((s) => s.installCatalogGame);
+
+  const pendingInstall = game.exe_path.startsWith("store://catalog/");
+  const installing = installingId === game.id;
 
   return (
     <div className="flex h-full flex-col gap-4 p-6">
@@ -43,17 +48,27 @@ export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
             {game.description || "Keine Beschreibung vorhanden."}
           </p>
           <div className="mt-4 flex gap-3">
-            <button
-              onClick={onPlay}
-              disabled={game.is_running}
-              className={`rounded px-4 py-2 text-sm font-semibold ${
-                game.is_running
-                  ? "bg-emerald-700 text-emerald-100"
-                  : "bg-sky-600 text-white hover:bg-sky-500"
-              }`}
-            >
-              {game.is_running ? "Läuft..." : "Spielen"}
-            </button>
+            {pendingInstall ? (
+              <button
+                onClick={() => installCatalogGame(game.id)}
+                disabled={installing}
+                className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+              >
+                {installing ? "Installiere..." : "Herunterladen & installieren"}
+              </button>
+            ) : (
+              <button
+                onClick={onPlay}
+                disabled={game.is_running}
+                className={`rounded px-4 py-2 text-sm font-semibold ${
+                  game.is_running
+                    ? "bg-emerald-700 text-emerald-100"
+                    : "bg-sky-600 text-white hover:bg-sky-500"
+                }`}
+              >
+                {game.is_running ? "Läuft..." : "Spielen"}
+              </button>
+            )}
             <button
               onClick={onEdit}
               className="rounded px-4 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-sky-400"

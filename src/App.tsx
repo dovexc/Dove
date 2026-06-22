@@ -6,6 +6,7 @@ import { GameDetail } from "./components/GameDetail";
 import { AddGameDialog } from "./components/AddGameDialog";
 import { EditGameDialog } from "./components/EditGameDialog";
 import { DeleteGameDialog } from "./components/DeleteGameDialog";
+import { RemoveFromAccountDialog } from "./components/RemoveFromAccountDialog";
 import { SteamImportDialog } from "./components/SteamImportDialog";
 import { LibraryHome } from "./components/LibraryHome";
 import { GameContextMenu } from "./components/GameContextMenu";
@@ -26,6 +27,7 @@ function App() {
   const isAddDialogOpen = useLibraryStore((s) => s.isAddDialogOpen);
   const editingGameId = useLibraryStore((s) => s.editingGameId);
   const deletingGameId = useLibraryStore((s) => s.deletingGameId);
+  const removingAccountGameId = useLibraryStore((s) => s.removingAccountGameId);
   const isSteamImportOpen = useLibraryStore((s) => s.isSteamImportOpen);
   const error = useLibraryStore((s) => s.error);
   const fetchGames = useLibraryStore((s) => s.fetchGames);
@@ -46,6 +48,7 @@ function App() {
   const selectedGame = games.find((g) => g.id === selectedGameId) ?? null;
   const editingGame = games.find((g) => g.id === editingGameId) ?? null;
   const deletingGame = games.find((g) => g.id === deletingGameId) ?? null;
+  const removingAccountGame = games.find((g) => g.id === removingAccountGameId) ?? null;
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
@@ -164,6 +167,7 @@ function App() {
       {isAddDialogOpen && <AddGameDialog />}
       {editingGame && <EditGameDialog game={editingGame} />}
       {deletingGame && <DeleteGameDialog game={deletingGame} />}
+      {removingAccountGame && <RemoveFromAccountDialog game={removingAccountGame} />}
       {isSteamImportOpen && <SteamImportDialog />}
       {isLoginOpen && <LoginDialog onClose={() => setIsLoginOpen(false)} />}
       {isProfileOpen && <ProfilePage onClose={() => setIsProfileOpen(false)} />}

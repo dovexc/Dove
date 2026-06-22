@@ -50,5 +50,14 @@ pub fn init(app_data_dir: &PathBuf) -> Connection {
             .expect("failed to migrate games table");
     }
 
+    let has_catalog_game_id_column: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('games') WHERE name = 'catalog_game_id'")
+        .and_then(|mut stmt| stmt.exists([]))
+        .unwrap_or(false);
+    if !has_catalog_game_id_column {
+        conn.execute("ALTER TABLE games ADD COLUMN catalog_game_id INTEGER", [])
+            .expect("failed to migrate games table");
+    }
+
     conn
 }

@@ -31,9 +31,11 @@ pub fn run() {
             commands::get_game,
             commands::update_game,
             commands::delete_game,
+            commands::uninstall_game,
             commands::launch_game,
             commands::find_steam_games,
             commands::reveal_game_folder,
+            commands::install_catalog_game,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -11,11 +11,24 @@ interface Props {
 
 export function GameCard({ game, isSelected, onSelect, onPlay }: Props) {
   const openContextMenu = useLibraryStore((s) => s.openContextMenu);
+  const installingId = useLibraryStore((s) => s.installingId);
+  const installCatalogGame = useLibraryStore((s) => s.installCatalogGame);
+
+  const pendingInstall = game.exe_path.startsWith("store://catalog/");
+  const installing = installingId === game.id;
+
+  function handlePlay() {
+    if (pendingInstall) {
+      installCatalogGame(game.id);
+    } else {
+      onPlay();
+    }
+  }
 
   return (
     <button
       onClick={onSelect}
-      onDoubleClick={onPlay}
+      onDoubleClick={handlePlay}
       onContextMenu={(e) => {
         e.preventDefault();
         openContextMenu(game, e.clientX, e.clientY);
@@ -47,7 +60,7 @@ export function GameCard({ game, isSelected, onSelect, onPlay }: Props) {
           role="button"
           onClick={(e) => {
             e.stopPropagation();
-            onPlay();
+            handlePlay();
           }}
           className={`shrink-0 rounded px-2 py-1 text-xs font-semibold ${
             game.is_running
@@ -55,7 +68,13 @@ export function GameCard({ game, isSelected, onSelect, onPlay }: Props) {
               : "bg-sky-600 text-white hover:bg-sky-500"
           }`}
         >
-          {game.is_running ? "Läuft" : "Spielen"}
+          {game.is_running
+            ? "Läuft"
+            : installing
+              ? "..."
+              : pendingInstall
+                ? "Installieren"
+                : "Spielen"}
         </span>
       </div>
     </button>

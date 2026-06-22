@@ -28,4 +28,5 @@ tauri-plugin-dialog = "2.7.1"
 open = "5"
 ureq = { version = "2", features = ["json"] }
 sysinfo = "0.32"
+zip = "2"
 

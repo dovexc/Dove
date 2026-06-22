@@ -313,11 +313,12 @@ fn row_to_game(row: &rusqlite::Row) -> rusqlite::Result<CatalogGame> {
         cover_url: row.get(4)?,
         price_cents: row.get(5)?,
         created_at: row.get(6)?,
+        file_url: row.get(7)?,
+        file_size_bytes: row.get(8)?,
     })
 }
 
-const GAME_COLUMNS: &str =
-    "id, publisher_user_id, title, description, cover_url, price_cents, created_at";
+const GAME_COLUMNS: &str = "id, publisher_user_id, title, description, cover_url, price_cents, created_at, file_url, file_size_bytes";
 
 pub async fn list_games(
     State(state): State<AppState>,
@@ -336,6 +337,20 @@ pub async fn list_games(
     Ok(Json(games))
 }
 
+pub async fn get_game(
+    State(state): State<AppState>,
+    Path(game_id): Path<i64>,
+) -> Result<Json<CatalogGame>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.query_row(
+        &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
+        params![game_id],
+        row_to_game,
+    )
+    .map(Json)
+    .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))
+}
+
 pub async fn create_game(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
@@ -352,6 +367,117 @@ pub async fn create_game(
     conn.query_row(
         &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
         params![id],
+        row_to_game,
+    )
+    .map(Json)
+    .map_err(internal_error)
+}
+
+pub async fn purchase_game(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+) -> Result<Json<CatalogGame>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+
+    let game = conn
+        .query_row(
+            &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
+            params![game_id],
+            row_to_game,
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+
+    conn.execute(
+        "INSERT OR IGNORE INTO ownerships (user_id, catalog_game_id) VALUES (?1, ?2)",
+        params![user_id, game_id],
+    )
+    .map_err(internal_error)?;
+
+    Ok(Json(game))
+}
+
+pub async fn revoke_ownership(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.execute(
+        "DELETE FROM ownerships WHERE user_id = ?1 AND catalog_game_id = ?2",
+        params![user_id, game_id],
+    )
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn list_library(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<Json<Vec<CatalogGame>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let prefixed_columns = GAME_COLUMNS
+        .split(", ")
+        .map(|c| format!("cg.{c}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {prefixed_columns} FROM catalog_games cg \
+             JOIN ownerships o ON o.catalog_game_id = cg.id \
+             WHERE o.user_id = ?1 ORDER BY o.purchased_at DESC"
+        ))
+        .map_err(internal_error)?;
+    let games = stmt
+        .query_map(params![user_id], row_to_game)
+        .map_err(internal_error)?
+        .filter_map(|g| g.ok())
+        .collect();
+    Ok(Json(games))
+}
+
+pub async fn upload_game_file(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+    body: axum::body::Bytes,
+) -> Result<Json<CatalogGame>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+
+    let game = conn
+        .query_row(
+            &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
+            params![game_id],
+            row_to_game,
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+
+    if game.publisher_user_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur der Publisher darf eine Datei hochladen".to_string(),
+        ));
+    }
+
+    let uploads_dir = FsPath::new("data/uploads/games");
+    std::fs::create_dir_all(uploads_dir).map_err(internal_error)?;
+
+    let filename = format!("{}.zip", uuid::Uuid::new_v4());
+    std::fs::write(uploads_dir.join(&filename), &body).map_err(internal_error)?;
+
+    let file_url = format!("/uploads/games/{filename}");
+    let file_size_bytes = body.len() as i64;
+
+    conn.execute(
+        "UPDATE catalog_games SET file_url = ?1, file_size_bytes = ?2 WHERE id = ?3",
+        params![file_url, file_size_bytes, game_id],
+    )
+    .map_err(internal_error)?;
+
+    conn.query_row(
+        &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
+        params![game_id],
         row_to_game,
     )
     .map(Json)
