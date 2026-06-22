@@ -13,6 +13,9 @@ pub fn init() -> Connection {
             email TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             display_name TEXT NOT NULL,
+            avatar_url TEXT,
+            background_url TEXT,
+            bio TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -25,9 +28,24 @@ pub fn init() -> Connection {
             price_cents INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS profile_screenshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            image_url TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
         ",
     )
     .expect("failed to initialize schema");
+
+    // Migrate older databases created before profile columns existed.
+    for column in ["avatar_url", "background_url", "bio"] {
+        let _ = conn.execute(
+            &format!("ALTER TABLE users ADD COLUMN {column} TEXT"),
+            [],
+        );
+    }
 
     conn
 }

@@ -11,13 +11,14 @@ import { LibraryHome } from "./components/LibraryHome";
 import { GameContextMenu } from "./components/GameContextMenu";
 import { StoreView } from "./components/store/StoreView";
 import { LoginDialog } from "./components/store/LoginDialog";
+import { ProfilePage } from "./components/profile/ProfilePage";
 
 function App() {
   const [activeTab, setActiveTab] = useState<"library" | "store">("library");
   const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const authUser = useAuthStore((s) => s.user);
   const authToken = useAuthStore((s) => s.token);
-  const logout = useAuthStore((s) => s.logout);
   const hydrateUser = useAuthStore((s) => s.hydrateUser);
 
   const games = useLibraryStore((s) => s.games);
@@ -88,15 +89,12 @@ function App() {
             </>
           )}
           {authToken && authUser ? (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-zinc-400">{authUser.display_name}</span>
-              <button
-                onClick={logout}
-                className="rounded bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
-              >
-                Abmelden
-              </button>
-            </div>
+            <button
+              onClick={() => setIsProfileOpen(true)}
+              className="text-sm text-zinc-400 hover:text-zinc-200 hover:underline"
+            >
+              {authUser.display_name}
+            </button>
           ) : (
             <button
               onClick={() => setIsLoginOpen(true)}
@@ -168,6 +166,7 @@ function App() {
       {deletingGame && <DeleteGameDialog game={deletingGame} />}
       {isSteamImportOpen && <SteamImportDialog />}
       {isLoginOpen && <LoginDialog onClose={() => setIsLoginOpen(false)} />}
+      {isProfileOpen && <ProfilePage onClose={() => setIsProfileOpen(false)} />}
       <GameContextMenu />
     </div>
   );

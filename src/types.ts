@@ -41,7 +41,27 @@ export interface StoreUser {
   id: number;
   email: string;
   display_name: string;
+  avatar_url: string | null;
+  background_url: string | null;
+  bio: string | null;
   created_at: string;
+}
+
+export interface ProfileScreenshot {
+  id: number;
+  user_id: number;
+  image_url: string;
+  created_at: string;
+}
+
+export interface PublicProfile {
+  id: number;
+  display_name: string;
+  avatar_url: string | null;
+  background_url: string | null;
+  bio: string | null;
+  created_at: string;
+  screenshots: ProfileScreenshot[];
 }
 
 export interface CatalogGame {

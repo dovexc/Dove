@@ -14,12 +14,26 @@ pub struct SteamGame {
 
 fn default_steam_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
+
     if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
         paths.push(PathBuf::from(pf86).join("Steam"));
     }
     if let Ok(pf) = std::env::var("ProgramFiles") {
         paths.push(PathBuf::from(pf).join("Steam"));
     }
+
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        // macOS
+        paths.push(
+            home.join("Library")
+                .join("Application Support")
+                .join("Steam"),
+        );
+        // Linux
+        paths.push(home.join(".steam").join("steam"));
+        paths.push(home.join(".local").join("share").join("Steam"));
+    }
+
     paths
 }
 
