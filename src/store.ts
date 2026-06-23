@@ -3,13 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Game, NewGame, UpdateGame, SteamGame } from "./types";
 
-export interface InstallProgress {
-  id: number;
-  phase: "downloading" | "extracting";
-  downloaded?: number;
-  total?: number;
-}
-
 interface LibraryState {
   games: Game[];
   selectedGameId: number | null;
@@ -43,10 +36,6 @@ interface LibraryState {
   importSteamGames: (games: SteamGame[]) => Promise<void>;
   openContextMenu: (game: Game, x: number, y: number) => void;
   closeContextMenu: () => void;
-  installingId: number | null;
-  installProgress: InstallProgress | null;
-  installCatalogGame: (id: number) => Promise<void>;
-  setInstallProgress: (progress: InstallProgress) => void;
   reportError: (message: string) => void;
   clearError: () => void;
 }
@@ -63,8 +52,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   steamScanError: null,
   steamScanLoading: false,
   contextMenu: null,
-  installingId: null,
-  installProgress: null,
   error: null,
 
   fetchGames: async () => {
@@ -179,21 +166,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   openContextMenu: (game, x, y) => set({ contextMenu: { game, x, y } }),
   closeContextMenu: () => set({ contextMenu: null }),
 
-  installCatalogGame: async (id) => {
-    set({ installingId: id, installProgress: null, error: null });
-    try {
-      await invoke<Game>("install_catalog_game", { id });
-      await get().fetchGames();
-    } catch (e) {
-      set({ error: String(e) });
-      await get().fetchGames();
-    } finally {
-      set({ installingId: null, installProgress: null });
-    }
-  },
-
-  setInstallProgress: (progress) => set({ installProgress: progress }),
-
   reportError: (message) => set({ error: message }),
 
   clearError: () => set({ error: null }),
@@ -210,8 +182,5 @@ export function registerGameEventListeners() {
   });
   listen("game-stopped", () => {
     useLibraryStore.getState().fetchGames();
-  });
-  listen<InstallProgress>("install-progress", (event) => {
-    useLibraryStore.getState().setInstallProgress(event.payload);
   });
 }

@@ -13,13 +13,16 @@ import { GameContextMenu } from "./components/GameContextMenu";
 import { StoreView } from "./components/store/StoreView";
 import { LoginDialog } from "./components/store/LoginDialog";
 import { ProfilePage } from "./components/profile/ProfilePage";
+import { DownloadBar } from "./components/downloads/DownloadBar";
+import { DownloadsPage } from "./components/downloads/DownloadsPage";
+import { registerDownloadEventListeners } from "./downloadStore";
 
 const SIDEBAR_WIDTH_KEY = "library_sidebar_width";
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 640;
 
 function App() {
-  const [activeTab, setActiveTab] = useState<"library" | "store">("library");
+  const [activeTab, setActiveTab] = useState<"library" | "store" | "downloads">("library");
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -76,6 +79,7 @@ function App() {
 
   useEffect(() => {
     registerGameEventListeners();
+    registerDownloadEventListeners();
     fetchGames();
     hydrateUser();
   }, [fetchGames, hydrateUser]);
@@ -107,6 +111,14 @@ function App() {
             }`}
           >
             Store
+          </button>
+          <button
+            onClick={() => setActiveTab("downloads")}
+            className={`text-lg font-bold ${
+              activeTab === "downloads" ? "text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            Downloads
           </button>
         </div>
         <div className="flex gap-3">
@@ -201,11 +213,22 @@ function App() {
             )}
           </div>
         </div>
-      ) : (
+      ) : activeTab === "store" ? (
         <div className="flex-1 overflow-hidden">
           <StoreView />
         </div>
+      ) : (
+        <div className="flex-1 overflow-hidden">
+          <DownloadsPage
+            onOpenGame={(id) => {
+              setActiveTab("library");
+              selectGame(id);
+            }}
+          />
+        </div>
       )}
+
+      <DownloadBar onOpen={() => setActiveTab("downloads")} />
 
       {isAddDialogOpen && <AddGameDialog />}
       {editingGame && <EditGameDialog game={editingGame} />}

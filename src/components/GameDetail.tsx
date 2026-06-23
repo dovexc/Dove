@@ -1,5 +1,6 @@
 import { convertFileSrc, formatPlaytime, formatSize } from "../utils";
 import { useLibraryStore } from "../store";
+import { useDownloadStore } from "../downloadStore";
 import type { Game } from "../types";
 
 interface Props {
@@ -11,16 +12,17 @@ interface Props {
 
 export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
   const openContextMenu = useLibraryStore((s) => s.openContextMenu);
-  const installingId = useLibraryStore((s) => s.installingId);
-  const installProgress = useLibraryStore((s) => s.installProgress);
-  const installCatalogGame = useLibraryStore((s) => s.installCatalogGame);
+  const enqueue = useDownloadStore((s) => s.enqueue);
+  const resumeDownload = useDownloadStore((s) => s.resumeDownload);
+  const queueItem = useDownloadStore((s) => s.queue.find((i) => i.id === game.id));
 
   const pendingInstall = game.exe_path.startsWith("store://catalog/");
-  const installing = installingId === game.id;
-  const progress = installing ? installProgress : null;
+  const isActive = queueItem?.status === "downloading" || queueItem?.status === "extracting";
+  const isQueued = queueItem?.status === "queued";
+  const isPaused = queueItem?.status === "paused";
   const progressPercent =
-    progress?.phase === "downloading" && progress.total
-      ? Math.min(100, Math.round((progress.downloaded! / progress.total) * 100))
+    (queueItem?.status === "downloading" || queueItem?.status === "paused") && queueItem.total
+      ? Math.min(100, Math.round((queueItem.downloaded / queueItem.total) * 100))
       : null;
 
   return (
@@ -56,15 +58,21 @@ export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
           <div className="mt-4 flex gap-3">
             {pendingInstall ? (
               <button
-                onClick={() => installCatalogGame(game.id)}
-                disabled={installing}
+                onClick={() =>
+                  isPaused ? resumeDownload(game.id) : enqueue(game.id, game.name)
+                }
+                disabled={isActive || isQueued}
                 className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
               >
-                {installing
-                  ? progress?.phase === "extracting"
+                {isActive
+                  ? queueItem?.status === "extracting"
                     ? "Entpacke..."
                     : "Lädt herunter..."
-                  : "Herunterladen & installieren"}
+                  : isQueued
+                    ? "In Warteschlange..."
+                    : isPaused
+                      ? "Fortsetzen"
+                      : "Herunterladen & installieren"}
               </button>
             ) : (
               <button
@@ -93,25 +101,29 @@ export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
             </button>
           </div>
 
-          {installing && (
+          {(isActive || isPaused) && (
             <div className="mt-3 max-w-md">
               <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-800">
                 <div
-                  className="h-full rounded-full bg-sky-500 transition-all"
+                  className={`h-full rounded-full transition-all ${
+                    isPaused ? "bg-zinc-500" : "bg-sky-500"
+                  }`}
                   style={{
                     width:
-                      progress?.phase === "extracting"
+                      queueItem?.status === "extracting"
                         ? "100%"
                         : `${progressPercent ?? 0}%`,
                   }}
                 />
               </div>
               <p className="mt-1 text-xs text-zinc-500">
-                {progress?.phase === "extracting"
-                  ? "Entpacke Dateien..."
-                  : progress?.total
-                    ? `${formatSize(progress.downloaded ?? 0)} / ${formatSize(progress.total)} (${progressPercent ?? 0}%)`
-                    : "Lädt herunter..."}
+                {isPaused
+                  ? `Pausiert (${progressPercent ?? 0}%)`
+                  : queueItem?.status === "extracting"
+                    ? "Entpacke Dateien..."
+                    : queueItem?.total
+                      ? `${formatSize(queueItem.downloaded)} / ${formatSize(queueItem.total)} (${progressPercent ?? 0}%)`
+                      : "Lädt herunter..."}
               </p>
             </div>
           )}

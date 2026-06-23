@@ -5,6 +5,7 @@ use chrono::Utc;
 use rusqlite::{params, Connection};
 use std::collections::HashSet;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use sysinfo::{ProcessesToUpdate, System};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -432,6 +433,7 @@ fn watch_steam_game(
 }
 
 const STORE_API_BASE: &str = "http://127.0.0.1:4000";
+const PAUSED_SENTINEL: &str = "__paused__";
 
 /// Walks a directory recursively and returns every regular file found.
 fn collect_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -447,10 +449,35 @@ fn collect_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
+/// Removes the cancellation flag for a download when dropped, so it can't
+/// linger and falsely "pause" a later, unrelated download of the same id.
+struct DownloadGuard {
+    downloads: Arc<Mutex<std::collections::HashMap<i64, Arc<AtomicBool>>>>,
+    id: i64,
+}
+
+impl Drop for DownloadGuard {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.downloads.lock() {
+            map.remove(&self.id);
+        }
+    }
+}
+
 /// The actual download/extract work, run off the main thread via
 /// `spawn_blocking` so the UI keeps rendering progress updates instead of
 /// freezing for the duration of the (blocking) network + disk I/O.
 fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Result<Game, String> {
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = state.downloads.lock().map_err(|e| e.to_string())?;
+        map.insert(id, cancel_flag.clone());
+    }
+    let _guard = DownloadGuard {
+        downloads: state.downloads.clone(),
+        id,
+    };
+
     let catalog_game_id: Option<i64> = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         conn.query_row(
@@ -475,9 +502,6 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
         .ok_or("Für dieses Spiel wurde noch keine Datei vom Publisher hochgeladen")?;
 
     let download_url = format!("{STORE_API_BASE}{file_url}");
-    let response = ureq::get(&download_url)
-        .call()
-        .map_err(|e| format!("Download fehlgeschlagen: {e}"))?;
 
     let app_data_dir = app
         .path()
@@ -486,22 +510,65 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
     let install_dir = app_data_dir.join("installed").join(id.to_string());
     std::fs::create_dir_all(&install_dir).map_err(|e| e.to_string())?;
 
-    let total_bytes: u64 = response
-        .header("Content-Length")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-
     let zip_path = install_dir.join("download.zip");
+    let existing_bytes = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
+
+    let mut request = ureq::get(&download_url);
+    if existing_bytes > 0 {
+        request = request.set("Range", &format!("bytes={existing_bytes}-"));
+    }
+    let response = request
+        .call()
+        .map_err(|e| format!("Download fehlgeschlagen: {e}"))?;
+
+    let is_resuming = existing_bytes > 0 && response.status() == 206;
+
+    let total_bytes: u64 = if is_resuming {
+        response
+            .header("Content-Range")
+            .and_then(|v| v.rsplit('/').next())
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| {
+                existing_bytes
+                    + response
+                        .header("Content-Length")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0)
+            })
+    } else {
+        response
+            .header("Content-Length")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0)
+    };
+
     {
+        use std::fs::OpenOptions;
         use std::io::{Read, Write};
 
         let mut reader = response.into_reader();
-        let mut zip_file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
+        let mut zip_file = if is_resuming {
+            OpenOptions::new()
+                .append(true)
+                .open(&zip_path)
+                .map_err(|e| e.to_string())?
+        } else {
+            std::fs::File::create(&zip_path).map_err(|e| e.to_string())?
+        };
         let mut buf = [0u8; 65536];
-        let mut downloaded: u64 = 0;
+        let mut downloaded: u64 = if is_resuming { existing_bytes } else { 0 };
         let mut last_emit = std::time::Instant::now();
 
         loop {
+            if cancel_flag.load(Ordering::SeqCst) {
+                app.emit(
+                    "install-progress",
+                    serde_json::json!({ "id": id, "phase": "paused" }),
+                )
+                .ok();
+                return Err(PAUSED_SENTINEL.to_string());
+            }
+
             let read = reader.read(&mut buf).map_err(|e| e.to_string())?;
             if read == 0 {
                 break;
@@ -621,4 +688,13 @@ pub async fn install_catalog_game(
     tauri::async_runtime::spawn_blocking(move || install_catalog_game_blocking(app, state, id))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn pause_download(state: State<AppState>, id: i64) -> Result<(), String> {
+    let map = state.downloads.lock().map_err(|e| e.to_string())?;
+    if let Some(flag) = map.get(&id) {
+        flag.store(true, Ordering::SeqCst);
+    }
+    Ok(())
 }

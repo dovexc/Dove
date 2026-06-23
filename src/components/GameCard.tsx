@@ -1,5 +1,6 @@
 import { convertFileSrc } from "../utils";
 import { useLibraryStore } from "../store";
+import { useDownloadStore } from "../downloadStore";
 import type { Game } from "../types";
 
 interface Props {
@@ -11,21 +12,26 @@ interface Props {
 
 export function GameCard({ game, isSelected, onSelect, onPlay }: Props) {
   const openContextMenu = useLibraryStore((s) => s.openContextMenu);
-  const installingId = useLibraryStore((s) => s.installingId);
-  const installProgress = useLibraryStore((s) => s.installProgress);
-  const installCatalogGame = useLibraryStore((s) => s.installCatalogGame);
+  const enqueue = useDownloadStore((s) => s.enqueue);
+  const resumeDownload = useDownloadStore((s) => s.resumeDownload);
+  const queueItem = useDownloadStore((s) => s.queue.find((i) => i.id === game.id));
 
   const pendingInstall = game.exe_path.startsWith("store://catalog/");
-  const installing = installingId === game.id;
-  const progress = installing ? installProgress : null;
+  const isActive = queueItem?.status === "downloading" || queueItem?.status === "extracting";
+  const isQueued = queueItem?.status === "queued";
+  const isPaused = queueItem?.status === "paused";
   const progressPercent =
-    progress?.phase === "downloading" && progress.total
-      ? Math.min(100, Math.round((progress.downloaded! / progress.total) * 100))
+    (queueItem?.status === "downloading" || queueItem?.status === "paused") && queueItem.total
+      ? Math.min(100, Math.round((queueItem.downloaded / queueItem.total) * 100))
       : null;
 
   function handlePlay() {
     if (pendingInstall) {
-      installCatalogGame(game.id);
+      if (isPaused) {
+        resumeDownload(game.id);
+      } else if (!queueItem) {
+        enqueue(game.id, game.name);
+      }
     } else {
       onPlay();
     }
@@ -58,13 +64,13 @@ export function GameCard({ game, isSelected, onSelect, onPlay }: Props) {
           </div>
         )}
       </div>
-      {installing && (
+      {(isActive || isPaused) && (
         <div className="h-1 w-full bg-zinc-800">
           <div
-            className="h-full bg-sky-500 transition-all"
+            className={`h-full transition-all ${isPaused ? "bg-zinc-500" : "bg-sky-500"}`}
             style={{
               width:
-                progress?.phase === "extracting"
+                queueItem?.status === "extracting"
                   ? "100%"
                   : `${progressPercent ?? 0}%`,
             }}
@@ -89,15 +95,19 @@ export function GameCard({ game, isSelected, onSelect, onPlay }: Props) {
         >
           {game.is_running
             ? "Läuft"
-            : installing
-              ? progress?.phase === "extracting"
+            : isActive
+              ? queueItem?.status === "extracting"
                 ? "Entpacke..."
                 : progressPercent != null
                   ? `${progressPercent}%`
                   : "..."
-              : pendingInstall
-                ? "Installieren"
-                : "Spielen"}
+              : isPaused
+                ? "Fortsetzen"
+                : isQueued
+                  ? "Wartet..."
+                  : pendingInstall
+                    ? "Installieren"
+                    : "Spielen"}
         </span>
       </div>
     </button>

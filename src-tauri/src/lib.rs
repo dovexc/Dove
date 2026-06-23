@@ -22,6 +22,7 @@ pub fn run() {
             app.manage(AppState {
                 db: Arc::new(Mutex::new(conn)),
                 running: Arc::new(Mutex::new(Default::default())),
+                downloads: Arc::new(Mutex::new(Default::default())),
             });
             Ok(())
         })
@@ -36,6 +37,7 @@ pub fn run() {
             commands::find_steam_games,
             commands::reveal_game_folder,
             commands::install_catalog_game,
+            commands::pause_download,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

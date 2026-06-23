@@ -25,3 +25,13 @@ export function formatSize(bytes: number): string {
   const mb = bytes / 1024 ** 2;
   return `${mb.toFixed(0)} MB`;
 }
+
+export function formatSpeed(bytesPerSecond: number): string {
+  if (!bytesPerSecond) return "– MB/s";
+  const mbps = bytesPerSecond / 1024 ** 2;
+  if (mbps >= 1) {
+    return `${mbps.toFixed(1)} MB/s`;
+  }
+  const kbps = bytesPerSecond / 1024;
+  return `${kbps.toFixed(0)} KB/s`;
+}
