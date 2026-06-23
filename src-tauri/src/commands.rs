@@ -447,8 +447,10 @@ fn collect_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-#[tauri::command]
-pub fn install_catalog_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<Game, String> {
+/// The actual download/extract work, run off the main thread via
+/// `spawn_blocking` so the UI keeps rendering progress updates instead of
+/// freezing for the duration of the (blocking) network + disk I/O.
+fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Result<Game, String> {
     let catalog_game_id: Option<i64> = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         conn.query_row(
@@ -484,11 +486,63 @@ pub fn install_catalog_game(app: AppHandle, state: State<AppState>, id: i64) -> 
     let install_dir = app_data_dir.join("installed").join(id.to_string());
     std::fs::create_dir_all(&install_dir).map_err(|e| e.to_string())?;
 
+    let total_bytes: u64 = response
+        .header("Content-Length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+
     let zip_path = install_dir.join("download.zip");
     {
+        use std::io::{Read, Write};
+
+        let mut reader = response.into_reader();
         let mut zip_file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
-        std::io::copy(&mut response.into_reader(), &mut zip_file).map_err(|e| e.to_string())?;
+        let mut buf = [0u8; 65536];
+        let mut downloaded: u64 = 0;
+        let mut last_emit = std::time::Instant::now();
+
+        loop {
+            let read = reader.read(&mut buf).map_err(|e| e.to_string())?;
+            if read == 0 {
+                break;
+            }
+            zip_file
+                .write_all(&buf[..read])
+                .map_err(|e| e.to_string())?;
+            downloaded += read as u64;
+
+            if last_emit.elapsed().as_millis() >= 100 {
+                app.emit(
+                    "install-progress",
+                    serde_json::json!({
+                        "id": id,
+                        "phase": "downloading",
+                        "downloaded": downloaded,
+                        "total": total_bytes,
+                    }),
+                )
+                .ok();
+                last_emit = std::time::Instant::now();
+            }
+        }
+
+        app.emit(
+            "install-progress",
+            serde_json::json!({
+                "id": id,
+                "phase": "downloading",
+                "downloaded": downloaded,
+                "total": total_bytes,
+            }),
+        )
+        .ok();
     }
+
+    app.emit(
+        "install-progress",
+        serde_json::json!({ "id": id, "phase": "extracting" }),
+    )
+    .ok();
 
     {
         let zip_file = std::fs::File::open(&zip_path).map_err(|e| e.to_string())?;
@@ -555,4 +609,16 @@ pub fn install_catalog_game(app: AppHandle, state: State<AppState>, id: i64) -> 
         |row| row_to_game(row, &running),
     )
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn install_catalog_game(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<Game, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || install_catalog_game_blocking(app, state, id))
+        .await
+        .map_err(|e| e.to_string())?
 }

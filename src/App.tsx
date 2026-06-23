@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLibraryStore, registerGameEventListeners } from "./store";
 import { useAuthStore } from "./authStore";
 import { GameCard } from "./components/GameCard";
@@ -14,10 +14,45 @@ import { StoreView } from "./components/store/StoreView";
 import { LoginDialog } from "./components/store/LoginDialog";
 import { ProfilePage } from "./components/profile/ProfilePage";
 
+const SIDEBAR_WIDTH_KEY = "library_sidebar_width";
+const SIDEBAR_MIN_WIDTH = 180;
+const SIDEBAR_MAX_WIDTH = 640;
+
 function App() {
   const [activeTab, setActiveTab] = useState<"library" | "store">("library");
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    return stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH ? stored : 288;
+  });
+  const isResizingRef = useRef(false);
+  const sidebarWidthRef = useRef(sidebarWidth);
+
+  function startSidebarResize(e: React.MouseEvent) {
+    e.preventDefault();
+    isResizingRef.current = true;
+
+    function handleMouseMove(moveEvent: MouseEvent) {
+      if (!isResizingRef.current) return;
+      const next = Math.min(
+        SIDEBAR_MAX_WIDTH,
+        Math.max(SIDEBAR_MIN_WIDTH, moveEvent.clientX)
+      );
+      sidebarWidthRef.current = next;
+      setSidebarWidth(next);
+    }
+
+    function handleMouseUp() {
+      isResizingRef.current = false;
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidthRef.current));
+    }
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  }
   const authUser = useAuthStore((s) => s.user);
   const authToken = useAuthStore((s) => s.token);
   const hydrateUser = useAuthStore((s) => s.hydrateUser);
@@ -120,7 +155,10 @@ function App() {
 
       {activeTab === "library" ? (
         <div className="flex flex-1 overflow-hidden">
-          <div className="w-72 shrink-0 overflow-y-auto border-r border-zinc-800 p-4">
+          <div
+            style={{ width: sidebarWidth }}
+            className="shrink-0 overflow-y-auto p-4"
+          >
             {games.length === 0 ? (
               <p className="text-sm text-zinc-500">
                 Noch keine Spiele vorhanden. Füge ein Spiel hinzu, um zu
@@ -140,6 +178,11 @@ function App() {
               </div>
             )}
           </div>
+
+          <div
+            onMouseDown={startSidebarResize}
+            className="w-1 shrink-0 cursor-col-resize border-r border-zinc-800 bg-transparent hover:bg-sky-500/50"
+          />
 
           <div className="flex-1 overflow-y-auto">
             {selectedGame ? (

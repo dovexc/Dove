@@ -1,4 +1,4 @@
-import { convertFileSrc, formatPlaytime } from "../utils";
+import { convertFileSrc, formatPlaytime, formatSize } from "../utils";
 import { useLibraryStore } from "../store";
 import type { Game } from "../types";
 
@@ -12,10 +12,16 @@ interface Props {
 export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
   const openContextMenu = useLibraryStore((s) => s.openContextMenu);
   const installingId = useLibraryStore((s) => s.installingId);
+  const installProgress = useLibraryStore((s) => s.installProgress);
   const installCatalogGame = useLibraryStore((s) => s.installCatalogGame);
 
   const pendingInstall = game.exe_path.startsWith("store://catalog/");
   const installing = installingId === game.id;
+  const progress = installing ? installProgress : null;
+  const progressPercent =
+    progress?.phase === "downloading" && progress.total
+      ? Math.min(100, Math.round((progress.downloaded! / progress.total) * 100))
+      : null;
 
   return (
     <div className="flex h-full flex-col gap-4 p-6">
@@ -54,7 +60,11 @@ export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
                 disabled={installing}
                 className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
               >
-                {installing ? "Installiere..." : "Herunterladen & installieren"}
+                {installing
+                  ? progress?.phase === "extracting"
+                    ? "Entpacke..."
+                    : "Lädt herunter..."
+                  : "Herunterladen & installieren"}
               </button>
             ) : (
               <button
@@ -82,6 +92,29 @@ export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
               Entfernen
             </button>
           </div>
+
+          {installing && (
+            <div className="mt-3 max-w-md">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className="h-full rounded-full bg-sky-500 transition-all"
+                  style={{
+                    width:
+                      progress?.phase === "extracting"
+                        ? "100%"
+                        : `${progressPercent ?? 0}%`,
+                  }}
+                />
+              </div>
+              <p className="mt-1 text-xs text-zinc-500">
+                {progress?.phase === "extracting"
+                  ? "Entpacke Dateien..."
+                  : progress?.total
+                    ? `${formatSize(progress.downloaded ?? 0)} / ${formatSize(progress.total)} (${progressPercent ?? 0}%)`
+                    : "Lädt herunter..."}
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

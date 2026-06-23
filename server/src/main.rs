@@ -13,7 +13,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
 const MAX_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
-const MAX_GAME_FILE_BYTES: usize = 1024 * 1024 * 1024;
+const MAX_GAME_FILE_BYTES: usize = 5 * 1024 * 1024 * 1024;
 
 #[tokio::main]
 async fn main() {
