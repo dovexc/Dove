@@ -73,6 +73,8 @@ pub fn init() -> Connection {
         "ALTER TABLE catalog_games ADD COLUMN version TEXT NOT NULL DEFAULT '1.0.0'",
         [],
     );
+    let _ = conn.execute("ALTER TABLE catalog_games RENAME COLUMN genre TO tags", []);
+    let _ = conn.execute("ALTER TABLE catalog_games ADD COLUMN tags TEXT", []);
 
     conn
 }

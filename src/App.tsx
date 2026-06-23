@@ -91,37 +91,73 @@ function App() {
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
-      <header className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
-        <div className="flex items-center gap-6">
+      <header
+        className="flex h-[62px] flex-none items-center justify-between border-b border-white/5 px-8"
+        style={{ background: "linear-gradient(180deg,#171f29,#121922)" }}
+      >
+        <div className="flex h-full items-center gap-8">
           <button
             onClick={() => {
               setActiveTab("library");
               selectGame(null);
             }}
-            className={`text-lg font-bold ${
-              activeTab === "library" ? "text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
-            }`}
+            className="flex h-full flex-col items-center justify-center gap-1.5"
           >
-            Bibliothek
+            <span
+              className={`text-[17px] font-bold tracking-wide ${
+                activeTab === "library" ? "text-white" : "text-[#9aa7b3] hover:text-zinc-200"
+              }`}
+            >
+              Bibliothek
+            </span>
+            <span
+              className="h-[3px] w-[22px] rounded-sm"
+              style={{
+                background:
+                  activeTab === "library" ? "linear-gradient(90deg,#3aa0ff,#66c0f4)" : "transparent",
+              }}
+            />
           </button>
           <button
             onClick={() => setActiveTab("store")}
-            className={`text-lg font-bold ${
-              activeTab === "store" ? "text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
-            }`}
+            className="flex h-full flex-col items-center justify-center gap-1.5"
           >
-            Store
+            <span
+              className={`text-[17px] font-bold tracking-wide ${
+                activeTab === "store" ? "text-white" : "text-[#9aa7b3] hover:text-zinc-200"
+              }`}
+            >
+              Store
+            </span>
+            <span
+              className="h-[3px] w-[22px] rounded-sm"
+              style={{
+                background:
+                  activeTab === "store" ? "linear-gradient(90deg,#3aa0ff,#66c0f4)" : "transparent",
+              }}
+            />
           </button>
           <button
             onClick={() => setActiveTab("downloads")}
-            className={`text-lg font-bold ${
-              activeTab === "downloads" ? "text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
-            }`}
+            className="flex h-full flex-col items-center justify-center gap-1.5"
           >
-            Downloads
+            <span
+              className={`text-[17px] font-bold tracking-wide ${
+                activeTab === "downloads" ? "text-white" : "text-[#9aa7b3] hover:text-zinc-200"
+              }`}
+            >
+              Downloads
+            </span>
+            <span
+              className="h-[3px] w-[22px] rounded-sm"
+              style={{
+                background:
+                  activeTab === "downloads" ? "linear-gradient(90deg,#3aa0ff,#66c0f4)" : "transparent",
+              }}
+            />
           </button>
         </div>
-        <div className="flex gap-3">
+        <div className="flex items-center gap-3">
           {activeTab === "library" && (
             <>
               <button
@@ -141,14 +177,19 @@ function App() {
           {authToken && authUser ? (
             <button
               onClick={() => setIsProfileOpen(true)}
-              className="text-sm text-zinc-400 hover:text-zinc-200 hover:underline"
+              className="text-sm text-[#9aa7b3] hover:text-zinc-200 hover:underline"
             >
               {authUser.display_name}
             </button>
           ) : (
             <button
               onClick={() => setIsLoginOpen(true)}
-              className="rounded bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
+              className="rounded px-[22px] py-[9px] text-sm font-semibold text-[#dbe7f2]"
+              style={{
+                border: "1px solid rgba(120,180,240,.35)",
+                background:
+                  "linear-gradient(180deg,rgba(70,130,200,.25),rgba(40,80,140,.15))",
+              }}
             >
               Anmelden
             </button>

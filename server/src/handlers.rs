@@ -317,10 +317,11 @@ fn row_to_game(row: &rusqlite::Row) -> rusqlite::Result<CatalogGame> {
         file_url: row.get(7)?,
         file_size_bytes: row.get(8)?,
         version: row.get(9)?,
+        tags: row.get(10)?,
     })
 }
 
-const GAME_COLUMNS: &str = "id, publisher_user_id, title, description, cover_url, price_cents, created_at, file_url, file_size_bytes, version";
+const GAME_COLUMNS: &str = "id, publisher_user_id, title, description, cover_url, price_cents, created_at, file_url, file_size_bytes, version, tags";
 
 pub async fn list_games(
     State(state): State<AppState>,
@@ -360,8 +361,8 @@ pub async fn create_game(
 ) -> Result<Json<CatalogGame>, ApiError> {
     let conn = state.db.lock().map_err(internal_error)?;
     conn.execute(
-        "INSERT INTO catalog_games (publisher_user_id, title, description, cover_url) VALUES (?1, ?2, ?3, ?4)",
-        params![user_id, req.title, req.description, req.cover_url],
+        "INSERT INTO catalog_games (publisher_user_id, title, description, cover_url, tags) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![user_id, req.title, req.description, req.cover_url, req.tags],
     )
     .map_err(internal_error)?;
 

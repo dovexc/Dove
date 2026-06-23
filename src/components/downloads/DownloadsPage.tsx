@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useDownloadStore } from "../../downloadStore";
 import type { DownloadItem } from "../../downloadStore";
+import { useLibraryStore } from "../../store";
 import { formatSize, formatSpeed } from "../../utils";
 import { Sparkline } from "./Sparkline";
 import { PauseIcon, PlayIcon } from "./icons";
@@ -20,6 +21,18 @@ function statusLabel(item: DownloadItem): string {
   }
 }
 
+function Thumbnail({ name, coverPath }: { name: string; coverPath?: string | null }) {
+  return (
+    <div className="flex h-[54px] w-[96px] flex-none items-center justify-center overflow-hidden rounded bg-[#0e151c] text-[10px] text-zinc-500">
+      {coverPath ? (
+        <img src={coverPath} alt={name} className="h-full w-full object-cover" />
+      ) : (
+        <span className="px-1 text-center leading-tight">{name}</span>
+      )}
+    </div>
+  );
+}
+
 export function DownloadsPage({ onOpenGame }: Props) {
   const queue = useDownloadStore((s) => s.queue);
   const history = useDownloadStore((s) => s.history);
@@ -29,7 +42,13 @@ export function DownloadsPage({ onOpenGame }: Props) {
   const pauseDownload = useDownloadStore((s) => s.pauseDownload);
   const resumeDownload = useDownloadStore((s) => s.resumeDownload);
   const startNow = useDownloadStore((s) => s.startNow);
+  const clearHistory = useDownloadStore((s) => s.clearHistory);
+  const games = useLibraryStore((s) => s.games);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
+
+  function coverFor(id: number): string | null {
+    return games.find((g) => g.id === id)?.cover_path ?? null;
+  }
 
   const current = queue.find(
     (item) =>
@@ -42,88 +61,104 @@ export function DownloadsPage({ onOpenGame }: Props) {
       ? Math.min(100, Math.round((current.downloaded / current.total) * 100))
       : null;
 
+  const upNext = current ? [current, ...queued] : queued;
+
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-3xl px-6 py-8">
-        <h1 className="mb-6 text-2xl font-bold text-zinc-100">Downloads</h1>
-
-        <section className="mb-8">
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Läuft gerade
-          </h2>
-          {current ? (
-            <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-              <div className="flex items-center justify-between">
-                <span className="font-medium text-zinc-100">{current.name}</span>
-                <div className="flex items-center gap-3">
-                  <span className="text-sm text-zinc-400">
-                    {current.status === "extracting"
-                      ? "Entpacke..."
-                      : current.status === "paused"
-                        ? `Pausiert · ${percent ?? 0}%`
-                        : `${percent ?? 0}%`}
-                  </span>
-                  {current.status === "downloading" && (
-                    <button
-                      onClick={() => pauseDownload(current.id)}
-                      title="Pausieren"
-                      className="rounded bg-zinc-800 p-1.5 text-zinc-200 hover:bg-zinc-700"
-                    >
-                      <PauseIcon />
-                    </button>
-                  )}
-                  {current.status === "paused" && (
-                    <button
-                      onClick={() => resumeDownload(current.id)}
-                      title="Fortsetzen"
-                      className="rounded bg-sky-600 p-1.5 text-white hover:bg-sky-500"
-                    >
-                      <PlayIcon />
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-zinc-800">
-                <div
-                  className={`h-full rounded-full transition-all ${
-                    current.status === "paused" ? "bg-zinc-500" : "bg-sky-500"
-                  }`}
-                  style={{
-                    width: current.status === "extracting" ? "100%" : `${percent ?? 0}%`,
-                  }}
-                />
-              </div>
-              <div className="mt-3 flex items-center justify-between">
-                <div className="text-xs text-zinc-500">
-                  {current.status === "extracting"
-                    ? "Dateien werden entpackt..."
-                    : current.total
-                      ? <>
-                          {formatSize(current.downloaded)} / {formatSize(current.total)}
-                          {current.status === "downloading" && (
-                            <> · {formatSpeed(current.speedBps)}</>
-                          )}
-                        </>
-                      : "Lädt herunter..."}
-                </div>
-                {current.status === "downloading" && (
-                  <Sparkline values={current.speedHistory} width={180} height={32} />
-                )}
-              </div>
+    <div
+      className="h-full overflow-y-auto"
+      style={{ background: "linear-gradient(180deg,#1b2838,#16202b)" }}
+    >
+      <div
+        className="flex h-[180px] flex-none items-end justify-end px-10 pb-6"
+        style={{
+          background:
+            "radial-gradient(900px 300px at 70% 0%, rgba(40,90,150,.45) 0%, rgba(15,25,35,0) 70%), linear-gradient(180deg,#0e1822,#16202b)",
+        }}
+      >
+        <div className="flex gap-10 text-right text-xs text-zinc-400">
+          <div>
+            <div className="font-semibold uppercase tracking-wide text-zinc-500">Netzwerk</div>
+            <div className="text-base font-bold text-zinc-100">
+              {current ? formatSpeed(current.speedBps) : "0 B/s"}
             </div>
-          ) : (
-            <p className="text-sm text-zinc-500">Aktuell läuft kein Download.</p>
-          )}
-        </section>
+          </div>
+          <div>
+            <div className="font-semibold uppercase tracking-wide text-zinc-500">Warteschlange</div>
+            <div className="text-base font-bold text-zinc-100">{upNext.length}</div>
+          </div>
+        </div>
+      </div>
 
-        <section className="mb-8">
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Warteschlange
-          </h2>
-          {queued.length === 0 ? (
-            <p className="text-sm text-zinc-500">Keine wartenden Downloads.</p>
+      <div className="mx-auto max-w-4xl px-6 py-8">
+        <section className="mb-10">
+          <div className="mb-3 flex items-center gap-3">
+            <h2 className="text-base font-bold text-zinc-100">
+              Als Nächstes <span className="text-zinc-500">({upNext.length})</span>
+            </h2>
+            <div className="h-px flex-1 bg-white/10" />
+          </div>
+
+          {upNext.length === 0 ? (
+            <p className="text-sm text-zinc-500">Keine Downloads in der Warteschlange.</p>
           ) : (
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-1">
+              {current && (
+                <div className="flex items-center gap-4 rounded px-2 py-2.5 hover:bg-white/5">
+                  <Thumbnail name={current.name} coverPath={coverFor(current.id)} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-zinc-100">
+                      {current.name}
+                    </div>
+                    <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          current.status === "paused" ? "bg-zinc-500" : "bg-sky-500"
+                        }`}
+                        style={{
+                          width: current.status === "extracting" ? "100%" : `${percent ?? 0}%`,
+                        }}
+                      />
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-500">
+                      {current.status === "extracting"
+                        ? "Dateien werden entpackt..."
+                        : current.total
+                          ? `${formatSize(current.downloaded)} / ${formatSize(current.total)}${
+                              current.status === "downloading"
+                                ? ` · ${formatSpeed(current.speedBps)}`
+                                : ""
+                            }`
+                          : current.status === "paused"
+                            ? `Pausiert · ${percent ?? 0}%`
+                            : "Lädt herunter..."}
+                    </div>
+                  </div>
+                  {current.status === "downloading" && (
+                    <Sparkline values={current.speedHistory} width={140} height={28} />
+                  )}
+                  <div className="flex items-center gap-2">
+                    {current.status === "downloading" && (
+                      <button
+                        onClick={() => pauseDownload(current.id)}
+                        title="Pausieren"
+                        className="rounded bg-zinc-800 p-2 text-zinc-200 hover:bg-zinc-700"
+                      >
+                        <PauseIcon />
+                      </button>
+                    )}
+                    {current.status === "paused" && (
+                      <button
+                        onClick={() => resumeDownload(current.id)}
+                        title="Fortsetzen"
+                        className="rounded bg-sky-600 p-2 text-white hover:bg-sky-500"
+                      >
+                        <PlayIcon />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {queued.map((item, index) => (
                 <div
                   key={item.id}
@@ -143,31 +178,28 @@ export function DownloadsPage({ onOpenGame }: Props) {
                     if (draggingId != null) reorderQueue(draggingId, item.id);
                     setDraggingId(null);
                   }}
-                  className={`flex cursor-grab items-center justify-between rounded-lg border px-4 py-2.5 ${
-                    dragOverId === item.id
-                      ? "border-sky-400 ring-2 ring-sky-400"
-                      : "border-zinc-800"
-                  } bg-zinc-900`}
+                  className={`flex cursor-grab items-center gap-4 rounded px-2 py-2.5 ${
+                    dragOverId === item.id ? "bg-sky-500/10 ring-1 ring-sky-400" : "hover:bg-white/5"
+                  }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-zinc-500">#{index + 1}</span>
-                    <span className="text-sm text-zinc-200">{item.name}</span>
+                  <Thumbnail name={item.name} coverPath={coverFor(item.id)} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-zinc-100">{item.name}</div>
+                    <div className="mt-1 text-xs text-zinc-500">In Warteschlange · #{index + 1}</div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => startNow(item.id)}
-                      title="Jetzt starten"
-                      className="rounded bg-zinc-800 p-1.5 text-zinc-200 hover:bg-sky-600 hover:text-white"
-                    >
-                      <PlayIcon />
-                    </button>
-                    <button
-                      onClick={() => removeFromQueue(item.id)}
-                      className="text-xs text-zinc-500 hover:text-red-400"
-                    >
-                      Entfernen
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => startNow(item.id)}
+                    title="Jetzt starten"
+                    className="rounded bg-zinc-800 p-2 text-zinc-200 hover:bg-sky-600 hover:text-white"
+                  >
+                    <PlayIcon />
+                  </button>
+                  <button
+                    onClick={() => removeFromQueue(item.id)}
+                    className="text-xs text-zinc-500 hover:text-red-400"
+                  >
+                    Entfernen
+                  </button>
                 </div>
               ))}
             </div>
@@ -175,42 +207,52 @@ export function DownloadsPage({ onOpenGame }: Props) {
         </section>
 
         <section>
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Verlauf
-          </h2>
+          <div className="mb-3 flex items-center gap-3">
+            <h2 className="text-base font-bold text-zinc-100">
+              Abgeschlossen <span className="text-zinc-500">({history.length})</span>
+            </h2>
+            <div className="h-px flex-1 bg-white/10" />
+            {history.length > 0 && (
+              <button
+                onClick={clearHistory}
+                className="rounded bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
+              >
+                Alle löschen
+              </button>
+            )}
+          </div>
+
           {history.length === 0 ? (
             <p className="text-sm text-zinc-500">Noch keine abgeschlossenen Downloads.</p>
           ) : (
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-1">
               {history.map((item) => (
-                <button
+                <div
                   key={`${item.id}-${item.finishedAt}`}
-                  onClick={() => onOpenGame(item.id)}
-                  className="flex w-full items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-2.5 text-left hover:border-zinc-600"
+                  className="flex items-center gap-4 rounded px-2 py-2.5 hover:bg-white/5"
                 >
-                  <div className="flex flex-col">
-                    <span className="text-sm text-zinc-200">{item.name}</span>
-                    {item.error && (
-                      <span className="text-xs text-red-400">{item.error}</span>
-                    )}
+                  <Thumbnail name={item.name} coverPath={coverFor(item.id)} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-zinc-100">{item.name}</div>
+                    <div className="mt-1 text-xs text-zinc-500">
+                      {item.status === "completed" && item.total > 0
+                        ? `${formatSize(item.total)} / ${formatSize(item.total)} heruntergeladen`
+                        : item.error ?? "Fehlgeschlagen"}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    {item.status === "completed" && item.total > 0 && (
-                      <span className="text-xs text-zinc-500">
-                        {formatSize(item.total)}
-                      </span>
-                    )}
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                        item.status === "completed"
-                          ? "bg-emerald-900/60 text-emerald-300"
-                          : "bg-red-900/60 text-red-300"
-                      }`}
+                  {item.status === "completed" ? (
+                    <button
+                      onClick={() => onOpenGame(item.id)}
+                      className="flex items-center gap-1.5 rounded bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500"
                     >
+                      <PlayIcon /> Spielen
+                    </button>
+                  ) : (
+                    <span className="rounded-full bg-red-900/60 px-3 py-1 text-xs font-semibold text-red-300">
                       {statusLabel(item)}
                     </span>
-                  </div>
-                </button>
+                  )}
+                </div>
               ))}
             </div>
           )}

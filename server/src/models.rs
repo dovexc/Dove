@@ -72,6 +72,7 @@ pub struct CatalogGame {
     pub file_url: Option<String>,
     pub file_size_bytes: Option<i64>,
     pub version: String,
+    pub tags: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +80,7 @@ pub struct NewCatalogGame {
     pub title: String,
     pub description: Option<String>,
     pub cover_url: Option<String>,
+    pub tags: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]

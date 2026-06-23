@@ -57,6 +57,7 @@ interface DownloadState {
   pauseDownload: (id: number) => Promise<void>;
   resumeDownload: (id: number) => void;
   startNow: (id: number) => void;
+  clearHistory: () => void;
 }
 
 export const useDownloadStore = create<DownloadState>((set, get) => ({
@@ -101,6 +102,8 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   },
 
   setDraggingId: (id) => set({ draggingId: id }),
+
+  clearHistory: () => set({ history: [] }),
 
   handleProgress: (payload) => {
     const queue = get().queue;

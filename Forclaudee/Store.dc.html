@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-track { background: #0c1116; }
+  ::-webkit-scrollbar-thumb { background: #2a3a4a; border-radius: 6px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a4f63; }
+</style>
+</helmet>
+
+<div style="width:100%; height:100%; min-height:100vh; display:flex; flex-direction:column; background:#0b1016; font-family:'Archivo',system-ui,sans-serif; color:#c7d5e0; overflow:hidden;">
+
+  <!-- Title bar -->
+  <div style="height:34px; flex:none; display:flex; align-items:center; justify-content:space-between; background:#0a0e13; padding:0 14px; -webkit-app-region:drag;">
+    <div style="display:flex; align-items:center; gap:9px;">
+      <div style="width:15px; height:15px; border-radius:50%; background:radial-gradient(circle at 35% 30%,#5fb0ff,#1a6fc4); box-shadow:0 0 8px rgba(60,150,255,.5);"></div>
+      <span style="font-size:12px; color:#7b8794; letter-spacing:.2px;">game-launcher</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:20px;">
+      <span style="color:#5b6671; font-size:14px;">&#9472;</span>
+      <span style="color:#5b6671; font-size:13px;">&#9633;</span>
+      <span style="color:#8a949f; font-size:15px;">&#10005;</span>
+    </div>
+  </div>
+
+  <!-- Top nav -->
+  <div style="height:62px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 32px; background:linear-gradient(180deg,#171f29,#121922); border-bottom:1px solid rgba(255,255,255,.04);">
+    <div style="display:flex; align-items:center; gap:30px;">
+      <span style="font-size:17px; font-weight:600; color:#9aa7b3; letter-spacing:.3px;">Bibliothek</span>
+      <div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
+        <span style="font-size:17px; font-weight:700; color:#ffffff; letter-spacing:.3px;">Store</span>
+        <span style="width:22px; height:3px; border-radius:2px; background:linear-gradient(90deg,#3aa0ff,#66c0f4);"></span>
+      </div>
+      <span style="font-size:17px; font-weight:600; color:#9aa7b3; letter-spacing:.3px;">Downloads</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:16px;">
+      <button style="font-family:inherit; font-size:14px; font-weight:600; color:#dbe7f2; padding:9px 22px; border-radius:4px; border:1px solid rgba(120,180,240,.35); background:linear-gradient(180deg,rgba(70,130,200,.25),rgba(40,80,140,.15)); cursor:pointer;" style-hover="background:linear-gradient(180deg,rgba(90,160,240,.4),rgba(50,100,170,.25)); border-color:rgba(150,200,255,.6);">Anmelden</button>
+    </div>
+  </div>
+
+  <!-- Scroll area -->
+  <div style="flex:1; overflow-y:auto; overflow-x:hidden; background:radial-gradient(1200px 600px at 50% -150px,#1c2c3e 0%,#0d141c 55%,#0b1016 100%);">
+    <div style="max-width:1500px; margin:0 auto; padding:34px 40px 90px;">
+
+      <!-- Featured -->
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:18px;">
+        <h2 style="margin:0; font-size:23px; font-weight:800; color:#e8f1f8; letter-spacing:.4px;">Empfohlen &amp; Featured</h2>
+        <div style="display:flex; gap:10px;">
+          <button onClick="{{ prev }}" style="width:38px; height:38px; border-radius:6px; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.04); color:#9fb2c2; font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center;" style-hover="background:rgba(80,150,230,.25); color:#fff;">&#10094;</button>
+          <button onClick="{{ next }}" style="width:38px; height:38px; border-radius:6px; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.04); color:#9fb2c2; font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center;" style-hover="background:rgba(80,150,230,.25); color:#fff;">&#10095;</button>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:0; border-radius:10px; overflow:hidden; box-shadow:0 24px 60px rgba(0,0,0,.55); height:440px;">
+        <!-- Hero art -->
+        <div style="flex:1; position:relative; background:{{ heroArt }};">
+          <div style="position:absolute; inset:0; background:radial-gradient(700px 380px at 22% 40%,rgba(0,0,0,0) 0%,rgba(0,0,0,.35) 100%);"></div>
+          <sc-if value="{{ hero.live }}" hint-placeholder-val="{{ true }}">
+            <div style="position:absolute; top:20px; left:20px; display:flex; align-items:center; gap:7px; background:rgba(10,14,19,.8); padding:6px 13px; border-radius:4px; font-size:12px; font-weight:700; letter-spacing:1px; color:#fff;">
+              <span style="width:8px; height:8px; border-radius:50%; background:#ff4655; box-shadow:0 0 8px #ff4655;"></span>LIVE
+            </div>
+          </sc-if>
+          <div style="position:absolute; left:46px; bottom:54px; right:46px;">
+            <div style="font-size:16px; font-weight:600; letter-spacing:5px; color:rgba(255,255,255,.7); text-transform:uppercase; margin-bottom:8px;">{{ hero.genre }}</div>
+            <div style="font-size:62px; line-height:.98; font-weight:900; color:#fff; letter-spacing:-1px; text-shadow:0 4px 30px rgba(0,0,0,.6); text-wrap:balance;">{{ hero.name }}</div>
+          </div>
+        </div>
+
+        <!-- Info panel -->
+        <div style="width:392px; flex:none; background:linear-gradient(180deg,#1a2735,#141d28); padding:26px 26px 22px; display:flex; flex-direction:column;">
+          <div style="font-size:24px; font-weight:800; color:#fff; margin-bottom:6px;">{{ hero.name }}</div>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:20px;">
+            <span style="font-size:14px; font-weight:600; color:{{ hero.reviewColor }};">{{ hero.review }}</span>
+            <span style="font-size:13px; color:#7b8794;">({{ hero.reviewCount }} Reviews)</span>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:11px; margin-bottom:auto;">
+            <sc-for list="{{ hero.shots }}" as="shot" hint-placeholder-count="4">
+              <div style="aspect-ratio:16/10; border-radius:5px; background:{{ shot }}; box-shadow:inset 0 0 0 1px rgba(255,255,255,.05), 0 6px 14px rgba(0,0,0,.35);"></div>
+            </sc-for>
+          </div>
+
+          <div style="margin-top:20px; font-size:14px; color:#9fb2c2;">Jetzt verfügbar <span style="color:{{ hero.tagColor }}; font-weight:700;">{{ hero.tag }}</span></div>
+
+          <div style="display:flex; align-items:center; justify-content:flex-end; gap:12px; margin-top:14px;">
+            <sc-if value="{{ hero.discount }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex; align-items:stretch; border-radius:5px; overflow:hidden;">
+                <div style="background:#4c6b22; color:#beee11; font-weight:800; font-size:18px; display:flex; align-items:center; padding:0 11px;">{{ hero.discount }}</div>
+                <div style="background:#1a2530; padding:7px 13px; text-align:right;">
+                  <div style="font-size:11px; color:#6b7884; text-decoration:line-through;">{{ hero.oldPrice }}</div>
+                  <div style="font-size:16px; font-weight:700; color:#beee11;">{{ hero.price }}</div>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ hero.free }}" hint-placeholder-val="{{ true }}">
+              <div style="background:#2a3f5a; color:#9fe3ff; font-weight:800; font-size:17px; padding:10px 18px; border-radius:5px;">{{ hero.price }}</div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+
+      <!-- carousel dots -->
+      <div style="display:flex; justify-content:center; gap:8px; margin-top:16px;">
+        <sc-for list="{{ dots }}" as="d" hint-placeholder-count="3">
+          <button onClick="{{ d.go }}" style="width:{{ d.w }}; height:7px; border-radius:4px; border:none; cursor:pointer; background:{{ d.bg }}; transition:all .2s;"></button>
+        </sc-for>
+      </div>
+
+      <!-- Catalog -->
+      <div style="margin-top:48px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:18px;">
+          <h2 style="margin:0; font-size:23px; font-weight:800; color:#e8f1f8; letter-spacing:.4px;">Im Katalog stöbern</h2>
+          <span style="font-size:13px; color:#7b8794;">{{ resultCount }} Spiele</span>
+        </div>
+
+        <!-- search + category -->
+        <div style="display:flex; gap:14px; margin-bottom:22px;">
+          <div style="flex:1; display:flex; align-items:center; gap:11px; background:#10171f; border:1px solid rgba(255,255,255,.07); border-radius:7px; padding:0 16px; height:46px;">
+            <span style="color:#5b6b7a; font-size:16px;">&#128269;</span>
+            <input value="{{ query }}" onInput="{{ onSearch }}" placeholder="Spiele durchsuchen..." style="flex:1; background:none; border:none; outline:none; color:#dbe7f2; font-family:inherit; font-size:15px;" />
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <sc-for list="{{ cats }}" as="c" hint-placeholder-count="5">
+              <button onClick="{{ c.go }}" style="font-family:inherit; font-size:13px; font-weight:600; padding:0 16px; height:46px; border-radius:7px; cursor:pointer; border:1px solid {{ c.border }}; background:{{ c.bg }}; color:{{ c.color }};">{{ c.name }}</button>
+            </sc-for>
+          </div>
+        </div>
+
+        <!-- grid -->
+        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:22px;">
+          <sc-for list="{{ catalog }}" as="g" hint-placeholder-count="8">
+            <div style="border-radius:9px; overflow:hidden; background:#141c26; border:1px solid rgba(255,255,255,.05); cursor:pointer; transition:transform .18s, box-shadow .18s; box-shadow:0 6px 18px rgba(0,0,0,.3);" style-hover="transform:translateY(-5px); box-shadow:0 16px 34px rgba(0,0,0,.5);">
+              <div style="aspect-ratio:3/4; position:relative; background:{{ g.cover }};">
+                <div style="position:absolute; inset:0; background:linear-gradient(180deg,rgba(0,0,0,0) 45%,rgba(0,0,0,.55) 100%);"></div>
+                <div style="position:absolute; top:12px; left:12px; font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:rgba(255,255,255,.8); background:rgba(0,0,0,.35); padding:4px 9px; border-radius:4px;">{{ g.genre }}</div>
+                <div style="position:absolute; left:16px; right:16px; bottom:16px; font-size:22px; font-weight:900; color:#fff; line-height:1.02; letter-spacing:-.3px; text-shadow:0 2px 14px rgba(0,0,0,.6);">{{ g.name }}</div>
+              </div>
+              <div style="padding:13px 14px; display:flex; align-items:center; justify-content:space-between;">
+                <span style="font-size:14px; font-weight:700; color:{{ g.priceColor }};">{{ g.price }}</span>
+                <sc-if value="{{ g.discount }}" hint-placeholder-val="{{ true }}">
+                  <span style="font-size:12px; font-weight:800; color:#beee11; background:#3c5418; padding:3px 8px; border-radius:4px;">{{ g.discount }}</span>
+                </sc-if>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- bottom status bar -->
+  <div style="height:40px; flex:none; display:flex; align-items:center; gap:20px; padding:0 28px; background:#0a0e13; border-top:1px solid rgba(255,255,255,.05); font-size:13px;">
+    <span style="color:#9aa7b3; font-weight:600;">Downloads</span>
+    <span style="display:flex; align-items:center; gap:8px; color:#6b7884;"><span style="width:8px; height:8px; border-radius:50%; background:#5fd17a;"></span>Bereit</span>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { active: 0, query: "", category: "Alle" };
+
+  get featured() {
+    return [
+      { name:"Mein erstes Indie-Spiel", genre:"Abenteuer", review:"Sehr positiv", reviewColor:"#66c0f4", reviewCount:"42",
+        art:"linear-gradient(125deg,#2b5876 0%,#4e4376 100%)", live:true, free:true, price:"Kostenlos", tag:"\u00b7 Demo", tagColor:"#5fd17a",
+        shots:["linear-gradient(135deg,#3a6073,#16222a)","linear-gradient(135deg,#614385,#516395)","linear-gradient(135deg,#1f4037,#2c5364)","linear-gradient(135deg,#42275a,#734b6d)"] },
+      { name:"Neon Drift", genre:"Rennspiel", review:"Gr\u00f6\u00dftenteils positiv", reviewColor:"#66c0f4", reviewCount:"318",
+        art:"linear-gradient(125deg,#ff2e8b 0%,#1a0a3a 70%)", discount:"-25%", oldPrice:"12,99\u20ac", price:"9,74\u20ac", tag:"\u00b7 Early Access", tagColor:"#a4d007",
+        shots:["linear-gradient(135deg,#f7008e,#330867)","linear-gradient(135deg,#7028e4,#e5b2ca)","linear-gradient(135deg,#ff0084,#33001b)","linear-gradient(135deg,#240b36,#c31432)"] },
+      { name:"Hollow Depths", genre:"Metroidvania", review:"\u00c4u\u00dferst positiv", reviewColor:"#66c0f4", reviewCount:"1.224",
+        art:"linear-gradient(125deg,#0f2027 0%,#203a43 50%,#2c5364 100%)", price:"14,99\u20ac", free:true, tag:"", tagColor:"#5fd17a",
+        shots:["linear-gradient(135deg,#0f2027,#2c5364)","linear-gradient(135deg,#16222a,#3a6073)","linear-gradient(135deg,#232526,#414345)","linear-gradient(135deg,#1c2541,#3a506b)"] },
+    ];
+  }
+
+  get games() {
+    return [
+      { name:"Mein erstes Indie-Spiel", genre:"Abenteuer", price:"Kostenlos", free:true, cover:"linear-gradient(135deg,#2b5876,#4e4376)" },
+      { name:"Neon Drift", genre:"Rennspiel", price:"9,74\u20ac", discount:"-25%", cover:"linear-gradient(135deg,#f7008e,#330867)" },
+      { name:"Hollow Depths", genre:"Metroidvania", price:"14,99\u20ac", cover:"linear-gradient(135deg,#0f2027,#2c5364)" },
+      { name:"Pixel Harvest", genre:"Simulation", price:"9,99\u20ac", cover:"linear-gradient(135deg,#56ab2f,#a8e063)" },
+      { name:"Starbound Echoes", genre:"Roguelike", price:"17,99\u20ac", discount:"-10%", cover:"linear-gradient(135deg,#360033,#0b8793)" },
+      { name:"Cinder & Smoke", genre:"Action", price:"16,99\u20ac", cover:"linear-gradient(135deg,#c31432,#240b36)" },
+      { name:"Tiny Kingdoms", genre:"Strategie", price:"7,99\u20ac", cover:"linear-gradient(135deg,#ee9ca7,#7b4397)" },
+      { name:"Lumen", genre:"Puzzle", price:"Kostenlos", free:true, cover:"linear-gradient(135deg,#0052d4,#65c7f7)" },
+    ];
+  }
+
+  renderVals() {
+    const f = this.featured;
+    const hero = f[this.state.active];
+    const cats = ["Alle","Abenteuer","Action","Rennspiel","Simulation","Strategie","Puzzle","Roguelike"];
+
+    const q = this.state.query.toLowerCase();
+    const cat = this.state.category;
+    const catalog = this.games.filter(g =>
+      (cat === "Alle" || g.genre === cat) &&
+      (q === "" || g.name.toLowerCase().includes(q))
+    ).map(g => ({ ...g, priceColor: g.free ? "#9fe3ff" : "#dbe7f2" }));
+
+    return {
+      hero: hero,
+      heroArt: hero.art,
+      next: () => this.setState(s => ({ active: (s.active + 1) % f.length })),
+      prev: () => this.setState(s => ({ active: (s.active - 1 + f.length) % f.length })),
+      dots: f.map((_, i) => ({
+        go: () => this.setState({ active: i }),
+        w: i === this.state.active ? "26px" : "9px",
+        bg: i === this.state.active ? "#66c0f4" : "rgba(255,255,255,.2)",
+      })),
+      query: this.state.query,
+      onSearch: (e) => this.setState({ query: e.target.value }),
+      resultCount: catalog.length,
+      cats: cats.map(c => {
+        const on = c === this.state.category;
+        return {
+          name: c,
+          go: () => this.setState({ category: c }),
+          bg: on ? "linear-gradient(180deg,#3aa0ff,#2475c7)" : "rgba(255,255,255,.04)",
+          border: on ? "rgba(150,200,255,.5)" : "rgba(255,255,255,.07)",
+          color: on ? "#ffffff" : "#9fb2c2",
+        };
+      }),
+      catalog: catalog,
+    };
+  }
+}
+</script>
+</body>
+</html>

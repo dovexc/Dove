@@ -85,10 +85,12 @@ export interface CatalogGame {
   file_url: string | null;
   file_size_bytes: number | null;
   version: string;
+  tags: string | null;
 }
 
 export interface NewCatalogGame {
   title: string;
   description: string | null;
   cover_url: string | null;
+  tags: string | null;
 }
