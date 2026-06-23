@@ -20,6 +20,7 @@ export function StoreView() {
 
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [uploadTargetId, setUploadTargetId] = useState<number | null>(null);
+  const [uploadVersion, setUploadVersion] = useState<string | null>(null);
 
   const [showPublishForm, setShowPublishForm] = useState(false);
   const [title, setTitle] = useState("");
@@ -48,17 +49,24 @@ export function StoreView() {
     setShowPublishForm(false);
   }
 
-  function startUpload(gameId: number) {
+  function startUpload(gameId: number, currentVersion: string) {
+    const version = window.prompt(
+      "Versionsnummer für diesen Upload:",
+      currentVersion || "1.0.0"
+    );
+    if (!version || !version.trim()) return;
     setUploadTargetId(gameId);
+    setUploadVersion(version.trim());
     uploadInputRef.current?.click();
   }
 
   async function handleUploadFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     const gameId = uploadTargetId;
+    const version = uploadVersion;
     e.target.value = "";
-    if (!file || gameId === null) return;
-    await uploadGameFile(gameId, file);
+    if (!file || gameId === null || !version) return;
+    await uploadGameFile(gameId, file, version);
   }
 
   return (
@@ -153,7 +161,7 @@ export function StoreView() {
                   </p>
                   {game.file_size_bytes != null && (
                     <span className="text-xs text-zinc-500">
-                      Download: {formatSize(game.file_size_bytes)}
+                      Download: {formatSize(game.file_size_bytes)} · v{game.version}
                     </span>
                   )}
                   <div className="mt-1 flex items-center justify-between gap-2">
@@ -180,14 +188,14 @@ export function StoreView() {
                   </div>
                   {isPublisher && (
                     <button
-                      onClick={() => startUpload(game.id)}
+                      onClick={() => startUpload(game.id, game.version)}
                       disabled={uploadingId === game.id}
                       className="mt-1 rounded bg-zinc-800 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
                     >
                       {uploadingId === game.id
                         ? "Lädt hoch..."
                         : game.file_url
-                          ? "Datei ersetzen"
+                          ? "Neue Version hochladen"
                           : "Datei hochladen (.zip)"}
                     </button>
                   )}

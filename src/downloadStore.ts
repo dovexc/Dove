@@ -56,6 +56,7 @@ interface DownloadState {
   processQueue: () => void;
   pauseDownload: (id: number) => Promise<void>;
   resumeDownload: (id: number) => void;
+  startNow: (id: number) => void;
 }
 
 export const useDownloadStore = create<DownloadState>((set, get) => ({
@@ -155,38 +156,26 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
 
   processQueue: () => {
     const queue = get().queue;
-    const alreadyDownloading = queue.some(
-      (item) => item.status === "downloading" || item.status === "extracting"
+    // A "paused" item still occupies the active slot — it must not be
+    // silently replaced by the next queued item. Only an explicit resume or
+    // startNow() call may free the slot.
+    const slotTaken = queue.some(
+      (item) =>
+        item.status === "downloading" ||
+        item.status === "extracting" ||
+        item.status === "paused"
     );
-    if (alreadyDownloading) return;
+    if (slotTaken) return;
 
     const next = queue.find((item) => item.status === "queued");
     if (!next) return;
 
     set({
-      queue: queue.map((i) =>
+      queue: get().queue.map((i) =>
         i.id === next.id ? { ...i, status: "downloading" as DownloadStatus } : i
       ),
     });
-    lastSamples.set(next.id, { at: Date.now(), bytes: 0 });
-
-    invoke<Game>("install_catalog_game", { id: next.id })
-      .then(() => {
-        finishDownload(next.id, "completed");
-      })
-      .catch((e) => {
-        const message = String(e);
-        if (message.includes(PAUSED_SENTINEL)) {
-          // Already marked "paused" via the install-progress event; nothing
-          // further to do here, the item stays in the queue for resuming.
-          return;
-        }
-        finishDownload(next.id, "error", message);
-      })
-      .finally(() => {
-        useLibraryStore.getState().fetchGames();
-        get().processQueue();
-      });
+    beginDownload(next.id);
   },
 
   pauseDownload: async (id) => {
@@ -196,12 +185,59 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   resumeDownload: (id) => {
     set({
       queue: get().queue.map((i) =>
-        i.id === id ? { ...i, status: "queued" as DownloadStatus } : i
+        i.id === id ? { ...i, status: "downloading" as DownloadStatus } : i
       ),
     });
-    get().processQueue();
+    beginDownload(id);
+  },
+
+  startNow: (id) => {
+    const queue = get().queue;
+    const target = queue.find((i) => i.id === id);
+    if (!target || target.status !== "queued") return;
+
+    const active = queue.find(
+      (i) =>
+        i.id !== id &&
+        (i.status === "downloading" || i.status === "extracting" || i.status === "paused")
+    );
+
+    if (active && (active.status === "downloading" || active.status === "extracting")) {
+      invoke("pause_download", { id: active.id }).catch(() => {});
+    }
+
+    set({
+      queue: get().queue.map((i) => {
+        if (i.id === id) return { ...i, status: "downloading" as DownloadStatus };
+        if (active && i.id === active.id) return { ...i, status: "queued" as DownloadStatus };
+        return i;
+      }),
+    });
+    beginDownload(id);
   },
 }));
+
+function beginDownload(id: number) {
+  lastSamples.set(id, { at: Date.now(), bytes: 0 });
+
+  invoke<Game>("install_catalog_game", { id })
+    .then(() => {
+      finishDownload(id, "completed");
+    })
+    .catch((e) => {
+      const message = String(e);
+      if (message.includes(PAUSED_SENTINEL)) {
+        // Already marked "paused" via the install-progress event; nothing
+        // further to do here, the item stays in the active slot for resuming.
+        return;
+      }
+      finishDownload(id, "error", message);
+    })
+    .finally(() => {
+      useLibraryStore.getState().fetchGames();
+      useDownloadStore.getState().processQueue();
+    });
+}
 
 function finishDownload(id: number, status: "completed" | "error", error?: string) {
   lastSamples.delete(id);

@@ -13,6 +13,15 @@ pub struct Game {
     pub last_played_at: Option<String>,
     pub is_running: bool,
     pub catalog_game_id: Option<i64>,
+    pub installed_version: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UpdateAvailable {
+    pub installed_version: Option<String>,
+    pub latest_version: String,
+    pub files_to_update: usize,
+    pub bytes_to_download: i64,
 }
 
 #[derive(Debug, Deserialize)]

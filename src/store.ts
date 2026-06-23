@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Game, NewGame, UpdateGame, SteamGame } from "./types";
+import type { Game, NewGame, UpdateGame, SteamGame, UpdateAvailable } from "./types";
 
 interface LibraryState {
   games: Game[];
@@ -36,6 +36,8 @@ interface LibraryState {
   importSteamGames: (games: SteamGame[]) => Promise<void>;
   openContextMenu: (game: Game, x: number, y: number) => void;
   closeContextMenu: () => void;
+  updateAvailable: Record<number, UpdateAvailable | null>;
+  checkForUpdate: (id: number) => Promise<void>;
   reportError: (message: string) => void;
   clearError: () => void;
 }
@@ -52,6 +54,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   steamScanError: null,
   steamScanLoading: false,
   contextMenu: null,
+  updateAvailable: {},
   error: null,
 
   fetchGames: async () => {
@@ -165,6 +168,15 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   openContextMenu: (game, x, y) => set({ contextMenu: { game, x, y } }),
   closeContextMenu: () => set({ contextMenu: null }),
+
+  checkForUpdate: async (id) => {
+    try {
+      const update = await invoke<UpdateAvailable | null>("check_for_update", { id });
+      set({ updateAvailable: { ...get().updateAvailable, [id]: update } });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
 
   reportError: (message) => set({ error: message }),
 

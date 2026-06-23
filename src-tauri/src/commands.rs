@@ -1,4 +1,4 @@
-use crate::models::{Game, NewGame, UpdateGame};
+use crate::models::{Game, NewGame, UpdateAvailable, UpdateGame};
 use crate::state::AppState;
 use crate::steam::SteamGame;
 use chrono::Utc;
@@ -24,6 +24,7 @@ fn row_to_game(row: &rusqlite::Row, running: &HashSet<i64>) -> rusqlite::Result<
         last_played_at: row.get(8)?,
         is_running: running.contains(&id),
         catalog_game_id: row.get(9)?,
+        installed_version: row.get(10)?,
     })
 }
 
@@ -31,7 +32,7 @@ const GAME_SELECT: &str = "
     SELECT g.id, g.name, g.exe_path, g.cover_path, g.description, g.total_playtime_seconds,
            g.created_at, g.size_on_disk_bytes,
            (SELECT MAX(started_at) FROM play_sessions ps WHERE ps.game_id = g.id) AS last_played_at,
-           g.catalog_game_id
+           g.catalog_game_id, g.installed_version
     FROM games g
 ";
 
@@ -296,9 +297,23 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
             let running_set = state.running.clone();
             let app_handle = app.clone();
             std::thread::spawn(move || {
-                watch_steam_game(db, running_set, app_handle, id, install_dir);
+                watch_process_under_dir(db, running_set, app_handle, id, install_dir);
             });
         }
+
+        return Ok(());
+    }
+
+    if exe_path.to_lowercase().ends_with(".app") {
+        open::that(&exe_path).map_err(|e| format!("App konnte nicht gestartet werden: {e}"))?;
+
+        let db = state.db.clone();
+        let running_set = state.running.clone();
+        let app_handle = app.clone();
+        let bundle_path = exe_path.clone();
+        std::thread::spawn(move || {
+            watch_process_under_dir(db, running_set, app_handle, id, bundle_path);
+        });
 
         return Ok(());
     }
@@ -360,7 +375,11 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
     Ok(())
 }
 
-fn watch_steam_game(
+/// Watches for a process whose executable path lives under `install_dir`
+/// (used both for Steam games launched via `steam://` and for apps launched
+/// indirectly, e.g. macOS `.app` bundles opened via `open`, where we don't
+/// get a direct child process handle to `.wait()` on).
+fn watch_process_under_dir(
     db: Arc<Mutex<Connection>>,
     running_set: Arc<Mutex<HashSet<i64>>>,
     app: AppHandle,
@@ -449,6 +468,83 @@ fn collect_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
+/// Walks a directory recursively and collects every macOS `.app` bundle
+/// found (without descending into the bundle itself).
+fn collect_app_bundles(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) == Some("app") {
+                out.push(path);
+            } else {
+                collect_app_bundles(&path, out);
+            }
+        }
+    }
+}
+
+/// Heuristic for "this is probably the game's launcher", used to pick an
+/// executable out of a folder containing multiple files. Files with no
+/// extension are very commonly Unix binaries; the rest are well-known
+/// script/launcher extensions across platforms.
+fn looks_like_executable(path: &std::path::Path) -> bool {
+    match path.extension().and_then(|e| e.to_str()) {
+        None => true,
+        Some(ext) => matches!(
+            ext.to_lowercase().as_str(),
+            "sh" | "command" | "exe" | "bat" | "appimage"
+        ),
+    }
+}
+
+#[cfg(unix)]
+fn make_executable(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = std::fs::metadata(path) {
+        let mut perms = meta.permissions();
+        perms.set_mode(perms.mode() | 0o111);
+        let _ = std::fs::set_permissions(path, perms);
+    }
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &std::path::Path) {}
+
+/// Picks the most likely game executable out of an extracted install
+/// directory: a single `.app` bundle wins outright (macOS), then a single
+/// file overall, then a single file that "looks like" an executable. If
+/// none of these are unambiguous, the caller falls back to asking the user
+/// to pick the file manually.
+fn detect_exe_path(install_dir: &std::path::Path) -> Option<String> {
+    let mut app_bundles = Vec::new();
+    collect_app_bundles(install_dir, &mut app_bundles);
+    if app_bundles.len() == 1 {
+        return Some(app_bundles[0].to_string_lossy().into_owned());
+    }
+    if !app_bundles.is_empty() {
+        return None;
+    }
+
+    let mut files = Vec::new();
+    collect_files(install_dir, &mut files);
+
+    if files.len() == 1 {
+        make_executable(&files[0]);
+        return Some(files[0].to_string_lossy().into_owned());
+    }
+
+    let candidates: Vec<_> = files.iter().filter(|f| looks_like_executable(f)).collect();
+    if candidates.len() == 1 {
+        make_executable(candidates[0]);
+        return Some(candidates[0].to_string_lossy().into_owned());
+    }
+
+    None
+}
+
 /// Removes the cancellation flag for a download when dropped, so it can't
 /// linger and falsely "pause" a later, unrelated download of the same id.
 struct DownloadGuard {
@@ -464,9 +560,148 @@ impl Drop for DownloadGuard {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct RemoteManifestFile {
+    relative_path: String,
+    sha256: String,
+    size_bytes: i64,
+}
+
+#[derive(serde::Deserialize)]
+struct RemoteManifest {
+    version: String,
+    files: Vec<RemoteManifestFile>,
+}
+
+fn fetch_manifest(catalog_game_id: i64) -> Result<RemoteManifest, String> {
+    ureq::get(&format!(
+        "{STORE_API_BASE}/api/games/{catalog_game_id}/manifest"
+    ))
+    .call()
+    .map_err(|e| format!("Spiel-Infos konnten nicht geladen werden: {e}"))?
+    .into_json()
+    .map_err(|e| e.to_string())
+}
+
+fn encode_relative_path(relative_path: &str) -> String {
+    relative_path
+        .split('/')
+        .map(|segment| urlencoding::encode(segment).into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn local_installed_hashes(
+    conn: &Connection,
+    game_id: i64,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT relative_path, sha256 FROM installed_files WHERE game_id = ?1")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![game_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Downloads a single manifest file into `dest_path`, resuming from a
+/// matching `.part` file on disk if one exists, and reporting progress
+/// against the overall (multi-file) download totals.
+fn download_one_file(
+    app: &AppHandle,
+    cancel_flag: &Arc<AtomicBool>,
+    id: i64,
+    url: &str,
+    dest_path: &std::path::Path,
+    hash_suffix: &str,
+    downloaded_total: &mut u64,
+    grand_total: u64,
+    last_emit: &mut std::time::Instant,
+) -> Result<(), String> {
+    use std::fs::OpenOptions;
+    use std::io::{Read, Write};
+
+    if let Some(parent) = dest_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let temp_path = dest_path.with_file_name(format!(
+        "{}.{}.part",
+        dest_path.file_name().unwrap_or_default().to_string_lossy(),
+        hash_suffix
+    ));
+    let existing_bytes = std::fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0);
+
+    let mut request = ureq::get(url);
+    if existing_bytes > 0 {
+        request = request.set("Range", &format!("bytes={existing_bytes}-"));
+    }
+    let response = request
+        .call()
+        .map_err(|e| format!("Download fehlgeschlagen: {e}"))?;
+    let is_resuming = existing_bytes > 0 && response.status() == 206;
+
+    let mut reader = response.into_reader();
+    let mut file = if is_resuming {
+        OpenOptions::new()
+            .append(true)
+            .open(&temp_path)
+            .map_err(|e| e.to_string())?
+    } else {
+        std::fs::File::create(&temp_path).map_err(|e| e.to_string())?
+    };
+
+    if is_resuming {
+        *downloaded_total += existing_bytes;
+    }
+
+    let mut buf = [0u8; 65536];
+    loop {
+        if cancel_flag.load(Ordering::SeqCst) {
+            app.emit(
+                "install-progress",
+                serde_json::json!({ "id": id, "phase": "paused" }),
+            )
+            .ok();
+            return Err(PAUSED_SENTINEL.to_string());
+        }
+
+        let read = reader.read(&mut buf).map_err(|e| e.to_string())?;
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buf[..read]).map_err(|e| e.to_string())?;
+        *downloaded_total += read as u64;
+
+        if last_emit.elapsed().as_millis() >= 100 {
+            app.emit(
+                "install-progress",
+                serde_json::json!({
+                    "id": id,
+                    "phase": "downloading",
+                    "downloaded": *downloaded_total,
+                    "total": grand_total,
+                }),
+            )
+            .ok();
+            *last_emit = std::time::Instant::now();
+        }
+    }
+    drop(file);
+
+    std::fs::rename(&temp_path, dest_path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// The actual download/extract work, run off the main thread via
 /// `spawn_blocking` so the UI keeps rendering progress updates instead of
-/// freezing for the duration of the (blocking) network + disk I/O.
+/// freezing for the duration of the (blocking) network + disk I/O. Acts as
+/// both a fresh install AND an update: only files whose hash differs from
+/// what's already recorded locally are downloaded, and locally-known files
+/// removed from the new manifest are deleted — a delta update, not a full
+/// re-download, regardless of overall game size.
 fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Result<Game, String> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
     {
@@ -478,30 +713,23 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
         id,
     };
 
-    let catalog_game_id: Option<i64> = {
+    let (catalog_game_id, current_exe_path): (Option<i64>, String) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         conn.query_row(
-            "SELECT catalog_game_id FROM games WHERE id = ?1",
+            "SELECT catalog_game_id, exe_path FROM games WHERE id = ?1",
             params![id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|e| e.to_string())?
     };
     let catalog_game_id =
         catalog_game_id.ok_or("Dieses Spiel ist nicht mit dem Store verknüpft")?;
+    let is_fresh_install = current_exe_path.starts_with("store://");
 
-    let info: serde_json::Value = ureq::get(&format!("{STORE_API_BASE}/api/games/{catalog_game_id}"))
-        .call()
-        .map_err(|e| format!("Spiel-Infos konnten nicht geladen werden: {e}"))?
-        .into_json()
-        .map_err(|e| e.to_string())?;
-
-    let file_url = info
-        .get("file_url")
-        .and_then(|v| v.as_str())
-        .ok_or("Für dieses Spiel wurde noch keine Datei vom Publisher hochgeladen")?;
-
-    let download_url = format!("{STORE_API_BASE}{file_url}");
+    let manifest = fetch_manifest(catalog_game_id)?;
+    if manifest.files.is_empty() {
+        return Err("Für dieses Spiel wurde noch keine Datei vom Publisher hochgeladen".into());
+    }
 
     let app_data_dir = app
         .path()
@@ -510,99 +738,76 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
     let install_dir = app_data_dir.join("installed").join(id.to_string());
     std::fs::create_dir_all(&install_dir).map_err(|e| e.to_string())?;
 
-    let zip_path = install_dir.join("download.zip");
-    let existing_bytes = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
-
-    let mut request = ureq::get(&download_url);
-    if existing_bytes > 0 {
-        request = request.set("Range", &format!("bytes={existing_bytes}-"));
-    }
-    let response = request
-        .call()
-        .map_err(|e| format!("Download fehlgeschlagen: {e}"))?;
-
-    let is_resuming = existing_bytes > 0 && response.status() == 206;
-
-    let total_bytes: u64 = if is_resuming {
-        response
-            .header("Content-Range")
-            .and_then(|v| v.rsplit('/').next())
-            .and_then(|v| v.parse().ok())
-            .unwrap_or_else(|| {
-                existing_bytes
-                    + response
-                        .header("Content-Length")
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(0)
-            })
-    } else {
-        response
-            .header("Content-Length")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0)
+    let local_hashes = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        local_installed_hashes(&conn, id)?
     };
 
-    {
-        use std::fs::OpenOptions;
-        use std::io::{Read, Write};
+    let files_to_fetch: Vec<&RemoteManifestFile> = manifest
+        .files
+        .iter()
+        .filter(|f| local_hashes.get(&f.relative_path) != Some(&f.sha256))
+        .collect();
 
-        let mut reader = response.into_reader();
-        let mut zip_file = if is_resuming {
-            OpenOptions::new()
-                .append(true)
-                .open(&zip_path)
-                .map_err(|e| e.to_string())?
-        } else {
-            std::fs::File::create(&zip_path).map_err(|e| e.to_string())?
-        };
-        let mut buf = [0u8; 65536];
-        let mut downloaded: u64 = if is_resuming { existing_bytes } else { 0 };
-        let mut last_emit = std::time::Instant::now();
+    let grand_total: u64 = files_to_fetch.iter().map(|f| f.size_bytes as u64).sum();
+    let mut downloaded_total: u64 = 0;
+    let mut last_emit = std::time::Instant::now();
 
-        loop {
-            if cancel_flag.load(Ordering::SeqCst) {
-                app.emit(
-                    "install-progress",
-                    serde_json::json!({ "id": id, "phase": "paused" }),
-                )
-                .ok();
-                return Err(PAUSED_SENTINEL.to_string());
-            }
+    for file in &files_to_fetch {
+        let dest_path = install_dir.join(&file.relative_path);
+        let url = format!(
+            "{STORE_API_BASE}/uploads/games/{catalog_game_id}/{}/{}",
+            manifest.version,
+            encode_relative_path(&file.relative_path)
+        );
 
-            let read = reader.read(&mut buf).map_err(|e| e.to_string())?;
-            if read == 0 {
-                break;
-            }
-            zip_file
-                .write_all(&buf[..read])
-                .map_err(|e| e.to_string())?;
-            downloaded += read as u64;
+        download_one_file(
+            &app,
+            &cancel_flag,
+            id,
+            &url,
+            &dest_path,
+            &file.sha256[..8],
+            &mut downloaded_total,
+            grand_total,
+            &mut last_emit,
+        )?;
 
-            if last_emit.elapsed().as_millis() >= 100 {
-                app.emit(
-                    "install-progress",
-                    serde_json::json!({
-                        "id": id,
-                        "phase": "downloading",
-                        "downloaded": downloaded,
-                        "total": total_bytes,
-                    }),
-                )
-                .ok();
-                last_emit = std::time::Instant::now();
-            }
-        }
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO installed_files (game_id, relative_path, sha256) VALUES (?1, ?2, ?3)
+             ON CONFLICT(game_id, relative_path) DO UPDATE SET sha256 = excluded.sha256",
+            params![id, file.relative_path, file.sha256],
+        )
+        .map_err(|e| e.to_string())?;
+    }
 
+    if grand_total > 0 {
         app.emit(
             "install-progress",
             serde_json::json!({
                 "id": id,
                 "phase": "downloading",
-                "downloaded": downloaded,
-                "total": total_bytes,
+                "downloaded": downloaded_total,
+                "total": grand_total,
             }),
         )
         .ok();
+    }
+
+    // Remove files that existed locally but were dropped from the new manifest.
+    let remote_paths: std::collections::HashSet<&str> = manifest
+        .files
+        .iter()
+        .map(|f| f.relative_path.as_str())
+        .collect();
+    for stale_path in local_hashes.keys().filter(|p| !remote_paths.contains(p.as_str())) {
+        let _ = std::fs::remove_file(install_dir.join(stale_path));
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = conn.execute(
+            "DELETE FROM installed_files WHERE game_id = ?1 AND relative_path = ?2",
+            params![id, stale_path],
+        );
     }
 
     app.emit(
@@ -611,49 +816,25 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
     )
     .ok();
 
-    {
-        let zip_file = std::fs::File::open(&zip_path).map_err(|e| e.to_string())?;
-        let mut archive =
-            zip::ZipArchive::new(zip_file).map_err(|e| format!("Ungültige ZIP-Datei: {e}"))?;
-        archive
-            .extract(&install_dir)
-            .map_err(|e| format!("Entpacken fehlgeschlagen: {e}"))?;
-    }
-    let _ = std::fs::remove_file(&zip_path);
-
-    let mut files = Vec::new();
-    collect_files(&install_dir, &mut files);
-
-    let exe_path = if files.len() == 1 {
-        let only_file = &files[0];
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = std::fs::metadata(only_file) {
-                let mut perms = meta.permissions();
-                perms.set_mode(perms.mode() | 0o111);
-                let _ = std::fs::set_permissions(only_file, perms);
-            }
-        }
-        Some(only_file.to_string_lossy().into_owned())
+    let exe_path = if is_fresh_install {
+        detect_exe_path(&install_dir)
     } else {
-        None
+        Some(current_exe_path)
     };
-
     let size_on_disk_bytes = compute_dir_size(&install_dir);
 
     {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         if let Some(exe_path) = &exe_path {
             conn.execute(
-                "UPDATE games SET exe_path = ?1, size_on_disk_bytes = ?2 WHERE id = ?3",
-                params![exe_path, size_on_disk_bytes, id],
+                "UPDATE games SET exe_path = ?1, size_on_disk_bytes = ?2, installed_version = ?3 WHERE id = ?4",
+                params![exe_path, size_on_disk_bytes, manifest.version, id],
             )
             .map_err(|e| e.to_string())?;
         } else {
             conn.execute(
-                "UPDATE games SET size_on_disk_bytes = ?1 WHERE id = ?2",
-                params![size_on_disk_bytes, id],
+                "UPDATE games SET size_on_disk_bytes = ?1, installed_version = ?2 WHERE id = ?3",
+                params![size_on_disk_bytes, manifest.version, id],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -661,9 +842,8 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
 
     if exe_path.is_none() {
         return Err(format!(
-            "Spiel wurde installiert, aber es wurden mehrere Dateien gefunden ({} Stück). \
+            "Spiel wurde installiert, aber die Programmdatei konnte nicht eindeutig erkannt werden. \
              Bitte über \"Bearbeiten\" die richtige Programmdatei in {} auswählen.",
-            files.len(),
             install_dir.display()
         ));
     }
@@ -686,6 +866,71 @@ pub async fn install_catalog_game(
 ) -> Result<Game, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || install_catalog_game_blocking(app, state, id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn check_for_update_blocking(state: AppState, id: i64) -> Result<Option<UpdateAvailable>, String> {
+    let (catalog_game_id, installed_version, exe_path): (Option<i64>, Option<String>, String) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT catalog_game_id, installed_version, exe_path FROM games WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|e| e.to_string())?
+    };
+    let catalog_game_id =
+        catalog_game_id.ok_or("Dieses Spiel ist nicht mit dem Store verknüpft")?;
+
+    if exe_path.starts_with("store://") {
+        // Not installed yet — nothing to "update".
+        return Ok(None);
+    }
+
+    let manifest = fetch_manifest(catalog_game_id)?;
+
+    let local_hashes = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        local_installed_hashes(&conn, id)?
+    };
+
+    let outdated_files: Vec<&RemoteManifestFile> = manifest
+        .files
+        .iter()
+        .filter(|f| local_hashes.get(&f.relative_path) != Some(&f.sha256))
+        .collect();
+
+    if outdated_files.is_empty() && installed_version.as_deref() == Some(manifest.version.as_str())
+    {
+        return Ok(None);
+    }
+    if outdated_files.is_empty() {
+        // Version label changed but every file's content is identical —
+        // still worth surfacing so the stored version label can catch up.
+        return Ok(Some(UpdateAvailable {
+            installed_version,
+            latest_version: manifest.version,
+            files_to_update: 0,
+            bytes_to_download: 0,
+        }));
+    }
+
+    Ok(Some(UpdateAvailable {
+        installed_version,
+        latest_version: manifest.version,
+        files_to_update: outdated_files.len(),
+        bytes_to_download: outdated_files.iter().map(|f| f.size_bytes).sum(),
+    }))
+}
+
+#[tauri::command]
+pub async fn check_for_update(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<Option<UpdateAvailable>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || check_for_update_blocking(state, id))
         .await
         .map_err(|e| e.to_string())?
 }

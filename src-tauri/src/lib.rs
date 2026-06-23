@@ -38,6 +38,7 @@ pub fn run() {
             commands::reveal_game_folder,
             commands::install_catalog_game,
             commands::pause_download,
+            commands::check_for_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

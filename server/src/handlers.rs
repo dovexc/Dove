@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use base64::Engine;
 use rusqlite::params;
+use std::io::Read;
 use std::path::Path as FsPath;
 
 use crate::auth::{create_token, hash_password, verify_password, AuthUser};
@@ -315,10 +316,11 @@ fn row_to_game(row: &rusqlite::Row) -> rusqlite::Result<CatalogGame> {
         created_at: row.get(6)?,
         file_url: row.get(7)?,
         file_size_bytes: row.get(8)?,
+        version: row.get(9)?,
     })
 }
 
-const GAME_COLUMNS: &str = "id, publisher_user_id, title, description, cover_url, price_cents, created_at, file_url, file_size_bytes";
+const GAME_COLUMNS: &str = "id, publisher_user_id, title, description, cover_url, price_cents, created_at, file_url, file_size_bytes, version";
 
 pub async fn list_games(
     State(state): State<AppState>,
@@ -437,21 +439,27 @@ pub async fn list_library(
     Ok(Json(games))
 }
 
+#[derive(serde::Deserialize)]
+pub struct UploadQuery {
+    version: Option<String>,
+}
+
 pub async fn upload_game_file(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
+    axum::extract::Query(query): axum::extract::Query<UploadQuery>,
     body: axum::body::Bytes,
 ) -> Result<Json<CatalogGame>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-
-    let game = conn
-        .query_row(
+    let game = {
+        let conn = state.db.lock().map_err(internal_error)?;
+        conn.query_row(
             &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
             params![game_id],
             row_to_game,
         )
-        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?
+    };
 
     if game.publisher_user_id != user_id {
         return Err((
@@ -460,20 +468,88 @@ pub async fn upload_game_file(
         ));
     }
 
-    let uploads_dir = FsPath::new("data/uploads/games");
-    std::fs::create_dir_all(uploads_dir).map_err(internal_error)?;
+    let new_version = query.version.unwrap_or_else(|| "1.0.0".to_string());
+    let bad_request = |msg: &str| (StatusCode::BAD_REQUEST, msg.to_string());
 
-    let filename = format!("{}.zip", uuid::Uuid::new_v4());
-    std::fs::write(uploads_dir.join(&filename), &body).map_err(internal_error)?;
+    let games_dir = FsPath::new("data/uploads/games").join(game_id.to_string());
+    let version_dir = games_dir.join(&new_version);
+    // Overwrite cleanly if this exact version is re-uploaded.
+    let _ = std::fs::remove_dir_all(&version_dir);
+    std::fs::create_dir_all(&version_dir).map_err(internal_error)?;
 
-    let file_url = format!("/uploads/games/{filename}");
-    let file_size_bytes = body.len() as i64;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&body))
+        .map_err(|_| bad_request("Ungültige ZIP-Datei"))?;
+
+    let mut manifest = Vec::new();
+    let mut total_size: i64 = 0;
+
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| internal_error(format!("ZIP-Eintrag konnte nicht gelesen werden: {e}")))?;
+        if entry.is_dir() {
+            continue;
+        }
+
+        let relative_path = entry
+            .enclosed_name()
+            .ok_or_else(|| bad_request("Ungültiger Pfad in ZIP-Datei"))?
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let mut contents = Vec::new();
+        entry
+            .read_to_end(&mut contents)
+            .map_err(internal_error)?;
+
+        let dest_path = version_dir.join(&relative_path);
+        if let Some(parent) = dest_path.parent() {
+            std::fs::create_dir_all(parent).map_err(internal_error)?;
+        }
+
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+        sha2::Digest::update(&mut hasher, &contents);
+        let sha256 = format!("{:x}", sha2::Digest::finalize(hasher));
+        let size_bytes = contents.len() as i64;
+
+        std::fs::write(&dest_path, &contents).map_err(internal_error)?;
+
+        total_size += size_bytes;
+        manifest.push((relative_path, sha256, size_bytes));
+    }
+
+    if manifest.is_empty() {
+        let _ = std::fs::remove_dir_all(&version_dir);
+        return Err(bad_request("ZIP-Datei enthält keine Dateien"));
+    }
+
+    let conn = state.db.lock().map_err(internal_error)?;
 
     conn.execute(
-        "UPDATE catalog_games SET file_url = ?1, file_size_bytes = ?2 WHERE id = ?3",
-        params![file_url, file_size_bytes, game_id],
+        "DELETE FROM game_file_manifest WHERE catalog_game_id = ?1",
+        params![game_id],
     )
     .map_err(internal_error)?;
+    for (relative_path, sha256, size_bytes) in &manifest {
+        conn.execute(
+            "INSERT INTO game_file_manifest (catalog_game_id, version, relative_path, sha256, size_bytes) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![game_id, new_version, relative_path, sha256, size_bytes],
+        )
+        .map_err(internal_error)?;
+    }
+
+    let file_url = format!("/uploads/games/{game_id}/{new_version}/");
+    conn.execute(
+        "UPDATE catalog_games SET file_url = ?1, file_size_bytes = ?2, version = ?3 WHERE id = ?4",
+        params![file_url, total_size, new_version, game_id],
+    )
+    .map_err(internal_error)?;
+
+    // Remove the previous version's files now that the new version is
+    // safely stored, so replacing/updating a build doesn't leak disk space.
+    if game.version != new_version {
+        let _ = std::fs::remove_dir_all(games_dir.join(&game.version));
+    }
 
     conn.query_row(
         &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
@@ -482,4 +558,38 @@ pub async fn upload_game_file(
     )
     .map(Json)
     .map_err(internal_error)
+}
+
+pub async fn get_game_manifest(
+    State(state): State<AppState>,
+    Path(game_id): Path<i64>,
+) -> Result<Json<crate::models::GameManifest>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+
+    let version: String = conn
+        .query_row(
+            "SELECT version FROM catalog_games WHERE id = ?1",
+            params![game_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT relative_path, sha256, size_bytes FROM game_file_manifest WHERE catalog_game_id = ?1",
+        )
+        .map_err(internal_error)?;
+    let files = stmt
+        .query_map(params![game_id], |row| {
+            Ok(crate::models::ManifestFile {
+                relative_path: row.get(0)?,
+                sha256: row.get(1)?,
+                size_bytes: row.get(2)?,
+            })
+        })
+        .map_err(internal_error)?
+        .filter_map(|f| f.ok())
+        .collect();
+
+    Ok(Json(crate::models::GameManifest { version, files }))
 }

@@ -25,6 +25,14 @@ pub fn init(app_data_dir: &PathBuf) -> Connection {
             started_at TEXT NOT NULL,
             ended_at TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS installed_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+            relative_path TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            UNIQUE(game_id, relative_path)
+        );
         ",
     )
     .expect("failed to initialize schema");
@@ -56,6 +64,15 @@ pub fn init(app_data_dir: &PathBuf) -> Connection {
         .unwrap_or(false);
     if !has_catalog_game_id_column {
         conn.execute("ALTER TABLE games ADD COLUMN catalog_game_id INTEGER", [])
+            .expect("failed to migrate games table");
+    }
+
+    let has_installed_version_column: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('games') WHERE name = 'installed_version'")
+        .and_then(|mut stmt| stmt.exists([]))
+        .unwrap_or(false);
+    if !has_installed_version_column {
+        conn.execute("ALTER TABLE games ADD COLUMN installed_version TEXT", [])
             .expect("failed to migrate games table");
     }
 

@@ -43,6 +43,15 @@ pub fn init() -> Connection {
             purchased_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(user_id, catalog_game_id)
         );
+
+        CREATE TABLE IF NOT EXISTS game_file_manifest (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            catalog_game_id INTEGER NOT NULL REFERENCES catalog_games(id),
+            version TEXT NOT NULL,
+            relative_path TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL
+        );
         ",
     )
     .expect("failed to initialize schema");
@@ -58,6 +67,10 @@ pub fn init() -> Connection {
     let _ = conn.execute("ALTER TABLE catalog_games ADD COLUMN file_url TEXT", []);
     let _ = conn.execute(
         "ALTER TABLE catalog_games ADD COLUMN file_size_bytes INTEGER",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE catalog_games ADD COLUMN version TEXT NOT NULL DEFAULT '1.0.0'",
         [],
     );
 

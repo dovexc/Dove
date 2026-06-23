@@ -33,7 +33,7 @@ interface CatalogState {
   fetchLibrary: () => Promise<void>;
   publishGame: (game: NewCatalogGame) => Promise<void>;
   purchaseGame: (gameId: number) => Promise<void>;
-  uploadGameFile: (gameId: number, file: File) => Promise<void>;
+  uploadGameFile: (gameId: number, file: File, version: string) => Promise<void>;
   revokeOwnership: (gameId: number) => Promise<void>;
   clearError: () => void;
 }
@@ -107,10 +107,11 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     }
   },
 
-  uploadGameFile: async (gameId, file) => {
+  uploadGameFile: async (gameId, file, version) => {
     set({ error: null, uploadingId: gameId });
     try {
-      const response = await fetch(`${API_BASE}/api/games/${gameId}/upload`, {
+      const url = `${API_BASE}/api/games/${gameId}/upload?version=${encodeURIComponent(version)}`;
+      const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/octet-stream", ...getAuthHeader() },
         body: file,

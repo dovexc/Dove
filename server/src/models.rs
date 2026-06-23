@@ -71,6 +71,7 @@ pub struct CatalogGame {
     pub created_at: String,
     pub file_url: Option<String>,
     pub file_size_bytes: Option<i64>,
+    pub version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,4 +79,17 @@ pub struct NewCatalogGame {
     pub title: String,
     pub description: Option<String>,
     pub cover_url: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ManifestFile {
+    pub relative_path: String,
+    pub sha256: String,
+    pub size_bytes: i64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct GameManifest {
+    pub version: String,
+    pub files: Vec<ManifestFile>,
 }

@@ -10,6 +10,14 @@ export interface Game {
   last_played_at: string | null;
   is_running: boolean;
   catalog_game_id: number | null;
+  installed_version: string | null;
+}
+
+export interface UpdateAvailable {
+  installed_version: string | null;
+  latest_version: string;
+  files_to_update: number;
+  bytes_to_download: number;
 }
 
 export interface NewGame {
@@ -76,6 +84,7 @@ export interface CatalogGame {
   created_at: string;
   file_url: string | null;
   file_size_bytes: number | null;
+  version: string;
 }
 
 export interface NewCatalogGame {

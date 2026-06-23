@@ -3,6 +3,7 @@ import { useDownloadStore } from "../../downloadStore";
 import type { DownloadItem } from "../../downloadStore";
 import { formatSize, formatSpeed } from "../../utils";
 import { Sparkline } from "./Sparkline";
+import { PauseIcon, PlayIcon } from "./icons";
 
 interface Props {
   onOpenGame: (id: number) => void;
@@ -27,16 +28,17 @@ export function DownloadsPage({ onOpenGame }: Props) {
   const setDraggingId = useDownloadStore((s) => s.setDraggingId);
   const pauseDownload = useDownloadStore((s) => s.pauseDownload);
   const resumeDownload = useDownloadStore((s) => s.resumeDownload);
+  const startNow = useDownloadStore((s) => s.startNow);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
 
   const current = queue.find(
-    (item) => item.status === "downloading" || item.status === "extracting"
+    (item) =>
+      item.status === "downloading" || item.status === "extracting" || item.status === "paused"
   );
   const queued = queue.filter((item) => item.status === "queued");
-  const paused = queue.filter((item) => item.status === "paused");
 
   const percent =
-    current?.status === "downloading" && current.total
+    (current?.status === "downloading" || current?.status === "paused") && current.total
       ? Math.min(100, Math.round((current.downloaded / current.total) * 100))
       : null;
 
@@ -57,21 +59,35 @@ export function DownloadsPage({ onOpenGame }: Props) {
                   <span className="text-sm text-zinc-400">
                     {current.status === "extracting"
                       ? "Entpacke..."
-                      : `${percent ?? 0}%`}
+                      : current.status === "paused"
+                        ? `Pausiert · ${percent ?? 0}%`
+                        : `${percent ?? 0}%`}
                   </span>
                   {current.status === "downloading" && (
                     <button
                       onClick={() => pauseDownload(current.id)}
-                      className="rounded bg-zinc-800 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
+                      title="Pausieren"
+                      className="rounded bg-zinc-800 p-1.5 text-zinc-200 hover:bg-zinc-700"
                     >
-                      Pause
+                      <PauseIcon />
+                    </button>
+                  )}
+                  {current.status === "paused" && (
+                    <button
+                      onClick={() => resumeDownload(current.id)}
+                      title="Fortsetzen"
+                      className="rounded bg-sky-600 p-1.5 text-white hover:bg-sky-500"
+                    >
+                      <PlayIcon />
                     </button>
                   )}
                 </div>
               </div>
               <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-zinc-800">
                 <div
-                  className="h-full rounded-full bg-sky-500 transition-all"
+                  className={`h-full rounded-full transition-all ${
+                    current.status === "paused" ? "bg-zinc-500" : "bg-sky-500"
+                  }`}
                   style={{
                     width: current.status === "extracting" ? "100%" : `${percent ?? 0}%`,
                   }}
@@ -79,56 +95,26 @@ export function DownloadsPage({ onOpenGame }: Props) {
               </div>
               <div className="mt-3 flex items-center justify-between">
                 <div className="text-xs text-zinc-500">
-                  {current.status === "downloading" && current.total ? (
-                    <>
-                      {formatSize(current.downloaded)} / {formatSize(current.total)} ·{" "}
-                      {formatSpeed(current.speedBps)}
-                    </>
-                  ) : (
-                    "Dateien werden entpackt..."
-                  )}
+                  {current.status === "extracting"
+                    ? "Dateien werden entpackt..."
+                    : current.total
+                      ? <>
+                          {formatSize(current.downloaded)} / {formatSize(current.total)}
+                          {current.status === "downloading" && (
+                            <> · {formatSpeed(current.speedBps)}</>
+                          )}
+                        </>
+                      : "Lädt herunter..."}
                 </div>
-                <Sparkline values={current.speedHistory} width={180} height={32} />
+                {current.status === "downloading" && (
+                  <Sparkline values={current.speedHistory} width={180} height={32} />
+                )}
               </div>
             </div>
           ) : (
             <p className="text-sm text-zinc-500">Aktuell läuft kein Download.</p>
           )}
         </section>
-
-        {paused.length > 0 && (
-          <section className="mb-8">
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-              Pausiert
-            </h2>
-            <div className="flex flex-col gap-2">
-              {paused.map((item) => {
-                const itemPercent = item.total
-                  ? Math.min(100, Math.round((item.downloaded / item.total) * 100))
-                  : null;
-                return (
-                  <div
-                    key={item.id}
-                    className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-2.5"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm text-zinc-200">{item.name}</span>
-                      {itemPercent != null && (
-                        <span className="text-xs text-zinc-500">{itemPercent}%</span>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => resumeDownload(item.id)}
-                      className="rounded bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-500"
-                    >
-                      Fortsetzen
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
 
         <section className="mb-8">
           <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
@@ -167,12 +153,21 @@ export function DownloadsPage({ onOpenGame }: Props) {
                     <span className="text-xs text-zinc-500">#{index + 1}</span>
                     <span className="text-sm text-zinc-200">{item.name}</span>
                   </div>
-                  <button
-                    onClick={() => removeFromQueue(item.id)}
-                    className="text-xs text-zinc-500 hover:text-red-400"
-                  >
-                    Entfernen
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => startNow(item.id)}
+                      title="Jetzt starten"
+                      className="rounded bg-zinc-800 p-1.5 text-zinc-200 hover:bg-sky-600 hover:text-white"
+                    >
+                      <PlayIcon />
+                    </button>
+                    <button
+                      onClick={() => removeFromQueue(item.id)}
+                      className="text-xs text-zinc-500 hover:text-red-400"
+                    >
+                      Entfernen
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

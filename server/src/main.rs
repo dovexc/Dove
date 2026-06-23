@@ -58,6 +58,7 @@ async fn main() {
             get(handlers::list_games).post(handlers::create_game),
         )
         .route("/api/games/:id", get(handlers::get_game))
+        .route("/api/games/:id/manifest", get(handlers::get_game_manifest))
         .route(
             "/api/games/:id/purchase",
             post(handlers::purchase_game).delete(handlers::revoke_ownership),

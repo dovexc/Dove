@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { convertFileSrc, formatPlaytime, formatSize } from "../utils";
 import { useLibraryStore } from "../store";
 import { useDownloadStore } from "../downloadStore";
@@ -12,6 +13,8 @@ interface Props {
 
 export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
   const openContextMenu = useLibraryStore((s) => s.openContextMenu);
+  const checkForUpdate = useLibraryStore((s) => s.checkForUpdate);
+  const updateInfo = useLibraryStore((s) => s.updateAvailable[game.id]);
   const enqueue = useDownloadStore((s) => s.enqueue);
   const resumeDownload = useDownloadStore((s) => s.resumeDownload);
   const queueItem = useDownloadStore((s) => s.queue.find((i) => i.id === game.id));
@@ -24,6 +27,13 @@ export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
     (queueItem?.status === "downloading" || queueItem?.status === "paused") && queueItem.total
       ? Math.min(100, Math.round((queueItem.downloaded / queueItem.total) * 100))
       : null;
+  const hasUpdate = !!updateInfo && !queueItem;
+
+  useEffect(() => {
+    if (game.catalog_game_id != null && !pendingInstall && !queueItem) {
+      checkForUpdate(game.id);
+    }
+  }, [game.id, game.catalog_game_id, pendingInstall, queueItem, checkForUpdate]);
 
   return (
     <div className="flex h-full flex-col gap-4 p-6">
@@ -75,17 +85,29 @@ export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
                       : "Herunterladen & installieren"}
               </button>
             ) : (
-              <button
-                onClick={onPlay}
-                disabled={game.is_running}
-                className={`rounded px-4 py-2 text-sm font-semibold ${
-                  game.is_running
-                    ? "bg-emerald-700 text-emerald-100"
-                    : "bg-sky-600 text-white hover:bg-sky-500"
-                }`}
-              >
-                {game.is_running ? "Läuft..." : "Spielen"}
-              </button>
+              <>
+                <button
+                  onClick={onPlay}
+                  disabled={game.is_running}
+                  className={`rounded px-4 py-2 text-sm font-semibold ${
+                    game.is_running
+                      ? "bg-emerald-700 text-emerald-100"
+                      : "bg-sky-600 text-white hover:bg-sky-500"
+                  }`}
+                >
+                  {game.is_running ? "Läuft..." : "Spielen"}
+                </button>
+                {hasUpdate && (
+                  <button
+                    onClick={() => enqueue(game.id, game.name)}
+                    className="rounded bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500"
+                  >
+                    Update verfügbar
+                    {updateInfo!.files_to_update > 0 &&
+                      ` (${formatSize(updateInfo!.bytes_to_download)})`}
+                  </button>
+                )}
+              </>
             )}
             <button
               onClick={onEdit}
