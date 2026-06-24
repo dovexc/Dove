@@ -9,6 +9,7 @@ pub struct User {
     pub background_url: Option<String>,
     pub bio: Option<String>,
     pub created_at: String,
+    pub is_profile_hidden: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -34,6 +35,7 @@ pub struct ProfileScreenshot {
 pub struct UpdateProfileRequest {
     pub display_name: Option<String>,
     pub bio: Option<String>,
+    pub is_profile_hidden: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

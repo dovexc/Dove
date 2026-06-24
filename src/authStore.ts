@@ -15,7 +15,11 @@ interface AuthState {
   logout: () => void;
   hydrateUser: () => Promise<void>;
   clearError: () => void;
-  updateProfile: (fields: { display_name?: string; bio?: string }) => Promise<void>;
+  updateProfile: (fields: {
+    display_name?: string;
+    bio?: string;
+    is_profile_hidden?: boolean;
+  }) => Promise<void>;
   uploadAvatar: (dataUrl: string) => Promise<void>;
   uploadBackground: (dataUrl: string) => Promise<void>;
   fetchScreenshots: () => Promise<void>;

@@ -55,6 +55,7 @@ export interface StoreUser {
   background_url: string | null;
   bio: string | null;
   created_at: string;
+  is_profile_hidden: boolean;
 }
 
 export interface ProfileScreenshot {

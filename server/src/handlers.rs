@@ -28,11 +28,24 @@ fn row_to_user(row: &rusqlite::Row) -> rusqlite::Result<User> {
         background_url: row.get(4)?,
         bio: row.get(5)?,
         created_at: row.get(6)?,
+        is_profile_hidden: row.get(7)?,
     })
 }
 
 const USER_COLUMNS: &str =
-    "id, email, display_name, avatar_url, background_url, bio, created_at";
+    "id, email, display_name, avatar_url, background_url, bio, created_at, is_profile_hidden";
+
+/// True if `a` and `b` are accepted friends (order-independent).
+fn are_friends(conn: &rusqlite::Connection, a: i64, b: i64) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM friendships \
+         WHERE status = 'accepted' \
+         AND ((requester_id = ?1 AND recipient_id = ?2) OR (requester_id = ?2 AND recipient_id = ?1))",
+        params![a, b],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
 
 /// Decodes a `data:<mime>;base64,<data>` URL and writes it to `data/uploads`,
 /// returning a server-relative URL clients can fetch it from.
@@ -160,6 +173,13 @@ pub async fn update_profile(
         conn.execute(
             "UPDATE users SET bio = ?1 WHERE id = ?2",
             params![bio, user_id],
+        )
+        .map_err(internal_error)?;
+    }
+    if let Some(is_profile_hidden) = req.is_profile_hidden {
+        conn.execute(
+            "UPDATE users SET is_profile_hidden = ?1 WHERE id = ?2",
+            params![is_profile_hidden, user_id],
         )
         .map_err(internal_error)?;
     }
@@ -310,16 +330,26 @@ pub async fn delete_screenshot(
 
 pub async fn get_user_profile(
     State(state): State<AppState>,
+    AuthUser(current_user_id): AuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<Json<PublicProfile>, ApiError> {
     let conn = state.db.lock().map_err(internal_error)?;
+    let not_found = || (StatusCode::NOT_FOUND, "Profil nicht gefunden".to_string());
+
     let user = conn
         .query_row(
             &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
             params![user_id],
             row_to_user,
         )
-        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+        .map_err(|_| not_found())?;
+
+    if user.is_profile_hidden
+        && user.id != current_user_id
+        && !are_friends(&conn, current_user_id, user_id)
+    {
+        return Err(not_found());
+    }
 
     let mut stmt = conn
         .prepare(&format!(
@@ -365,7 +395,7 @@ pub async fn search_users(
     let mut stmt = conn
         .prepare(&format!(
             "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
-             WHERE u.id != ?1 AND u.display_name LIKE ?2 \
+             WHERE u.id != ?1 AND u.is_profile_hidden = 0 AND u.display_name LIKE ?2 \
              ORDER BY u.display_name COLLATE NOCASE LIMIT 50"
         ))
         .map_err(internal_error)?;

@@ -14,6 +14,7 @@ export function SettingsView({ onClose }: Props) {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const changePassword = useAuthStore((s) => s.changePassword);
+  const updateProfile = useAuthStore((s) => s.updateProfile);
   const authError = useAuthStore((s) => s.error);
   const authLoading = useAuthStore((s) => s.loading);
   const clearError = useAuthStore((s) => s.clearError);
@@ -124,6 +125,31 @@ export function SettingsView({ onClose }: Props) {
                 Passwort ändern
               </button>
             </form>
+          </div>
+        </section>
+
+        {/* Privatsphäre */}
+        <section className="mb-8">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+            Privatsphäre
+          </h2>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <label className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-zinc-200">Mein Profil verstecken</p>
+                <p className="mt-0.5 text-xs text-zinc-500">
+                  Wenn aktiv, taucht dein Profil nicht mehr in der Nutzersuche auf und ist auch
+                  per Link nicht mehr abrufbar — außer für Nutzer, mit denen du bereits befreundet
+                  bist.
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={user?.is_profile_hidden ?? false}
+                onChange={(e) => updateProfile({ is_profile_hidden: e.target.checked })}
+                className="h-5 w-5 shrink-0 accent-sky-600"
+              />
+            </label>
           </div>
         </section>
 
