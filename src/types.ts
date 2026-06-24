@@ -74,6 +74,12 @@ export interface PublicProfile {
   screenshots: ProfileScreenshot[];
 }
 
+export interface UserSummary {
+  id: number;
+  display_name: string;
+  avatar_url: string | null;
+}
+
 export interface CatalogGame {
   id: number;
   publisher_user_id: number;

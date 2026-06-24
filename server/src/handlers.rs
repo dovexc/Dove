@@ -305,6 +305,45 @@ pub async fn get_user_profile(
     }))
 }
 
+#[derive(serde::Deserialize)]
+pub struct SearchUsersQuery {
+    q: Option<String>,
+}
+
+/// Lightweight user listing for the "Freunde" search — deliberately omits
+/// email and other private fields that the full profile endpoint exposes
+/// only to the user themselves.
+pub async fn search_users(
+    State(state): State<AppState>,
+    AuthUser(current_user_id): AuthUser,
+    axum::extract::Query(query): axum::extract::Query<SearchUsersQuery>,
+) -> Result<Json<Vec<crate::models::UserSummary>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let search = query.q.unwrap_or_default().trim().to_string();
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, display_name, avatar_url FROM users \
+             WHERE id != ?1 AND display_name LIKE ?2 \
+             ORDER BY display_name COLLATE NOCASE LIMIT 50",
+        )
+        .map_err(internal_error)?;
+    let pattern = format!("%{search}%");
+    let users = stmt
+        .query_map(params![current_user_id, pattern], |row| {
+            Ok(crate::models::UserSummary {
+                id: row.get(0)?,
+                display_name: row.get(1)?,
+                avatar_url: row.get(2)?,
+            })
+        })
+        .map_err(internal_error)?
+        .filter_map(|u| u.ok())
+        .collect();
+
+    Ok(Json(users))
+}
+
 fn row_to_game(row: &rusqlite::Row) -> rusqlite::Result<CatalogGame> {
     Ok(CatalogGame {
         id: row.get(0)?,

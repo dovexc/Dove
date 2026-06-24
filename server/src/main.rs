@@ -133,6 +133,7 @@ async fn main() {
             "/api/me/screenshots/:id",
             axum::routing::delete(handlers::delete_screenshot),
         )
+        .route("/api/users", get(handlers::search_users))
         .route("/api/users/:id", get(handlers::get_user_profile))
         .route(
             "/api/games",

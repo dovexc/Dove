@@ -101,3 +101,10 @@ pub struct StorageUsage {
     pub used_bytes: i64,
     pub quota_bytes: i64,
 }
+
+#[derive(Debug, Serialize, Clone)]
+pub struct UserSummary {
+    pub id: i64,
+    pub display_name: String,
+    pub avatar_url: Option<String>,
+}

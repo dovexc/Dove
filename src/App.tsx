@@ -16,6 +16,8 @@ import { ProfilePage } from "./components/profile/ProfilePage";
 import { DownloadBar } from "./components/downloads/DownloadBar";
 import { DownloadsPage } from "./components/downloads/DownloadsPage";
 import { registerDownloadEventListeners } from "./downloadStore";
+import { UserMenu } from "./components/UserMenu";
+import { FriendsView } from "./components/friends/FriendsView";
 
 const SIDEBAR_WIDTH_KEY = "library_sidebar_width";
 const SIDEBAR_MIN_WIDTH = 180;
@@ -25,6 +27,8 @@ function App() {
   const [activeTab, setActiveTab] = useState<"library" | "store" | "downloads">("library");
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isFriendsOpen, setIsFriendsOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
     return stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH ? stored : 288;
@@ -175,12 +179,12 @@ function App() {
             </>
           )}
           {authToken && authUser ? (
-            <button
-              onClick={() => setIsProfileOpen(true)}
-              className="text-sm text-[#9aa7b3] hover:text-zinc-200 hover:underline"
-            >
-              {authUser.display_name}
-            </button>
+            <UserMenu
+              displayName={authUser.display_name}
+              onOpenProfile={() => setIsProfileOpen(true)}
+              onOpenFriends={() => setIsFriendsOpen(true)}
+              onOpenSettings={() => setIsSettingsOpen(true)}
+            />
           ) : (
             <button
               onClick={() => setIsLoginOpen(true)}
@@ -278,6 +282,23 @@ function App() {
       {isSteamImportOpen && <SteamImportDialog />}
       {isLoginOpen && <LoginDialog onClose={() => setIsLoginOpen(false)} />}
       {isProfileOpen && <ProfilePage onClose={() => setIsProfileOpen(false)} />}
+      {isFriendsOpen && <FriendsView onClose={() => setIsFriendsOpen(false)} />}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="flex w-[22rem] flex-col gap-4 rounded-lg bg-zinc-900 p-6 shadow-xl">
+            <h2 className="text-lg font-bold text-zinc-100">Einstellungen</h2>
+            <p className="text-sm text-zinc-400">
+              Einstellungen folgen in einem späteren Update.
+            </p>
+            <button
+              onClick={() => setIsSettingsOpen(false)}
+              className="self-end rounded bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
+            >
+              Schließen
+            </button>
+          </div>
+        </div>
+      )}
       <GameContextMenu />
     </div>
   );
