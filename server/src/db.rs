@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 use std::path::PathBuf;
 
-pub fn init() -> Connection {
+pub fn init(default_quota_bytes: i64) -> Connection {
     let data_dir = PathBuf::from("data");
     std::fs::create_dir_all(&data_dir).expect("failed to create data dir");
     let conn = Connection::open(data_dir.join("catalog.db")).expect("failed to open database");
@@ -75,6 +75,11 @@ pub fn init() -> Connection {
     );
     let _ = conn.execute("ALTER TABLE catalog_games RENAME COLUMN genre TO tags", []);
     let _ = conn.execute("ALTER TABLE catalog_games ADD COLUMN tags TEXT", []);
+
+    let _ = conn.execute(
+        &format!("ALTER TABLE users ADD COLUMN storage_quota_bytes INTEGER NOT NULL DEFAULT {default_quota_bytes}"),
+        [],
+    );
 
     conn
 }

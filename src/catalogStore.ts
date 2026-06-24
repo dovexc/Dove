@@ -1,7 +1,12 @@
 import { create } from "zustand";
 import { API_BASE, getAuthHeader } from "./authStore";
 import { useLibraryStore } from "./store";
-import type { CatalogGame, NewCatalogGame } from "./types";
+import type { CatalogGame, NewCatalogGame, StorageUsage } from "./types";
+
+async function errorMessage(response: Response): Promise<string> {
+  const text = await response.text();
+  return text || `Fehler (${response.status})`;
+}
 
 function placeholderExePath(catalogGameId: number): string {
   return `store://catalog/${catalogGameId}`;
@@ -28,9 +33,11 @@ interface CatalogState {
   loading: boolean;
   purchasingId: number | null;
   uploadingId: number | null;
+  storageUsage: StorageUsage | null;
   error: string | null;
   fetchCatalog: () => Promise<void>;
   fetchLibrary: () => Promise<void>;
+  fetchStorageUsage: () => Promise<void>;
   publishGame: (game: NewCatalogGame) => Promise<void>;
   purchaseGame: (gameId: number) => Promise<void>;
   uploadGameFile: (gameId: number, file: File, version: string) => Promise<void>;
@@ -44,6 +51,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   loading: false,
   purchasingId: null,
   uploadingId: null,
+  storageUsage: null,
   error: null,
 
   fetchCatalog: async () => {
@@ -107,6 +115,22 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     }
   },
 
+  fetchStorageUsage: async () => {
+    const headers = getAuthHeader();
+    if (!headers.Authorization) {
+      set({ storageUsage: null });
+      return;
+    }
+    try {
+      const response = await fetch(`${API_BASE}/api/me/storage`, { headers });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const storageUsage: StorageUsage = await response.json();
+      set({ storageUsage });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
   uploadGameFile: async (gameId, file, version) => {
     set({ error: null, uploadingId: gameId });
     try {
@@ -116,8 +140,9 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
         headers: { "Content-Type": "application/octet-stream", ...getAuthHeader() },
         body: file,
       });
-      if (!response.ok) throw new Error(`Fehler (${response.status})`);
+      if (!response.ok) throw new Error(await errorMessage(response));
       await get().fetchCatalog();
+      await get().fetchStorageUsage();
     } catch (e) {
       set({ error: String(e) });
     } finally {

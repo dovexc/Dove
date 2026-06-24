@@ -133,6 +133,8 @@ export function StoreView() {
   const publishGame = useCatalogStore((s) => s.publishGame);
   const purchaseGame = useCatalogStore((s) => s.purchaseGame);
   const uploadGameFile = useCatalogStore((s) => s.uploadGameFile);
+  const storageUsage = useCatalogStore((s) => s.storageUsage);
+  const fetchStorageUsage = useCatalogStore((s) => s.fetchStorageUsage);
   const token = useAuthStore((s) => s.token);
   const authUser = useAuthStore((s) => s.user);
 
@@ -204,6 +206,10 @@ export function StoreView() {
   useEffect(() => {
     fetchLibrary();
   }, [fetchLibrary, token]);
+
+  useEffect(() => {
+    fetchStorageUsage();
+  }, [fetchStorageUsage, token]);
 
   async function handlePublish(e: React.FormEvent) {
     e.preventDefault();
@@ -576,6 +582,23 @@ export function StoreView() {
             <h2 className="text-lg font-bold text-zinc-100">
               Versionsnummer für {versionDialogGame.title}
             </h2>
+            {storageUsage && (
+              <div className="text-xs text-zinc-500">
+                Speicherplatz belegt: {formatSize(storageUsage.used_bytes)} /{" "}
+                {formatSize(storageUsage.quota_bytes)}
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className="h-full rounded-full bg-sky-500"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        (storageUsage.used_bytes / storageUsage.quota_bytes) * 100
+                      )}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
             <label className="flex flex-col gap-1 text-sm text-zinc-300">
               Version
               <input

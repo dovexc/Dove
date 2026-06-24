@@ -94,3 +94,8 @@ export interface NewCatalogGame {
   cover_url: string | null;
   tags: string | null;
 }
+
+export interface StorageUsage {
+  used_bytes: number;
+  quota_bytes: number;
+}

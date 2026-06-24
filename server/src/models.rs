@@ -95,3 +95,9 @@ pub struct GameManifest {
     pub version: String,
     pub files: Vec<ManifestFile>,
 }
+
+#[derive(Debug, Serialize, Clone)]
+pub struct StorageUsage {
+    pub used_bytes: i64,
+    pub quota_bytes: i64,
+}

@@ -76,8 +76,8 @@ pub async fn register(
 
     let conn = state.db.lock().map_err(internal_error)?;
     conn.execute(
-        "INSERT INTO users (email, password_hash, display_name) VALUES (?1, ?2, ?3)",
-        params![req.email, password_hash, req.display_name],
+        "INSERT INTO users (email, password_hash, display_name, storage_quota_bytes) VALUES (?1, ?2, ?3, ?4)",
+        params![req.email, password_hash, req.display_name, state.default_quota_bytes],
     )
     .map_err(|e| (StatusCode::CONFLICT, format!("E-Mail bereits registriert: {e}")))?;
 
@@ -445,6 +445,34 @@ pub struct UploadQuery {
     version: Option<String>,
 }
 
+fn format_bytes(bytes: i64) -> String {
+    let gb = bytes as f64 / 1024f64.powi(3);
+    let mb = bytes as f64 / 1024f64.powi(2);
+    let kb = bytes as f64 / 1024.0;
+    if gb >= 1.0 {
+        format!("{gb:.2} GB")
+    } else if mb >= 1.0 {
+        format!("{mb:.1} MB")
+    } else if kb >= 1.0 {
+        format!("{kb:.1} KB")
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+/// Free space (in bytes) on the disk/volume that backs `path`, picking the
+/// mounted filesystem with the longest matching mount-point prefix.
+fn available_disk_bytes(path: &std::path::Path) -> Option<u64> {
+    use sysinfo::Disks;
+    let canonical = std::fs::canonicalize(path).ok()?;
+    let disks = Disks::new_with_refreshed_list();
+    disks
+        .iter()
+        .filter(|d| canonical.starts_with(d.mount_point()))
+        .max_by_key(|d| d.mount_point().as_os_str().len())
+        .map(|d| d.available_space())
+}
+
 pub async fn upload_game_file(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
@@ -471,6 +499,66 @@ pub async fn upload_game_file(
 
     let new_version = query.version.unwrap_or_else(|| "1.0.0".to_string());
     let bad_request = |msg: &str| (StatusCode::BAD_REQUEST, msg.to_string());
+
+    // Read the uncompressed size of every entry from the ZIP's central
+    // directory metadata — no decompression needed yet — so quota and disk
+    // space can be checked precisely *before* writing a single byte.
+    let precomputed_total: i64 = {
+        let mut probe = zip::ZipArchive::new(std::io::Cursor::new(&body))
+            .map_err(|_| bad_request("Ungültige ZIP-Datei"))?;
+        let mut total = 0i64;
+        for i in 0..probe.len() {
+            let entry = probe
+                .by_index(i)
+                .map_err(|e| internal_error(format!("ZIP-Eintrag konnte nicht gelesen werden: {e}")))?;
+            if !entry.is_dir() {
+                total += entry.size() as i64;
+            }
+        }
+        total
+    };
+    if precomputed_total == 0 {
+        return Err(bad_request("ZIP-Datei enthält keine Dateien"));
+    }
+
+    {
+        let conn = state.db.lock().map_err(internal_error)?;
+        let quota: i64 = conn
+            .query_row(
+                "SELECT storage_quota_bytes FROM users WHERE id = ?1",
+                params![user_id],
+                |row| row.get(0),
+            )
+            .map_err(internal_error)?;
+        let usage_excluding_this_game: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(file_size_bytes), 0) FROM catalog_games WHERE publisher_user_id = ?1 AND id != ?2",
+                params![user_id, game_id],
+                |row| row.get(0),
+            )
+            .map_err(internal_error)?;
+        let projected_usage = usage_excluding_this_game + precomputed_total;
+        if projected_usage > quota {
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!(
+                    "Speicherquote überschritten: {} von {} belegt, dieser Upload benötigt zusätzlich {}.",
+                    format_bytes(usage_excluding_this_game),
+                    format_bytes(quota),
+                    format_bytes(precomputed_total)
+                ),
+            ));
+        }
+    }
+
+    if let Some(available) = available_disk_bytes(FsPath::new("data")) {
+        if available < precomputed_total as u64 + state.min_free_disk_bytes {
+            return Err((
+                StatusCode::from_u16(507).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+                "Nicht genug freier Speicherplatz auf dem Server für diesen Upload.".to_string(),
+            ));
+        }
+    }
 
     let games_dir = FsPath::new("data/uploads/games").join(game_id.to_string());
     let version_dir = games_dir.join(&new_version);
@@ -593,4 +681,29 @@ pub async fn get_game_manifest(
         .collect();
 
     Ok(Json(crate::models::GameManifest { version, files }))
+}
+
+pub async fn get_storage_usage(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<Json<crate::models::StorageUsage>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let quota_bytes: i64 = conn
+        .query_row(
+            "SELECT storage_quota_bytes FROM users WHERE id = ?1",
+            params![user_id],
+            |row| row.get(0),
+        )
+        .map_err(internal_error)?;
+    let used_bytes: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(file_size_bytes), 0) FROM catalog_games WHERE publisher_user_id = ?1",
+            params![user_id],
+            |row| row.get(0),
+        )
+        .map_err(internal_error)?;
+    Ok(Json(crate::models::StorageUsage {
+        used_bytes,
+        quota_bytes,
+    }))
 }
