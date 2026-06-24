@@ -91,11 +91,37 @@ fn load_or_generate_jwt_secret(data_dir: &std::path::Path) -> String {
     secret
 }
 
+/// Checks whether a clamd instance is reachable at `address` by sending a
+/// PING. Scanning is disabled (not a hard startup failure) if it isn't —
+/// this server should still run on a machine without ClamAV installed.
+async fn probe_clamd(address: &str) -> bool {
+    let tcp = clamav_client::tokio::Tcp {
+        host_address: address,
+    };
+    matches!(
+        clamav_client::tokio::ping(tcp).await,
+        Ok(response) if response == clamav_client::PONG
+    )
+}
+
 #[tokio::main]
 async fn main() {
     let default_quota_bytes = env_i64("DOVE_DEFAULT_QUOTA_BYTES", DEFAULT_QUOTA_BYTES);
     let min_free_disk_bytes =
         env_i64("DOVE_MIN_FREE_DISK_BYTES", DEFAULT_MIN_FREE_DISK_BYTES as i64).max(0) as u64;
+
+    let clamd_candidate =
+        std::env::var("DOVE_CLAMD_ADDRESS").unwrap_or_else(|_| "127.0.0.1:3310".to_string());
+    let clamd_address = if probe_clamd(&clamd_candidate).await {
+        println!("Malware-Scan aktiv: clamd erreichbar unter {clamd_candidate}");
+        Some(clamd_candidate)
+    } else {
+        eprintln!(
+            "WARNUNG: clamd unter {clamd_candidate} nicht erreichbar — Malware-Scan für \
+             Spiel-Uploads ist deaktiviert. Server trotzdem gestartet."
+        );
+        None
+    };
 
     std::fs::create_dir_all("data/uploads/games").expect("failed to create uploads dir");
 
@@ -105,6 +131,7 @@ async fn main() {
         jwt_secret: load_or_generate_jwt_secret(std::path::Path::new("data")),
         default_quota_bytes,
         min_free_disk_bytes,
+        clamd_address,
     };
 
     let cors = CorsLayer::new()

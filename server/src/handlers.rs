@@ -560,6 +560,37 @@ pub async fn upload_game_file(
         return Err(bad_request("ZIP-Datei enthält keine Dateien"));
     }
 
+    if let Some(clamd_address) = &state.clamd_address {
+        let tcp = clamav_client::tokio::Tcp {
+            host_address: clamd_address.as_str(),
+        };
+        let response = clamav_client::tokio::scan_buffer(&body, tcp, None)
+            .await
+            .map_err(|e| {
+                // Fail closed: scanning was enabled at startup, so a
+                // transient failure now must not let an unscanned file
+                // through.
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!("Malware-Scan momentan nicht verfügbar: {e}"),
+                )
+            })?;
+        let response_str = String::from_utf8_lossy(&response).trim().to_string();
+
+        if response_str.contains("FOUND") {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("Datei wurde vom Malware-Scan abgelehnt: {response_str}"),
+            ));
+        }
+        if !response_str.contains("OK") {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("Unerwartete Antwort vom Malware-Scanner: {response_str}"),
+            ));
+        }
+    }
+
     {
         let conn = state.db.lock().map_err(internal_error)?;
         let quota: i64 = conn

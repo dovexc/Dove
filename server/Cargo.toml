@@ -19,3 +19,4 @@ uuid = { version = "1", features = ["v4"] }
 zip = "2"
 sha2 = "0.10"
 sysinfo = "0.32"
+clamav-client = { version = "2", features = ["tokio"] }

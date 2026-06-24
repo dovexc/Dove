@@ -13,4 +13,7 @@ pub struct AppState {
     /// Safety margin: uploads are rejected if accepting them would leave
     /// less than this much free space on the disk backing `data/uploads`.
     pub min_free_disk_bytes: u64,
+    /// `host:port` of the clamd daemon used to scan uploaded game files.
+    /// If `None`, malware scanning is skipped (e.g. clamd not installed).
+    pub clamd_address: Option<String>,
 }

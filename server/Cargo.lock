@@ -243,6 +243,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clamav-client"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "205d13fb48b7a692b6575ee6db7249eefc0a21a029916bf8a4d9e652523b841c"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "constant_time_eq"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -375,6 +384,7 @@ dependencies = [
  "axum",
  "base64",
  "chrono",
+ "clamav-client",
  "jsonwebtoken",
  "rand_core",
  "rusqlite",
