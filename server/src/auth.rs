@@ -44,6 +44,18 @@ pub fn create_token(user_id: i64, secret: &str) -> Result<String, String> {
     .map_err(|e| e.to_string())
 }
 
+/// Best-effort current-user lookup for endpoints that work both
+/// unauthenticated (public) and authenticated (to also surface the
+/// caller's own non-public rows) — returns `None` rather than rejecting
+/// when there's no/invalid token.
+pub fn user_id_from_headers(headers: &axum::http::HeaderMap, secret: &str) -> Option<i64> {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))?;
+    verify_token(token, secret).ok()
+}
+
 fn verify_token(token: &str, secret: &str) -> Result<i64, String> {
     decode::<Claims>(
         token,
@@ -92,5 +104,41 @@ impl FromRequestParts<AppState> for AuthUser {
         }
 
         Ok(AuthUser(user_id))
+    }
+}
+
+/// Like `AuthUser`, but additionally requires `users.is_admin = 1` for the
+/// signed-in user. Used to gate catalog moderation endpoints.
+pub struct AdminUser(pub i64);
+
+#[async_trait]
+impl FromRequestParts<AppState> for AdminUser {
+    type Rejection = (StatusCode, String);
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let AuthUser(user_id) = AuthUser::from_request_parts(parts, state).await?;
+
+        let is_admin: bool = state
+            .db
+            .lock()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .query_row(
+                "SELECT is_admin FROM users WHERE id = ?1",
+                [user_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+
+        if !is_admin {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Nur für Moderatoren verfügbar".to_string(),
+            ));
+        }
+
+        Ok(AdminUser(user_id))
     }
 }

@@ -19,6 +19,7 @@ import { registerDownloadEventListeners } from "./downloadStore";
 import { UserMenu } from "./components/UserMenu";
 import { FriendsView } from "./components/friends/FriendsView";
 import { SettingsView } from "./components/settings/SettingsView";
+import { AdminModerationView } from "./components/admin/AdminModerationView";
 
 const SIDEBAR_WIDTH_KEY = "library_sidebar_width";
 const SIDEBAR_MIN_WIDTH = 180;
@@ -30,6 +31,7 @@ function App() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isFriendsOpen, setIsFriendsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isModerationOpen, setIsModerationOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
     return stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH ? stored : 288;
@@ -182,9 +184,11 @@ function App() {
           {authToken && authUser ? (
             <UserMenu
               displayName={authUser.display_name}
+              isAdmin={authUser.is_admin}
               onOpenProfile={() => setIsProfileOpen(true)}
               onOpenFriends={() => setIsFriendsOpen(true)}
               onOpenSettings={() => setIsSettingsOpen(true)}
+              onOpenModeration={() => setIsModerationOpen(true)}
             />
           ) : (
             <button
@@ -285,6 +289,9 @@ function App() {
       {isProfileOpen && <ProfilePage onClose={() => setIsProfileOpen(false)} />}
       {isFriendsOpen && <FriendsView onClose={() => setIsFriendsOpen(false)} />}
       {isSettingsOpen && <SettingsView onClose={() => setIsSettingsOpen(false)} />}
+      {isModerationOpen && (
+        <AdminModerationView onClose={() => setIsModerationOpen(false)} />
+      )}
       <GameContextMenu />
     </div>
   );

@@ -184,7 +184,10 @@ export function StoreView() {
     });
   }, [games, search, category]);
 
-  const featuredGames = useMemo(() => games.slice(0, 3), [games]);
+  const featuredGames = useMemo(
+    () => games.filter((g) => g.status === "approved").slice(0, 3),
+    [games]
+  );
   const hero: CatalogGame | null = featuredGames[featuredIndex] ?? null;
 
   useEffect(() => {
@@ -534,6 +537,17 @@ export function StoreView() {
                         </span>
                       </div>
                       <div className="flex flex-col gap-2 p-3">
+                        {isPublisher && game.status !== "approved" && (
+                          <span
+                            className={`self-start rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                              game.status === "pending"
+                                ? "bg-amber-900/60 text-amber-300"
+                                : "bg-red-900/60 text-red-300"
+                            }`}
+                          >
+                            {game.status === "pending" ? "In Prüfung" : "Abgelehnt"}
+                          </span>
+                        )}
                         {game.file_size_bytes != null && (
                           <span className="text-xs text-zinc-500">
                             Download: {formatSize(game.file_size_bytes)} · v{game.version}
@@ -543,7 +557,7 @@ export function StoreView() {
                           <span className="text-sm font-bold text-zinc-100">
                             {formatPrice(game.price_cents)}
                           </span>
-                          {renderPurchaseControl(game, owned, "sm")}
+                          {game.status === "approved" && renderPurchaseControl(game, owned, "sm")}
                         </div>
                         {isPublisher && (
                           <button

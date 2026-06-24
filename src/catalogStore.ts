@@ -34,6 +34,9 @@ interface CatalogState {
   purchasingId: number | null;
   uploadingId: number | null;
   storageUsage: StorageUsage | null;
+  pendingGames: CatalogGame[];
+  loadingPendingGames: boolean;
+  moderatingId: number | null;
   error: string | null;
   fetchCatalog: () => Promise<void>;
   fetchLibrary: () => Promise<void>;
@@ -42,6 +45,9 @@ interface CatalogState {
   purchaseGame: (gameId: number) => Promise<void>;
   uploadGameFile: (gameId: number, file: File, version: string) => Promise<void>;
   revokeOwnership: (gameId: number) => Promise<void>;
+  fetchPendingGames: () => Promise<void>;
+  approveGame: (gameId: number) => Promise<void>;
+  rejectGame: (gameId: number) => Promise<void>;
   clearError: () => void;
 }
 
@@ -52,6 +58,9 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   purchasingId: null,
   uploadingId: null,
   storageUsage: null,
+  pendingGames: [],
+  loadingPendingGames: false,
+  moderatingId: null,
   error: null,
 
   fetchCatalog: async () => {
@@ -161,6 +170,52 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       await get().fetchLibrary();
     } catch (e) {
       set({ error: String(e) });
+    }
+  },
+
+  fetchPendingGames: async () => {
+    set({ loadingPendingGames: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/admin/games/pending`, {
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const pendingGames: CatalogGame[] = await response.json();
+      set({ pendingGames, loadingPendingGames: false });
+    } catch (e) {
+      set({ error: String(e), loadingPendingGames: false });
+    }
+  },
+
+  approveGame: async (gameId) => {
+    set({ moderatingId: gameId, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/games/${gameId}/approve`, {
+        method: "POST",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      await get().fetchPendingGames();
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ moderatingId: null });
+    }
+  },
+
+  rejectGame: async (gameId) => {
+    set({ moderatingId: gameId, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/games/${gameId}/reject`, {
+        method: "POST",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      await get().fetchPendingGames();
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ moderatingId: null });
     }
   },
 

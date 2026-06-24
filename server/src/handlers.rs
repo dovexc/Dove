@@ -6,7 +6,7 @@ use rusqlite::params;
 use std::io::Read;
 use std::path::Path as FsPath;
 
-use crate::auth::{create_token, hash_password, verify_password, AuthUser};
+use crate::auth::{create_token, hash_password, user_id_from_headers, verify_password, AdminUser, AuthUser};
 use crate::models::{
     AuthResponse, CatalogGame, ImageUpload, LoginRequest, NewCatalogGame, ProfileScreenshot,
     PublicProfile, RegisterRequest, UpdateProfileRequest, User,
@@ -29,11 +29,23 @@ fn row_to_user(row: &rusqlite::Row) -> rusqlite::Result<User> {
         bio: row.get(5)?,
         created_at: row.get(6)?,
         is_profile_hidden: row.get(7)?,
+        is_admin: row.get(8)?,
     })
 }
 
-const USER_COLUMNS: &str =
-    "id, email, display_name, avatar_url, background_url, bio, created_at, is_profile_hidden";
+const USER_COLUMNS: &str = "id, email, display_name, avatar_url, background_url, bio, \
+    created_at, is_profile_hidden, is_admin";
+
+/// Grants/revokes moderator access based on `state.admin_emails`, so the
+/// role always reflects the current env config rather than a one-time
+/// snapshot from when the account was created.
+fn sync_admin_flag(conn: &rusqlite::Connection, user_id: i64, email: &str, state: &AppState) {
+    let should_be_admin = state.admin_emails.contains(&email.to_lowercase());
+    let _ = conn.execute(
+        "UPDATE users SET is_admin = ?1 WHERE id = ?2",
+        params![should_be_admin, user_id],
+    );
+}
 
 /// True if `a` and `b` are accepted friends (order-independent).
 fn are_friends(conn: &rusqlite::Connection, a: i64, b: i64) -> bool {
@@ -95,6 +107,7 @@ pub async fn register(
     .map_err(|e| (StatusCode::CONFLICT, format!("E-Mail bereits registriert: {e}")))?;
 
     let id = conn.last_insert_rowid();
+    sync_admin_flag(&conn, id, &req.email, &state);
     let user = conn
         .query_row(
             &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
@@ -128,6 +141,7 @@ pub async fn login(
         return Err(unauthorized());
     }
 
+    sync_admin_flag(&conn, id, &req.email, &state);
     let user = conn
         .query_row(
             &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
@@ -584,18 +598,71 @@ fn row_to_game(row: &rusqlite::Row) -> rusqlite::Result<CatalogGame> {
         file_size_bytes: row.get(8)?,
         version: row.get(9)?,
         tags: row.get(10)?,
+        status: row.get(11)?,
     })
 }
 
-const GAME_COLUMNS: &str = "id, publisher_user_id, title, description, cover_url, price_cents, created_at, file_url, file_size_bytes, version, tags";
+const GAME_COLUMNS: &str = "id, publisher_user_id, title, description, cover_url, price_cents, \
+    created_at, file_url, file_size_bytes, version, tags, status";
 
+/// Catalog browsing is public, but a signed-in publisher should still see
+/// their own pending/rejected games in the catalog (e.g. to manage uploads)
+/// — so this reads an optional bearer token rather than requiring `AuthUser`.
 pub async fn list_games(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Vec<CatalogGame>>, ApiError> {
+    let current_user_id = user_id_from_headers(&headers, &state.jwt_secret).unwrap_or(-1);
+    let conn = state.db.lock().map_err(internal_error)?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {GAME_COLUMNS} FROM catalog_games \
+             WHERE status = 'approved' OR publisher_user_id = ?1 \
+             ORDER BY created_at DESC"
+        ))
+        .map_err(internal_error)?;
+    let games = stmt
+        .query_map(params![current_user_id], row_to_game)
+        .map_err(internal_error)?
+        .filter_map(|g| g.ok())
+        .collect();
+    Ok(Json(games))
+}
+
+pub async fn get_game(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(game_id): Path<i64>,
+) -> Result<Json<CatalogGame>, ApiError> {
+    let current_user_id = user_id_from_headers(&headers, &state.jwt_secret).unwrap_or(-1);
+    let conn = state.db.lock().map_err(internal_error)?;
+    let not_found = || (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string());
+
+    let game = conn
+        .query_row(
+            &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
+            params![game_id],
+            row_to_game,
+        )
+        .map_err(|_| not_found())?;
+
+    if game.status != "approved" && game.publisher_user_id != current_user_id {
+        return Err(not_found());
+    }
+
+    Ok(Json(game))
+}
+
+/// Lists games awaiting moderation, oldest first so the queue is worked
+/// through in order.
+pub async fn list_pending_games(
+    State(state): State<AppState>,
+    AdminUser(_admin_id): AdminUser,
 ) -> Result<Json<Vec<CatalogGame>>, ApiError> {
     let conn = state.db.lock().map_err(internal_error)?;
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT {GAME_COLUMNS} FROM catalog_games ORDER BY created_at DESC"
+            "SELECT {GAME_COLUMNS} FROM catalog_games WHERE status = 'pending' ORDER BY created_at ASC"
         ))
         .map_err(internal_error)?;
     let games = stmt
@@ -606,18 +673,44 @@ pub async fn list_games(
     Ok(Json(games))
 }
 
-pub async fn get_game(
-    State(state): State<AppState>,
-    Path(game_id): Path<i64>,
+async fn set_game_status(
+    state: &AppState,
+    game_id: i64,
+    status: &str,
 ) -> Result<Json<CatalogGame>, ApiError> {
     let conn = state.db.lock().map_err(internal_error)?;
+    let affected = conn
+        .execute(
+            "UPDATE catalog_games SET status = ?1 WHERE id = ?2",
+            params![status, game_id],
+        )
+        .map_err(internal_error)?;
+    if affected == 0 {
+        return Err((StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()));
+    }
     conn.query_row(
         &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
         params![game_id],
         row_to_game,
     )
     .map(Json)
-    .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))
+    .map_err(internal_error)
+}
+
+pub async fn approve_game(
+    State(state): State<AppState>,
+    AdminUser(_admin_id): AdminUser,
+    Path(game_id): Path<i64>,
+) -> Result<Json<CatalogGame>, ApiError> {
+    set_game_status(&state, game_id, "approved").await
+}
+
+pub async fn reject_game(
+    State(state): State<AppState>,
+    AdminUser(_admin_id): AdminUser,
+    Path(game_id): Path<i64>,
+) -> Result<Json<CatalogGame>, ApiError> {
+    set_game_status(&state, game_id, "rejected").await
 }
 
 pub async fn create_game(

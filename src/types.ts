@@ -56,6 +56,7 @@ export interface StoreUser {
   bio: string | null;
   created_at: string;
   is_profile_hidden: boolean;
+  is_admin: boolean;
 }
 
 export interface ProfileScreenshot {
@@ -99,6 +100,7 @@ export interface CatalogGame {
   file_size_bytes: number | null;
   version: string;
   tags: string | null;
+  status: "pending" | "approved" | "rejected";
 }
 
 export interface NewCatalogGame {

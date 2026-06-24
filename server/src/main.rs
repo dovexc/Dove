@@ -131,6 +131,13 @@ async fn main() {
 
     std::fs::create_dir_all("data/uploads/games").expect("failed to create uploads dir");
 
+    let admin_emails: Vec<String> = std::env::var("DOVE_ADMIN_EMAILS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|e| e.trim().to_lowercase())
+        .filter(|e| !e.is_empty())
+        .collect();
+
     let conn = db::init(default_quota_bytes);
     let state = AppState {
         db: Arc::new(Mutex::new(conn)),
@@ -142,6 +149,7 @@ async fn main() {
             AUTH_RATE_LIMIT_MAX_REQUESTS,
             Duration::from_secs(AUTH_RATE_LIMIT_WINDOW_SECS),
         )),
+        admin_emails,
     };
 
     let cors = CorsLayer::new()
@@ -205,6 +213,9 @@ async fn main() {
         )
         .route("/api/games/:id", get(handlers::get_game))
         .route("/api/games/:id/manifest", get(handlers::get_game_manifest))
+        .route("/api/admin/games/pending", get(handlers::list_pending_games))
+        .route("/api/games/:id/approve", post(handlers::approve_game))
+        .route("/api/games/:id/reject", post(handlers::reject_game))
         .route(
             "/api/games/:id/purchase",
             post(handlers::purchase_game).delete(handlers::revoke_ownership),

@@ -10,6 +10,7 @@ pub struct User {
     pub bio: Option<String>,
     pub created_at: String,
     pub is_profile_hidden: bool,
+    pub is_admin: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -81,6 +82,7 @@ pub struct CatalogGame {
     pub file_size_bytes: Option<i64>,
     pub version: String,
     pub tags: Option<String>,
+    pub status: String,
 }
 
 #[derive(Debug, Deserialize)]

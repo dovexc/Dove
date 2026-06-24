@@ -20,4 +20,8 @@ pub struct AppState {
     /// `host:port` of the clamd daemon used to scan uploaded game files.
     /// If `None`, malware scanning is skipped (e.g. clamd not installed).
     pub clamd_address: Option<String>,
+    /// Lowercased emails granted moderator access (catalog approval) — set
+    /// from `DOVE_ADMIN_EMAILS`. Applied on every login/register, so role
+    /// changes take effect on next sign-in.
+    pub admin_emails: Vec<String>,
 }

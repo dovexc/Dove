@@ -2,16 +2,20 @@ import { useEffect, useRef, useState } from "react";
 
 interface Props {
   displayName: string;
+  isAdmin?: boolean;
   onOpenProfile: () => void;
   onOpenFriends: () => void;
   onOpenSettings: () => void;
+  onOpenModeration?: () => void;
 }
 
 export function UserMenu({
   displayName,
+  isAdmin,
   onOpenProfile,
   onOpenFriends,
   onOpenSettings,
+  onOpenModeration,
 }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -65,6 +69,17 @@ export function UserMenu({
           >
             Einstellungen
           </button>
+          {isAdmin && onOpenModeration && (
+            <button
+              onClick={() => {
+                setOpen(false);
+                onOpenModeration();
+              }}
+              className="block w-full border-t border-zinc-800 px-3 py-2 text-left text-amber-300 hover:bg-zinc-800"
+            >
+              Moderation
+            </button>
+          )}
         </div>
       )}
     </div>

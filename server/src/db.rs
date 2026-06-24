@@ -95,6 +95,20 @@ pub fn init(default_quota_bytes: i64) -> Connection {
         "ALTER TABLE users ADD COLUMN is_profile_hidden INTEGER NOT NULL DEFAULT 0",
         [],
     );
+    let _ = conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0", []);
+
+    // Games created before moderation existed predate review entirely —
+    // back-fill them as approved exactly once, the moment the column is
+    // added, rather than leaving previously-public games stuck pending.
+    let added_status_column = conn
+        .execute(
+            "ALTER TABLE catalog_games ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'",
+            [],
+        )
+        .is_ok();
+    if added_status_column {
+        let _ = conn.execute("UPDATE catalog_games SET status = 'approved'", []);
+    }
 
     conn
 }
