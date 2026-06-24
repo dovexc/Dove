@@ -2,6 +2,7 @@ mod auth;
 mod db;
 mod handlers;
 mod models;
+mod rate_limit;
 mod state;
 
 use axum::extract::DefaultBodyLimit;
@@ -9,11 +10,16 @@ use axum::routing::{get, post};
 use axum::Router;
 use base64::Engine;
 use rand_core::{OsRng, RngCore};
+use rate_limit::RateLimiter;
 use state::AppState;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
+const AUTH_RATE_LIMIT_MAX_REQUESTS: usize = 10;
+const AUTH_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 const MAX_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_GAME_FILE_BYTES: usize = 5 * 1024 * 1024 * 1024;
 const DEFAULT_QUOTA_BYTES: i64 = 5 * 1024 * 1024 * 1024; // 5 GiB per publisher
@@ -132,6 +138,10 @@ async fn main() {
         default_quota_bytes,
         min_free_disk_bytes,
         clamd_address,
+        auth_rate_limiter: Arc::new(RateLimiter::new(
+            AUTH_RATE_LIMIT_MAX_REQUESTS,
+            Duration::from_secs(AUTH_RATE_LIMIT_WINDOW_SECS),
+        )),
     };
 
     let cors = CorsLayer::new()
@@ -146,9 +156,18 @@ async fn main() {
         .route("/api/games/:id/upload", post(handlers::upload_game_file))
         .layer(DefaultBodyLimit::max(MAX_GAME_FILE_BYTES));
 
-    let app = Router::new()
+    // Throttled separately from the rest of the API so brute-forcing
+    // login/register can't be done at the same rate as normal traffic.
+    let auth_routes = Router::new()
         .route("/api/auth/register", post(handlers::register))
         .route("/api/auth/login", post(handlers::login))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::limit_auth_attempts,
+        ));
+
+    let app = Router::new()
+        .merge(auth_routes)
         .route("/api/me", get(handlers::me).patch(handlers::update_profile))
         .route("/api/me/password", post(handlers::change_password))
         .route("/api/me/avatar", post(handlers::upload_avatar))
@@ -202,5 +221,10 @@ async fn main() {
         .await
         .expect("failed to bind to port 4000");
     println!("Dove server listening on http://127.0.0.1:4000");
-    axum::serve(listener, app).await.expect("server error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .expect("server error");
 }

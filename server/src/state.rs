@@ -1,10 +1,14 @@
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 
+use crate::rate_limit::RateLimiter;
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub jwt_secret: String,
+    /// Throttles `/api/auth/*` attempts per client IP.
+    pub auth_rate_limiter: Arc<RateLimiter>,
     /// Default per-publisher storage quota (bytes) applied to newly
     /// registered users. Existing users keep whatever quota is stored on
     /// their row, so this can be raised/lowered for new signups without a
