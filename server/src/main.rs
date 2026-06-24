@@ -216,6 +216,9 @@ async fn main() {
         .route("/api/admin/games/pending", get(handlers::list_pending_games))
         .route("/api/games/:id/approve", post(handlers::approve_game))
         .route("/api/games/:id/reject", post(handlers::reject_game))
+        .route("/api/admin/users", get(handlers::list_users_for_admin))
+        .route("/api/users/:id/promote", post(handlers::promote_user))
+        .route("/api/users/:id/demote", post(handlers::demote_user))
         .route(
             "/api/games/:id/purchase",
             post(handlers::purchase_game).delete(handlers::revoke_ownership),

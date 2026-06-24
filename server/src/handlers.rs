@@ -36,15 +36,18 @@ fn row_to_user(row: &rusqlite::Row) -> rusqlite::Result<User> {
 const USER_COLUMNS: &str = "id, email, display_name, avatar_url, background_url, bio, \
     created_at, is_profile_hidden, is_admin";
 
-/// Grants/revokes moderator access based on `state.admin_emails`, so the
-/// role always reflects the current env config rather than a one-time
-/// snapshot from when the account was created.
+/// Grants moderator access on login/register if the email is listed in
+/// `DOVE_ADMIN_EMAILS` — this is a one-way bootstrap, not a live sync: it
+/// never revokes `is_admin`, so admins promoted in-app (via
+/// `promote_user`) keep the role even though their email isn't in the env
+/// list. Demotion only happens through `demote_user`.
 fn sync_admin_flag(conn: &rusqlite::Connection, user_id: i64, email: &str, state: &AppState) {
-    let should_be_admin = state.admin_emails.contains(&email.to_lowercase());
-    let _ = conn.execute(
-        "UPDATE users SET is_admin = ?1 WHERE id = ?2",
-        params![should_be_admin, user_id],
-    );
+    if state.admin_emails.contains(&email.to_lowercase()) {
+        let _ = conn.execute(
+            "UPDATE users SET is_admin = 1 WHERE id = ?1",
+            params![user_id],
+        );
+    }
 }
 
 /// True if `a` and `b` are accepted friends (order-independent).
@@ -651,6 +654,86 @@ pub async fn get_game(
     }
 
     Ok(Json(game))
+}
+
+#[derive(serde::Deserialize)]
+pub struct AdminUsersQuery {
+    q: Option<String>,
+}
+
+/// Admin-only user listing for the moderator-management panel. Unlike
+/// `search_users` (the "Freunde" search), this intentionally includes
+/// hidden profiles and exposes `is_admin` — moderators need to find and
+/// manage any account, not just discoverable ones.
+pub async fn list_users_for_admin(
+    State(state): State<AppState>,
+    AdminUser(_admin_id): AdminUser,
+    axum::extract::Query(query): axum::extract::Query<AdminUsersQuery>,
+) -> Result<Json<Vec<User>>, ApiError> {
+    let search = query.q.unwrap_or_default().trim().to_string();
+    if search.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+
+    let conn = state.db.lock().map_err(internal_error)?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {USER_COLUMNS} FROM users \
+             WHERE display_name LIKE ?1 OR email LIKE ?1 \
+             ORDER BY display_name COLLATE NOCASE LIMIT 50"
+        ))
+        .map_err(internal_error)?;
+    let pattern = format!("%{search}%");
+    let users = stmt
+        .query_map(params![pattern], row_to_user)
+        .map_err(internal_error)?
+        .filter_map(|u| u.ok())
+        .collect();
+
+    Ok(Json(users))
+}
+
+pub async fn promote_user(
+    State(state): State<AppState>,
+    AdminUser(_admin_id): AdminUser,
+    Path(target_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let affected = conn
+        .execute(
+            "UPDATE users SET is_admin = 1 WHERE id = ?1",
+            params![target_id],
+        )
+        .map_err(internal_error)?;
+    if affected == 0 {
+        return Err((StatusCode::NOT_FOUND, "Nutzer nicht gefunden".to_string()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn demote_user(
+    State(state): State<AppState>,
+    AdminUser(admin_id): AdminUser,
+    Path(target_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    if target_id == admin_id {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Du kannst dir nicht selbst die Moderatorrolle entziehen".to_string(),
+        ));
+    }
+
+    let conn = state.db.lock().map_err(internal_error)?;
+    let affected = conn
+        .execute(
+            "UPDATE users SET is_admin = 0 WHERE id = ?1",
+            params![target_id],
+        )
+        .map_err(internal_error)?;
+    if affected == 0 {
+        return Err((StatusCode::NOT_FOUND, "Nutzer nicht gefunden".to_string()));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Lists games awaiting moderation, oldest first so the queue is worked

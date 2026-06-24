@@ -88,13 +88,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const response = await fetch(`${API_BASE}/api/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!response.ok) throw new Error("Sitzung abgelaufen");
+      if (response.status === 401) {
+        // Token actually rejected (expired/invalid) — the session is gone.
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        set({ token: null, user: null });
+        return;
+      }
+      if (!response.ok) throw new Error(await parseErrorMessage(response));
       const user = await response.json();
       set({ user });
       get().fetchScreenshots();
     } catch {
-      localStorage.removeItem(TOKEN_STORAGE_KEY);
-      set({ token: null, user: null });
+      // Network/server error (e.g. backend not up yet) — keep the token and
+      // retry on the next hydrate rather than logging the user out for an
+      // outage that has nothing to do with their session being valid.
     }
   },
 

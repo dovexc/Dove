@@ -89,6 +89,21 @@ function App() {
     registerDownloadEventListeners();
     fetchGames();
     hydrateUser();
+
+    // The backend can still be starting up right as the window opens; retry
+    // a few times so a slow launch doesn't strand the user logged-out-looking
+    // even though their token is still valid.
+    let attempts = 0;
+    const retry = setInterval(() => {
+      attempts += 1;
+      const { token, user } = useAuthStore.getState();
+      if (!token || user || attempts >= 5) {
+        clearInterval(retry);
+        return;
+      }
+      hydrateUser();
+    }, 2000);
+    return () => clearInterval(retry);
   }, [fetchGames, hydrateUser]);
 
   const selectedGame = games.find((g) => g.id === selectedGameId) ?? null;
