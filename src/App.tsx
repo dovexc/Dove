@@ -18,6 +18,7 @@ import { DownloadsPage } from "./components/downloads/DownloadsPage";
 import { registerDownloadEventListeners } from "./downloadStore";
 import { UserMenu } from "./components/UserMenu";
 import { FriendsView } from "./components/friends/FriendsView";
+import { SettingsView } from "./components/settings/SettingsView";
 
 const SIDEBAR_WIDTH_KEY = "library_sidebar_width";
 const SIDEBAR_MIN_WIDTH = 180;
@@ -283,22 +284,7 @@ function App() {
       {isLoginOpen && <LoginDialog onClose={() => setIsLoginOpen(false)} />}
       {isProfileOpen && <ProfilePage onClose={() => setIsProfileOpen(false)} />}
       {isFriendsOpen && <FriendsView onClose={() => setIsFriendsOpen(false)} />}
-      {isSettingsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-[22rem] flex-col gap-4 rounded-lg bg-zinc-900 p-6 shadow-xl">
-            <h2 className="text-lg font-bold text-zinc-100">Einstellungen</h2>
-            <p className="text-sm text-zinc-400">
-              Einstellungen folgen in einem späteren Update.
-            </p>
-            <button
-              onClick={() => setIsSettingsOpen(false)}
-              className="self-end rounded bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
-            >
-              Schließen
-            </button>
-          </div>
-        </div>
-      )}
+      {isSettingsOpen && <SettingsView onClose={() => setIsSettingsOpen(false)} />}
       <GameContextMenu />
     </div>
   );

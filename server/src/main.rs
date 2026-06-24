@@ -150,6 +150,7 @@ async fn main() {
         .route("/api/auth/register", post(handlers::register))
         .route("/api/auth/login", post(handlers::login))
         .route("/api/me", get(handlers::me).patch(handlers::update_profile))
+        .route("/api/me/password", post(handlers::change_password))
         .route("/api/me/avatar", post(handlers::upload_avatar))
         .route("/api/me/background", post(handlers::upload_background))
         .route(

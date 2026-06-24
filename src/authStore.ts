@@ -21,6 +21,7 @@ interface AuthState {
   fetchScreenshots: () => Promise<void>;
   addScreenshot: (dataUrl: string) => Promise<void>;
   deleteScreenshot: (id: number) => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
 }
 
 async function parseErrorMessage(response: Response): Promise<string> {
@@ -207,6 +208,31 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await get().fetchScreenshots();
     } catch (e) {
       set({ error: String(e) });
+    }
+  },
+
+  changePassword: async (currentPassword, newPassword) => {
+    const token = get().token;
+    if (!token) return false;
+    set({ loading: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/me/password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+        }),
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      set({ loading: false });
+      return true;
+    } catch (e) {
+      set({ error: String(e), loading: false });
+      return false;
     }
   },
 }));

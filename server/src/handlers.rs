@@ -173,6 +173,44 @@ pub async fn update_profile(
     .map_err(internal_error)
 }
 
+pub async fn change_password(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Json(req): Json<crate::models::ChangePasswordRequest>,
+) -> Result<StatusCode, ApiError> {
+    if req.new_password.len() < 8 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Neues Passwort muss mindestens 8 Zeichen lang sein".to_string(),
+        ));
+    }
+
+    let conn = state.db.lock().map_err(internal_error)?;
+    let current_hash: String = conn
+        .query_row(
+            "SELECT password_hash FROM users WHERE id = ?1",
+            params![user_id],
+            |row| row.get(0),
+        )
+        .map_err(internal_error)?;
+
+    if !verify_password(&req.current_password, &current_hash) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "Aktuelles Passwort ist falsch".to_string(),
+        ));
+    }
+
+    let new_hash = hash_password(&req.new_password).map_err(internal_error)?;
+    conn.execute(
+        "UPDATE users SET password_hash = ?1 WHERE id = ?2",
+        params![new_hash, user_id],
+    )
+    .map_err(internal_error)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub async fn upload_avatar(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
