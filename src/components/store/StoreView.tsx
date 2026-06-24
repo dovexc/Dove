@@ -139,6 +139,8 @@ export function StoreView() {
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [uploadTargetId, setUploadTargetId] = useState<number | null>(null);
   const [uploadVersion, setUploadVersion] = useState<string | null>(null);
+  const [versionDialogGame, setVersionDialogGame] = useState<CatalogGame | null>(null);
+  const [versionDraft, setVersionDraft] = useState("1.0.0");
 
   const [showPublishForm, setShowPublishForm] = useState(false);
   const [title, setTitle] = useState("");
@@ -218,14 +220,16 @@ export function StoreView() {
     setShowPublishForm(false);
   }
 
-  function startUpload(gameId: number, currentVersion: string) {
-    const version = window.prompt(
-      "Versionsnummer für diesen Upload:",
-      currentVersion || "1.0.0"
-    );
-    if (!version || !version.trim()) return;
-    setUploadTargetId(gameId);
-    setUploadVersion(version.trim());
+  function startUpload(game: CatalogGame) {
+    setVersionDraft(game.version || "1.0.0");
+    setVersionDialogGame(game);
+  }
+
+  function confirmVersionAndPickFile() {
+    if (!versionDialogGame || !versionDraft.trim()) return;
+    setUploadTargetId(versionDialogGame.id);
+    setUploadVersion(versionDraft.trim());
+    setVersionDialogGame(null);
     uploadInputRef.current?.click();
   }
 
@@ -537,7 +541,7 @@ export function StoreView() {
                         </div>
                         {isPublisher && (
                           <button
-                            onClick={() => startUpload(game.id, game.version)}
+                            onClick={() => startUpload(game)}
                             disabled={uploadingId === game.id}
                             className="rounded bg-zinc-800 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
                           >
@@ -565,6 +569,45 @@ export function StoreView() {
         className="hidden"
         onChange={handleUploadFileChange}
       />
+
+      {versionDialogGame && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="flex w-[24rem] flex-col gap-4 rounded-lg bg-zinc-900 p-6 shadow-xl">
+            <h2 className="text-lg font-bold text-zinc-100">
+              Versionsnummer für {versionDialogGame.title}
+            </h2>
+            <label className="flex flex-col gap-1 text-sm text-zinc-300">
+              Version
+              <input
+                value={versionDraft}
+                onChange={(e) => setVersionDraft(e.target.value)}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") confirmVersionAndPickFile();
+                }}
+                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+              />
+            </label>
+            <div className="mt-2 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setVersionDialogGame(null)}
+                className="rounded px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="button"
+                onClick={confirmVersionAndPickFile}
+                disabled={!versionDraft.trim()}
+                className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+              >
+                Weiter & Datei auswählen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

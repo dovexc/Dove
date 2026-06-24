@@ -69,96 +69,103 @@ export function DownloadsPage({ onOpenGame }: Props) {
       style={{ background: "linear-gradient(180deg,#1b2838,#16202b)" }}
     >
       <div
-        className="flex h-[180px] flex-none items-end justify-end px-10 pb-6"
+        className="flex h-[180px] flex-none items-center gap-6 px-10"
         style={{
           background:
             "radial-gradient(900px 300px at 70% 0%, rgba(40,90,150,.45) 0%, rgba(15,25,35,0) 70%), linear-gradient(180deg,#0e1822,#16202b)",
         }}
       >
-        <div className="flex gap-10 text-right text-xs text-zinc-400">
-          <div>
-            <div className="font-semibold uppercase tracking-wide text-zinc-500">Netzwerk</div>
-            <div className="text-base font-bold text-zinc-100">
-              {current ? formatSpeed(current.speedBps) : "0 B/s"}
+        {current ? (
+          <>
+            <div className="flex h-[96px] w-[170px] flex-none items-center justify-center overflow-hidden rounded bg-[#0e151c] text-xs text-zinc-500">
+              {coverFor(current.id) ? (
+                <img
+                  src={coverFor(current.id)!}
+                  alt={current.name}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="px-2 text-center leading-tight">{current.name}</span>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-xl font-bold text-zinc-100">{current.name}</div>
+              <div className="mt-2 h-2 w-full max-w-xl overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    current.status === "paused" ? "bg-zinc-500" : "bg-sky-500"
+                  }`}
+                  style={{
+                    width: current.status === "extracting" ? "100%" : `${percent ?? 0}%`,
+                  }}
+                />
+              </div>
+              <div className="mt-2 text-sm text-zinc-400">
+                {current.status === "extracting"
+                  ? "Dateien werden entpackt..."
+                  : current.total
+                    ? `${formatSize(current.downloaded)} / ${formatSize(current.total)}${
+                        current.status === "downloading"
+                          ? ` · ${formatSpeed(current.speedBps)}`
+                          : ""
+                      } · ${percent ?? 0}%`
+                    : current.status === "paused"
+                      ? `Pausiert · ${percent ?? 0}%`
+                      : "Lädt herunter..."}
+              </div>
+            </div>
+            {current.status === "downloading" && (
+              <Sparkline values={current.speedHistory} width={160} height={36} />
+            )}
+            <div className="flex items-center gap-2">
+              {current.status === "downloading" && (
+                <button
+                  onClick={() => pauseDownload(current.id)}
+                  title="Pausieren"
+                  className="rounded bg-zinc-800 p-2.5 text-zinc-200 hover:bg-zinc-700"
+                >
+                  <PauseIcon />
+                </button>
+              )}
+              {current.status === "paused" && (
+                <button
+                  onClick={() => resumeDownload(current.id)}
+                  title="Fortsetzen"
+                  className="rounded bg-sky-600 p-2.5 text-white hover:bg-sky-500"
+                >
+                  <PlayIcon />
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-1 items-center justify-between">
+            <span className="text-sm text-zinc-500">Aktuell läuft kein Download.</span>
+            <div className="flex gap-10 text-right text-xs text-zinc-400">
+              <div>
+                <div className="font-semibold uppercase tracking-wide text-zinc-500">
+                  Warteschlange
+                </div>
+                <div className="text-base font-bold text-zinc-100">{upNext.length}</div>
+              </div>
             </div>
           </div>
-          <div>
-            <div className="font-semibold uppercase tracking-wide text-zinc-500">Warteschlange</div>
-            <div className="text-base font-bold text-zinc-100">{upNext.length}</div>
-          </div>
-        </div>
+        )}
       </div>
 
       <div className="mx-auto max-w-4xl px-6 py-8">
         <section className="mb-10">
           <div className="mb-3 flex items-center gap-3">
             <h2 className="text-base font-bold text-zinc-100">
-              Als Nächstes <span className="text-zinc-500">({upNext.length})</span>
+              Warteschlange <span className="text-zinc-500">({queued.length})</span>
             </h2>
             <div className="h-px flex-1 bg-white/10" />
           </div>
 
-          {upNext.length === 0 ? (
-            <p className="text-sm text-zinc-500">Keine Downloads in der Warteschlange.</p>
+          {queued.length === 0 ? (
+            <p className="text-sm text-zinc-500">Keine weiteren Downloads in der Warteschlange.</p>
           ) : (
             <div className="flex flex-col gap-1">
-              {current && (
-                <div className="flex items-center gap-4 rounded px-2 py-2.5 hover:bg-white/5">
-                  <Thumbnail name={current.name} coverPath={coverFor(current.id)} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-zinc-100">
-                      {current.name}
-                    </div>
-                    <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
-                      <div
-                        className={`h-full rounded-full transition-all ${
-                          current.status === "paused" ? "bg-zinc-500" : "bg-sky-500"
-                        }`}
-                        style={{
-                          width: current.status === "extracting" ? "100%" : `${percent ?? 0}%`,
-                        }}
-                      />
-                    </div>
-                    <div className="mt-1 text-xs text-zinc-500">
-                      {current.status === "extracting"
-                        ? "Dateien werden entpackt..."
-                        : current.total
-                          ? `${formatSize(current.downloaded)} / ${formatSize(current.total)}${
-                              current.status === "downloading"
-                                ? ` · ${formatSpeed(current.speedBps)}`
-                                : ""
-                            }`
-                          : current.status === "paused"
-                            ? `Pausiert · ${percent ?? 0}%`
-                            : "Lädt herunter..."}
-                    </div>
-                  </div>
-                  {current.status === "downloading" && (
-                    <Sparkline values={current.speedHistory} width={140} height={28} />
-                  )}
-                  <div className="flex items-center gap-2">
-                    {current.status === "downloading" && (
-                      <button
-                        onClick={() => pauseDownload(current.id)}
-                        title="Pausieren"
-                        className="rounded bg-zinc-800 p-2 text-zinc-200 hover:bg-zinc-700"
-                      >
-                        <PauseIcon />
-                      </button>
-                    )}
-                    {current.status === "paused" && (
-                      <button
-                        onClick={() => resumeDownload(current.id)}
-                        title="Fortsetzen"
-                        className="rounded bg-sky-600 p-2 text-white hover:bg-sky-500"
-                      >
-                        <PlayIcon />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-
               {queued.map((item, index) => (
                 <div
                   key={item.id}

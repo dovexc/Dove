@@ -29,4 +29,5 @@ open = "5"
 ureq = { version = "2", features = ["json"] }
 sysinfo = "0.32"
 urlencoding = "2"
+sha2 = "0.10"
 

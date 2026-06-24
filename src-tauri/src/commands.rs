@@ -164,6 +164,11 @@ pub fn delete_game(state: State<AppState>, id: i64, delete_files: bool) -> Resul
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM games WHERE id = ?1", params![id])
             .map_err(|e| e.to_string())?;
+        conn.execute(
+            "DELETE FROM installed_files WHERE game_id = ?1",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     if delete_files && !exe_path.starts_with("steam://") && !exe_path.starts_with("store://") {
@@ -211,8 +216,16 @@ pub fn uninstall_game(state: State<AppState>, id: i64) -> Result<Game, String> {
     {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         conn.execute(
-            "UPDATE games SET exe_path = ?1, size_on_disk_bytes = 0 WHERE id = ?2",
+            "UPDATE games SET exe_path = ?1, size_on_disk_bytes = 0, installed_version = NULL WHERE id = ?2",
             params![placeholder, id],
+        )
+        .map_err(|e| e.to_string())?;
+        // The files are gone from disk now — forget what we "have", so a
+        // future install re-downloads everything instead of wrongly
+        // assuming the (now-deleted) files are still present and up to date.
+        conn.execute(
+            "DELETE FROM installed_files WHERE game_id = ?1",
+            params![id],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -606,15 +619,37 @@ fn local_installed_hashes(
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
+fn sha256_of_file(path: &std::path::Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 65536];
+    loop {
+        let read = file.read(&mut buf).map_err(|e| e.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 /// Downloads a single manifest file into `dest_path`, resuming from a
 /// matching `.part` file on disk if one exists, and reporting progress
-/// against the overall (multi-file) download totals.
+/// against the overall (multi-file) download totals. After the transfer
+/// completes, the file's SHA256 is verified against the manifest before it
+/// is moved into place — a corrupted or tampered-with download is deleted
+/// and reported as an error rather than silently installed.
 fn download_one_file(
     app: &AppHandle,
     cancel_flag: &Arc<AtomicBool>,
     id: i64,
     url: &str,
     dest_path: &std::path::Path,
+    relative_path: &str,
+    expected_sha256: &str,
     hash_suffix: &str,
     downloaded_total: &mut u64,
     grand_total: u64,
@@ -690,6 +725,15 @@ fn download_one_file(
         }
     }
     drop(file);
+
+    let actual_sha256 = sha256_of_file(&temp_path)?;
+    if actual_sha256 != expected_sha256 {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!(
+            "Prüfsumme stimmt nicht überein für {relative_path} \
+             (Download beschädigt oder unterbrochen) — bitte erneut versuchen."
+        ));
+    }
 
     std::fs::rename(&temp_path, dest_path).map_err(|e| e.to_string())?;
     Ok(())
@@ -767,6 +811,8 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
             id,
             &url,
             &dest_path,
+            &file.relative_path,
+            &file.sha256,
             &file.sha256[..8],
             &mut downloaded_total,
             grand_total,
