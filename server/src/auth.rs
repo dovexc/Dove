@@ -66,6 +66,7 @@ fn verify_token(token: &str, secret: &str) -> Result<i64, String> {
     .map_err(|e| e.to_string())
 }
 
+#[derive(Debug)]
 pub struct AuthUser(pub i64);
 
 #[async_trait]
@@ -109,6 +110,7 @@ impl FromRequestParts<AppState> for AuthUser {
 
 /// Like `AuthUser`, but additionally requires `users.is_admin = 1` for the
 /// signed-in user. Used to gate catalog moderation endpoints.
+#[derive(Debug)]
 pub struct AdminUser(pub i64);
 
 #[async_trait]

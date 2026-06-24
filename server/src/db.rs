@@ -5,7 +5,22 @@ pub fn init(default_quota_bytes: i64) -> Connection {
     let data_dir = PathBuf::from("data");
     std::fs::create_dir_all(&data_dir).expect("failed to create data dir");
     let conn = Connection::open(data_dir.join("catalog.db")).expect("failed to open database");
+    init_schema(&conn, default_quota_bytes);
+    conn
+}
 
+/// In-memory database for tests — same schema/migrations as the real
+/// on-disk one, so handler tests exercise the actual `ALTER TABLE`
+/// history rather than a hand-written "ideal" schema that could drift
+/// from what migrations actually produce.
+#[cfg(test)]
+pub fn init_test(default_quota_bytes: i64) -> Connection {
+    let conn = Connection::open_in_memory().expect("failed to open in-memory database");
+    init_schema(&conn, default_quota_bytes);
+    conn
+}
+
+fn init_schema(conn: &Connection, default_quota_bytes: i64) {
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS users (
@@ -109,6 +124,4 @@ pub fn init(default_quota_bytes: i64) -> Connection {
     if added_status_column {
         let _ = conn.execute("UPDATE catalog_games SET status = 'approved'", []);
     }
-
-    conn
 }

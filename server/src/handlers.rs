@@ -392,7 +392,7 @@ pub async fn get_user_profile(
 
 #[derive(serde::Deserialize)]
 pub struct SearchUsersQuery {
-    q: Option<String>,
+    pub(crate) q: Option<String>,
 }
 
 /// Lightweight user listing for the "Freunde" search — deliberately omits
@@ -658,7 +658,7 @@ pub async fn get_game(
 
 #[derive(serde::Deserialize)]
 pub struct AdminUsersQuery {
-    q: Option<String>,
+    pub(crate) q: Option<String>,
 }
 
 /// Admin-only user listing for the moderator-management panel. Unlike

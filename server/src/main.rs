@@ -1,6 +1,8 @@
 mod auth;
 mod db;
 mod handlers;
+#[cfg(test)]
+mod handler_tests;
 mod models;
 mod rate_limit;
 mod state;

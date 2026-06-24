@@ -30,7 +30,7 @@ impl RateLimiter {
         }
     }
 
-    fn check(&self, key: &str) -> bool {
+    pub(crate) fn check(&self, key: &str) -> bool {
         let now = Instant::now();
         let mut hits = self.hits.lock().unwrap();
         let entry = hits.entry(key.to_string()).or_default();
