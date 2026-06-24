@@ -113,4 +113,11 @@ pub struct UserSummary {
     pub id: i64,
     pub display_name: String,
     pub avatar_url: Option<String>,
+    pub online: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct FriendRequests {
+    pub incoming: Vec<UserSummary>,
+    pub outgoing: Vec<UserSummary>,
 }

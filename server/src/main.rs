@@ -164,6 +164,23 @@ async fn main() {
         .route("/api/users", get(handlers::search_users))
         .route("/api/users/:id", get(handlers::get_user_profile))
         .route(
+            "/api/users/:id/friend-request",
+            post(handlers::send_friend_request),
+        )
+        .route(
+            "/api/users/:id/friend-accept",
+            post(handlers::accept_friend_request),
+        )
+        .route(
+            "/api/users/:id/friend",
+            axum::routing::delete(handlers::remove_friend),
+        )
+        .route("/api/me/friends", get(handlers::list_friends))
+        .route(
+            "/api/me/friend-requests",
+            get(handlers::list_friend_requests),
+        )
+        .route(
             "/api/games",
             get(handlers::list_games).post(handlers::create_game),
         )

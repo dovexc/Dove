@@ -81,6 +81,16 @@ impl FromRequestParts<AppState> for AuthUser {
         let user_id = verify_token(token, &state.jwt_secret)
             .map_err(|_| (StatusCode::UNAUTHORIZED, "Ungültiges Token".to_string()))?;
 
+        // Every authenticated request counts as activity — cheap presence
+        // tracking without a dedicated heartbeat endpoint. Best-effort: a
+        // lock failure here shouldn't block the actual request.
+        if let Ok(conn) = state.db.lock() {
+            let _ = conn.execute(
+                "UPDATE users SET last_seen_at = datetime('now') WHERE id = ?1",
+                rusqlite::params![user_id],
+            );
+        }
+
         Ok(AuthUser(user_id))
     }
 }

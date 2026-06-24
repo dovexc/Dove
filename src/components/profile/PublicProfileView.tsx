@@ -1,9 +1,16 @@
 import { API_BASE } from "../../authStore";
 import type { PublicProfile } from "../../types";
 
+export type FriendStatus = "none" | "friends" | "pending_outgoing" | "pending_incoming";
+
 interface Props {
   profile: PublicProfile;
   onClose: () => void;
+  friendStatus?: FriendStatus;
+  friendActionBusy?: boolean;
+  onSendFriendRequest?: () => void;
+  onAcceptFriendRequest?: () => void;
+  onRemoveFriend?: () => void;
 }
 
 function resolveUrl(url: string | null): string | null {
@@ -11,9 +18,59 @@ function resolveUrl(url: string | null): string | null {
   return url.startsWith("http") ? url : `${API_BASE}${url}`;
 }
 
-export function PublicProfileView({ profile, onClose }: Props) {
+export function PublicProfileView({
+  profile,
+  onClose,
+  friendStatus,
+  friendActionBusy,
+  onSendFriendRequest,
+  onAcceptFriendRequest,
+  onRemoveFriend,
+}: Props) {
   const backgroundUrl = resolveUrl(profile.background_url);
   const avatarUrl = resolveUrl(profile.avatar_url);
+
+  function renderFriendButton() {
+    if (!friendStatus) return null;
+    if (friendStatus === "friends") {
+      return (
+        <button
+          onClick={onRemoveFriend}
+          disabled={friendActionBusy}
+          className="rounded bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
+        >
+          Freund entfernen
+        </button>
+      );
+    }
+    if (friendStatus === "pending_incoming") {
+      return (
+        <button
+          onClick={onAcceptFriendRequest}
+          disabled={friendActionBusy}
+          className="rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+        >
+          Anfrage annehmen
+        </button>
+      );
+    }
+    if (friendStatus === "pending_outgoing") {
+      return (
+        <span className="rounded bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-400">
+          Anfrage gesendet
+        </span>
+      );
+    }
+    return (
+      <button
+        onClick={onSendFriendRequest}
+        disabled={friendActionBusy}
+        className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+      >
+        Als Freund hinzufügen
+      </button>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950">
@@ -43,10 +100,11 @@ export function PublicProfileView({ profile, onClose }: Props) {
           </div>
         </div>
 
-        <div className="mt-3">
+        <div className="mt-3 flex items-center justify-between gap-3">
           <h2 className="py-1 text-2xl font-bold leading-relaxed text-zinc-100">
             {profile.display_name}
           </h2>
+          {renderFriendButton()}
         </div>
 
         <div className="mt-8">

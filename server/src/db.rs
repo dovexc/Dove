@@ -52,6 +52,15 @@ pub fn init(default_quota_bytes: i64) -> Connection {
             sha256 TEXT NOT NULL,
             size_bytes INTEGER NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS friendships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            requester_id INTEGER NOT NULL REFERENCES users(id),
+            recipient_id INTEGER NOT NULL REFERENCES users(id),
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(requester_id, recipient_id)
+        );
         ",
     )
     .expect("failed to initialize schema");
@@ -80,6 +89,8 @@ pub fn init(default_quota_bytes: i64) -> Connection {
         &format!("ALTER TABLE users ADD COLUMN storage_quota_bytes INTEGER NOT NULL DEFAULT {default_quota_bytes}"),
         [],
     );
+
+    let _ = conn.execute("ALTER TABLE users ADD COLUMN last_seen_at TEXT", []);
 
     conn
 }

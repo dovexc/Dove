@@ -356,30 +356,189 @@ pub async fn search_users(
     AuthUser(current_user_id): AuthUser,
     axum::extract::Query(query): axum::extract::Query<SearchUsersQuery>,
 ) -> Result<Json<Vec<crate::models::UserSummary>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
     let search = query.q.unwrap_or_default().trim().to_string();
+    if search.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
 
+    let conn = state.db.lock().map_err(internal_error)?;
     let mut stmt = conn
-        .prepare(
-            "SELECT id, display_name, avatar_url FROM users \
-             WHERE id != ?1 AND display_name LIKE ?2 \
-             ORDER BY display_name COLLATE NOCASE LIMIT 50",
-        )
+        .prepare(&format!(
+            "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
+             WHERE u.id != ?1 AND u.display_name LIKE ?2 \
+             ORDER BY u.display_name COLLATE NOCASE LIMIT 50"
+        ))
         .map_err(internal_error)?;
     let pattern = format!("%{search}%");
     let users = stmt
-        .query_map(params![current_user_id, pattern], |row| {
-            Ok(crate::models::UserSummary {
-                id: row.get(0)?,
-                display_name: row.get(1)?,
-                avatar_url: row.get(2)?,
-            })
-        })
+        .query_map(params![current_user_id, pattern], row_to_user_summary)
         .map_err(internal_error)?
         .filter_map(|u| u.ok())
         .collect();
 
     Ok(Json(users))
+}
+
+fn row_to_user_summary(row: &rusqlite::Row) -> rusqlite::Result<crate::models::UserSummary> {
+    Ok(crate::models::UserSummary {
+        id: row.get(0)?,
+        display_name: row.get(1)?,
+        avatar_url: row.get(2)?,
+        online: row.get(3)?,
+    })
+}
+
+/// A user counts as online if an authenticated request from them landed in
+/// the last 90 seconds. There's no dedicated heartbeat — `AuthUser` stamps
+/// `last_seen_at` on every authenticated request, so this is an
+/// approximation based on recent activity rather than an open connection.
+const USER_SUMMARY_COLUMNS: &str = "u.id, u.display_name, u.avatar_url, \
+    (u.last_seen_at IS NOT NULL AND (strftime('%s','now') - strftime('%s', u.last_seen_at)) < 90) AS online";
+
+/// Sends a friend request from the current user to `target_id`. Also
+/// accepts an incoming request from `target_id` automatically (matching the
+/// row in the opposite direction), so the same button works for both
+/// "send request" and "accept request" depending on existing state.
+pub async fn send_friend_request(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(target_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    if target_id == user_id {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Du kannst dich nicht selbst als Freund hinzufügen".to_string(),
+        ));
+    }
+
+    let conn = state.db.lock().map_err(internal_error)?;
+
+    let reverse_pending: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM friendships WHERE requester_id = ?1 AND recipient_id = ?2 AND status = 'pending'",
+            params![target_id, user_id],
+            |row| row.get(0),
+        )
+        .ok();
+
+    if let Some(id) = reverse_pending {
+        conn.execute(
+            "UPDATE friendships SET status = 'accepted' WHERE id = ?1",
+            params![id],
+        )
+        .map_err(internal_error)?;
+        return Ok(StatusCode::OK);
+    }
+
+    conn.execute(
+        "INSERT OR IGNORE INTO friendships (requester_id, recipient_id, status) VALUES (?1, ?2, 'pending')",
+        params![user_id, target_id],
+    )
+    .map_err(internal_error)?;
+
+    Ok(StatusCode::CREATED)
+}
+
+/// Accepts an incoming friend request from `target_id`.
+pub async fn accept_friend_request(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(target_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let affected = conn
+        .execute(
+            "UPDATE friendships SET status = 'accepted' WHERE requester_id = ?1 AND recipient_id = ?2 AND status = 'pending'",
+            params![target_id, user_id],
+        )
+        .map_err(internal_error)?;
+
+    if affected == 0 {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Keine offene Freundschaftsanfrage gefunden".to_string(),
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Removes a friendship or cancels/declines a pending request in either
+/// direction between the current user and `target_id`.
+pub async fn remove_friend(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(target_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.execute(
+        "DELETE FROM friendships WHERE (requester_id = ?1 AND recipient_id = ?2) OR (requester_id = ?2 AND recipient_id = ?1)",
+        params![user_id, target_id],
+    )
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Lists accepted friends of the current user.
+pub async fn list_friends(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<Json<Vec<crate::models::UserSummary>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
+             JOIN friendships f ON (f.requester_id = u.id OR f.recipient_id = u.id) \
+             WHERE f.status = 'accepted' AND u.id != ?1 \
+             AND (f.requester_id = ?1 OR f.recipient_id = ?1) \
+             ORDER BY u.display_name COLLATE NOCASE"
+        ))
+        .map_err(internal_error)?;
+    let friends = stmt
+        .query_map(params![user_id], row_to_user_summary)
+        .map_err(internal_error)?
+        .filter_map(|f| f.ok())
+        .collect();
+    Ok(Json(friends))
+}
+
+/// Lists pending friend requests involving the current user, split into
+/// incoming (others requesting the current user) and outgoing (current user
+/// requesting others).
+pub async fn list_friend_requests(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<Json<crate::models::FriendRequests>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+
+    let mut incoming_stmt = conn
+        .prepare(&format!(
+            "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
+             JOIN friendships f ON f.requester_id = u.id \
+             WHERE f.recipient_id = ?1 AND f.status = 'pending' \
+             ORDER BY f.created_at DESC"
+        ))
+        .map_err(internal_error)?;
+    let incoming = incoming_stmt
+        .query_map(params![user_id], row_to_user_summary)
+        .map_err(internal_error)?
+        .filter_map(|f| f.ok())
+        .collect();
+
+    let mut outgoing_stmt = conn
+        .prepare(&format!(
+            "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
+             JOIN friendships f ON f.recipient_id = u.id \
+             WHERE f.requester_id = ?1 AND f.status = 'pending' \
+             ORDER BY f.created_at DESC"
+        ))
+        .map_err(internal_error)?;
+    let outgoing = outgoing_stmt
+        .query_map(params![user_id], row_to_user_summary)
+        .map_err(internal_error)?
+        .filter_map(|f| f.ok())
+        .collect();
+
+    Ok(Json(crate::models::FriendRequests { incoming, outgoing }))
 }
 
 fn row_to_game(row: &rusqlite::Row) -> rusqlite::Result<CatalogGame> {

@@ -78,6 +78,12 @@ export interface UserSummary {
   id: number;
   display_name: string;
   avatar_url: string | null;
+  online: boolean;
+}
+
+export interface FriendRequests {
+  incoming: UserSummary[];
+  outgoing: UserSummary[];
 }
 
 export interface CatalogGame {
