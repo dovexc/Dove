@@ -24,6 +24,7 @@ const AUTH_RATE_LIMIT_MAX_REQUESTS: usize = 10;
 const AUTH_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 const MAX_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_GAME_FILE_BYTES: usize = 5 * 1024 * 1024 * 1024;
+const MAX_CLOUD_SAVE_BYTES: usize = 100 * 1024 * 1024;
 const DEFAULT_QUOTA_BYTES: i64 = 5 * 1024 * 1024 * 1024; // 5 GiB per publisher
 const DEFAULT_MIN_FREE_DISK_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB safety margin
 
@@ -166,6 +167,17 @@ async fn main() {
         .route("/api/games/:id/upload", post(handlers::upload_game_file))
         .layer(DefaultBodyLimit::max(MAX_GAME_FILE_BYTES));
 
+    // Cloud saves can exceed the default API body limit (e.g. screenshots,
+    // JSON payloads), so this gets its own layer too.
+    let cloud_save_routes = Router::new()
+        .route(
+            "/api/games/:id/cloud-save",
+            get(handlers::get_cloud_save)
+                .put(handlers::upload_cloud_save)
+                .delete(handlers::delete_cloud_save),
+        )
+        .layer(DefaultBodyLimit::max(MAX_CLOUD_SAVE_BYTES));
+
     // Throttled separately from the rest of the API so brute-forcing
     // login/register can't be done at the same rate as normal traffic.
     let auth_routes = Router::new()
@@ -205,6 +217,7 @@ async fn main() {
             axum::routing::delete(handlers::remove_friend),
         )
         .route("/api/me/friends", get(handlers::list_friends))
+        .route("/api/me/playing", axum::routing::patch(handlers::set_playing))
         .route(
             "/api/me/friend-requests",
             get(handlers::list_friend_requests),
@@ -215,6 +228,28 @@ async fn main() {
         )
         .route("/api/games/:id", get(handlers::get_game))
         .route("/api/games/:id/manifest", get(handlers::get_game_manifest))
+        .route(
+            "/api/games/:id/screenshots",
+            get(handlers::list_game_screenshots).post(handlers::add_game_screenshot),
+        )
+        .route(
+            "/api/games/:id/screenshots/:screenshot_id",
+            axum::routing::delete(handlers::delete_game_screenshot),
+        )
+        .route(
+            "/api/games/:id/reviews",
+            get(handlers::list_game_reviews)
+                .post(handlers::upsert_game_review)
+                .delete(handlers::delete_game_review),
+        )
+        .route(
+            "/api/games/:id/changelog",
+            get(handlers::list_version_notes).post(handlers::upsert_version_note),
+        )
+        .route(
+            "/api/games/:id/changelog/:note_id",
+            axum::routing::delete(handlers::delete_version_note),
+        )
         .route("/api/admin/games/pending", get(handlers::list_pending_games))
         .route("/api/games/:id/approve", post(handlers::approve_game))
         .route("/api/games/:id/reject", post(handlers::reject_game))
@@ -226,8 +261,18 @@ async fn main() {
             post(handlers::purchase_game).delete(handlers::revoke_ownership),
         )
         .route("/api/me/library", get(handlers::list_library))
+        .route("/api/me/wishlist", get(handlers::list_wishlist))
+        .route(
+            "/api/games/:id/wishlist",
+            post(handlers::add_to_wishlist).delete(handlers::remove_from_wishlist),
+        )
         .route("/api/me/storage", get(handlers::get_storage_usage))
+        .route(
+            "/api/games/:id/cloud-save/download",
+            get(handlers::download_cloud_save),
+        )
         .merge(upload_routes)
+        .merge(cloud_save_routes)
         .nest_service("/uploads", ServeDir::new("data/uploads"))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .layer(cors)

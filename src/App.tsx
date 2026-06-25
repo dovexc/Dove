@@ -20,18 +20,17 @@ import { UserMenu } from "./components/UserMenu";
 import { FriendsView } from "./components/friends/FriendsView";
 import { SettingsView } from "./components/settings/SettingsView";
 import { AdminModerationView } from "./components/admin/AdminModerationView";
+import { WishlistPage } from "./components/store/WishlistPage";
 
 const SIDEBAR_WIDTH_KEY = "library_sidebar_width";
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 640;
 
 function App() {
-  const [activeTab, setActiveTab] = useState<"library" | "store" | "downloads">("library");
+  const [activeTab, setActiveTab] = useState<
+    "library" | "store" | "downloads" | "profile" | "friends" | "settings" | "moderation" | "wishlist"
+  >("library");
   const [isLoginOpen, setIsLoginOpen] = useState(false);
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isFriendsOpen, setIsFriendsOpen] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isModerationOpen, setIsModerationOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
     return stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH ? stored : 288;
@@ -66,6 +65,7 @@ function App() {
   const authUser = useAuthStore((s) => s.user);
   const authToken = useAuthStore((s) => s.token);
   const hydrateUser = useAuthStore((s) => s.hydrateUser);
+  const logout = useAuthStore((s) => s.logout);
 
   const games = useLibraryStore((s) => s.games);
   const selectedGameId = useLibraryStore((s) => s.selectedGameId);
@@ -83,6 +83,13 @@ function App() {
   const openDeleteDialog = useLibraryStore((s) => s.openDeleteDialog);
   const openSteamImport = useLibraryStore((s) => s.openSteamImport);
   const clearError = useLibraryStore((s) => s.clearError);
+
+  const accountOnlyTabs = ["profile", "friends", "settings", "moderation", "wishlist"];
+  useEffect(() => {
+    if (!authToken && accountOnlyTabs.includes(activeTab)) {
+      setActiveTab("library");
+    }
+  }, [authToken, activeTab]);
 
   useEffect(() => {
     registerGameEventListeners();
@@ -200,10 +207,12 @@ function App() {
             <UserMenu
               displayName={authUser.display_name}
               isAdmin={authUser.is_admin}
-              onOpenProfile={() => setIsProfileOpen(true)}
-              onOpenFriends={() => setIsFriendsOpen(true)}
-              onOpenSettings={() => setIsSettingsOpen(true)}
-              onOpenModeration={() => setIsModerationOpen(true)}
+              onOpenProfile={() => setActiveTab("profile")}
+              onOpenFriends={() => setActiveTab("friends")}
+              onOpenSettings={() => setActiveTab("settings")}
+              onOpenModeration={() => setActiveTab("moderation")}
+              onOpenWishlist={() => setActiveTab("wishlist")}
+              onLogout={logout}
             />
           ) : (
             <button
@@ -282,7 +291,7 @@ function App() {
         <div className="flex-1 overflow-hidden">
           <StoreView />
         </div>
-      ) : (
+      ) : activeTab === "downloads" ? (
         <div className="flex-1 overflow-hidden">
           <DownloadsPage
             onOpenGame={(id) => {
@@ -290,6 +299,26 @@ function App() {
               selectGame(id);
             }}
           />
+        </div>
+      ) : activeTab === "profile" ? (
+        <div className="flex-1 overflow-hidden">
+          <ProfilePage onClose={() => setActiveTab("library")} />
+        </div>
+      ) : activeTab === "friends" ? (
+        <div className="flex-1 overflow-hidden">
+          <FriendsView onClose={() => setActiveTab("library")} />
+        </div>
+      ) : activeTab === "settings" ? (
+        <div className="flex-1 overflow-hidden">
+          <SettingsView onClose={() => setActiveTab("library")} />
+        </div>
+      ) : activeTab === "moderation" ? (
+        <div className="flex-1 overflow-hidden">
+          <AdminModerationView onClose={() => setActiveTab("library")} />
+        </div>
+      ) : (
+        <div className="flex-1 overflow-hidden">
+          <WishlistPage onClose={() => setActiveTab("library")} />
         </div>
       )}
 
@@ -301,12 +330,6 @@ function App() {
       {removingAccountGame && <RemoveFromAccountDialog game={removingAccountGame} />}
       {isSteamImportOpen && <SteamImportDialog />}
       {isLoginOpen && <LoginDialog onClose={() => setIsLoginOpen(false)} />}
-      {isProfileOpen && <ProfilePage onClose={() => setIsProfileOpen(false)} />}
-      {isFriendsOpen && <FriendsView onClose={() => setIsFriendsOpen(false)} />}
-      {isSettingsOpen && <SettingsView onClose={() => setIsSettingsOpen(false)} />}
-      {isModerationOpen && (
-        <AdminModerationView onClose={() => setIsModerationOpen(false)} />
-      )}
       <GameContextMenu />
     </div>
   );

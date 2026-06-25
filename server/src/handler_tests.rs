@@ -108,6 +108,9 @@ async fn new_games_are_pending_and_hidden_from_public_catalog_until_approved() {
             description: None,
             cover_url: None,
             tags: None,
+            min_specs: None,
+            recommended_specs: None,
+            save_path_hint: None,
         }),
     )
     .await

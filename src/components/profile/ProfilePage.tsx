@@ -81,7 +81,7 @@ export function ProfilePage({ onClose }: Props) {
   const avatarUrl = resolveUrl(user.avatar_url);
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950">
+    <div className="h-full overflow-y-auto bg-zinc-950">
       <div
         className="relative h-56 w-full bg-zinc-800 bg-cover bg-center"
         style={backgroundUrl ? { backgroundImage: `url(${backgroundUrl})` } : undefined}

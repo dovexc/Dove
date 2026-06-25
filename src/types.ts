@@ -74,6 +74,7 @@ export interface PublicProfile {
   bio: string | null;
   created_at: string;
   screenshots: ProfileScreenshot[];
+  wishlist: CatalogGame[];
 }
 
 export interface UserSummary {
@@ -81,6 +82,7 @@ export interface UserSummary {
   display_name: string;
   avatar_url: string | null;
   online: boolean;
+  playing_title: string | null;
 }
 
 export interface FriendRequests {
@@ -101,6 +103,11 @@ export interface CatalogGame {
   version: string;
   tags: string | null;
   status: "pending" | "approved" | "rejected";
+  min_specs: string | null;
+  recommended_specs: string | null;
+  save_path_hint: string | null;
+  avg_rating: number | null;
+  review_count: number;
 }
 
 export interface NewCatalogGame {
@@ -108,6 +115,34 @@ export interface NewCatalogGame {
   description: string | null;
   cover_url: string | null;
   tags: string | null;
+  min_specs: string | null;
+  recommended_specs: string | null;
+  save_path_hint: string | null;
+}
+
+export interface GameScreenshot {
+  id: number;
+  catalog_game_id: number;
+  image_url: string;
+  created_at: string;
+}
+
+export interface GameReview {
+  id: number;
+  catalog_game_id: number;
+  user_id: number;
+  reviewer_display_name: string;
+  rating: number;
+  body: string | null;
+  created_at: string;
+}
+
+export interface GameVersionNote {
+  id: number;
+  catalog_game_id: number;
+  version: string;
+  notes: string | null;
+  created_at: string;
 }
 
 export interface StorageUsage {

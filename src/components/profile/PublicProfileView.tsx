@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { API_BASE } from "../../authStore";
 import type { PublicProfile } from "../../types";
+import { PublicWishlistView } from "./PublicWishlistView";
 
 export type FriendStatus = "none" | "friends" | "pending_outgoing" | "pending_incoming";
 
@@ -29,6 +31,7 @@ export function PublicProfileView({
 }: Props) {
   const backgroundUrl = resolveUrl(profile.background_url);
   const avatarUrl = resolveUrl(profile.avatar_url);
+  const [showWishlist, setShowWishlist] = useState(false);
 
   function renderFriendButton() {
     if (!friendStatus) return null;
@@ -104,7 +107,15 @@ export function PublicProfileView({
           <h2 className="py-1 text-2xl font-bold leading-relaxed text-zinc-100">
             {profile.display_name}
           </h2>
-          {renderFriendButton()}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowWishlist(true)}
+              className="rounded bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
+            >
+              ♥ Wunschliste
+            </button>
+            {renderFriendButton()}
+          </div>
         </div>
 
         <div className="mt-8">
@@ -139,7 +150,16 @@ export function PublicProfileView({
             </div>
           )}
         </div>
+
       </div>
+
+      {showWishlist && (
+        <PublicWishlistView
+          ownerName={profile.display_name}
+          games={profile.wishlist}
+          onBack={() => setShowWishlist(false)}
+        />
+      )}
     </div>
   );
 }

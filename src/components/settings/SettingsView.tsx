@@ -54,7 +54,7 @@ export function SettingsView({ onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950">
+    <div className="h-full overflow-y-auto bg-zinc-950">
       <div className="mx-auto max-w-2xl px-6 py-8">
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-2xl font-bold text-zinc-100">Einstellungen</h1>

@@ -7,6 +7,8 @@ interface Props {
   onOpenFriends: () => void;
   onOpenSettings: () => void;
   onOpenModeration?: () => void;
+  onOpenWishlist: () => void;
+  onLogout: () => void;
 }
 
 export function UserMenu({
@@ -16,6 +18,8 @@ export function UserMenu({
   onOpenFriends,
   onOpenSettings,
   onOpenModeration,
+  onOpenWishlist,
+  onLogout,
 }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -69,6 +73,15 @@ export function UserMenu({
           >
             Einstellungen
           </button>
+          <button
+            onClick={() => {
+              setOpen(false);
+              onOpenWishlist();
+            }}
+            className="block w-full px-3 py-2 text-left text-zinc-200 hover:bg-zinc-800"
+          >
+            ♥ Wunschliste
+          </button>
           {isAdmin && onOpenModeration && (
             <button
               onClick={() => {
@@ -80,6 +93,15 @@ export function UserMenu({
               Moderation
             </button>
           )}
+          <button
+            onClick={() => {
+              setOpen(false);
+              onLogout();
+            }}
+            className="block w-full border-t border-zinc-800 px-3 py-2 text-left text-red-400 hover:bg-zinc-800"
+          >
+            Abmelden
+          </button>
         </div>
       )}
     </div>

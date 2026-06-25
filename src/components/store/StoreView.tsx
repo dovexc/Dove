@@ -3,6 +3,8 @@ import { useAuthStore } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
 import { formatSize } from "../../utils";
 import type { CatalogGame } from "../../types";
+import { GameDetailPage } from "./GameDetailPage";
+import { Stars } from "./Stars";
 
 const COVER_GRADIENTS = [
   "linear-gradient(135deg,#2b5876,#4e4376)",
@@ -124,17 +126,26 @@ function TagInput({
 export function StoreView() {
   const games = useCatalogStore((s) => s.games);
   const library = useCatalogStore((s) => s.library);
+  const wishlist = useCatalogStore((s) => s.wishlist);
   const loading = useCatalogStore((s) => s.loading);
   const purchasingId = useCatalogStore((s) => s.purchasingId);
   const uploadingId = useCatalogStore((s) => s.uploadingId);
   const error = useCatalogStore((s) => s.error);
+  const clearError = useCatalogStore((s) => s.clearError);
   const fetchCatalog = useCatalogStore((s) => s.fetchCatalog);
   const fetchLibrary = useCatalogStore((s) => s.fetchLibrary);
+  const fetchWishlist = useCatalogStore((s) => s.fetchWishlist);
+  const addToWishlist = useCatalogStore((s) => s.addToWishlist);
+  const removeFromWishlist = useCatalogStore((s) => s.removeFromWishlist);
+  const wishlistOnly = useCatalogStore((s) => s.wishlistOnly);
+  const setWishlistOnly = useCatalogStore((s) => s.setWishlistOnly);
   const publishGame = useCatalogStore((s) => s.publishGame);
   const purchaseGame = useCatalogStore((s) => s.purchaseGame);
   const uploadGameFile = useCatalogStore((s) => s.uploadGameFile);
   const storageUsage = useCatalogStore((s) => s.storageUsage);
   const fetchStorageUsage = useCatalogStore((s) => s.fetchStorageUsage);
+  const detailGame = useCatalogStore((s) => s.detailGame);
+  const openGameDetail = useCatalogStore((s) => s.openGameDetail);
   const token = useAuthStore((s) => s.token);
   const authUser = useAuthStore((s) => s.user);
 
@@ -148,6 +159,9 @@ export function StoreView() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [newTags, setNewTags] = useState<string[]>([]);
+  const [minSpecs, setMinSpecs] = useState("");
+  const [recommendedSpecs, setRecommendedSpecs] = useState("");
+  const [savePathHint, setSavePathHint] = useState("");
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("Alle");
@@ -155,6 +169,7 @@ export function StoreView() {
   const [featuredIndex, setFeaturedIndex] = useState(0);
 
   const ownedIds = useMemo(() => new Set(library.map((g) => g.id)), [library]);
+  const wishlistIds = useMemo(() => new Set(wishlist.map((g) => g.id)), [wishlist]);
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -180,9 +195,10 @@ export function StoreView() {
         game.title.toLowerCase().includes(query) ||
         parseTags(game.tags).some((tag) => tag.toLowerCase().includes(query));
       const matchesCategory = category === "Alle" || parseTags(game.tags).includes(category);
-      return matchesQuery && matchesCategory;
+      const matchesWishlist = !wishlistOnly || wishlistIds.has(game.id);
+      return matchesQuery && matchesCategory && matchesWishlist;
     });
-  }, [games, search, category]);
+  }, [games, search, category, wishlistOnly, wishlistIds]);
 
   const featuredGames = useMemo(
     () => games.filter((g) => g.status === "approved").slice(0, 3),
@@ -211,6 +227,10 @@ export function StoreView() {
   }, [fetchLibrary, token]);
 
   useEffect(() => {
+    fetchWishlist();
+  }, [fetchWishlist, token]);
+
+  useEffect(() => {
     fetchStorageUsage();
   }, [fetchStorageUsage, token]);
 
@@ -222,10 +242,16 @@ export function StoreView() {
       description: description.trim() || null,
       cover_url: null,
       tags: newTags.length > 0 ? newTags.join(",") : null,
+      min_specs: minSpecs.trim() || null,
+      recommended_specs: recommendedSpecs.trim() || null,
+      save_path_hint: savePathHint.trim() || null,
     });
     setTitle("");
     setDescription("");
     setNewTags([]);
+    setSavePathHint("");
+    setMinSpecs("");
+    setRecommendedSpecs("");
     setShowPublishForm(false);
   }
 
@@ -268,13 +294,38 @@ export function StoreView() {
     }
     return (
       <button
-        onClick={() => purchaseGame(game.id)}
+        onClick={(e) => {
+          e.stopPropagation();
+          purchaseGame(game.id);
+        }}
         disabled={purchasingId === game.id}
         className={`rounded font-semibold text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-50 ${
           size === "lg" ? "px-5 py-2.5 text-sm" : "px-3 py-1 text-xs"
         }`}
       >
         {purchasingId === game.id ? "..." : "Kaufen"}
+      </button>
+    );
+  }
+
+  function renderWishlistButton(game: CatalogGame, owned: boolean) {
+    if (!token || owned) return null;
+    const wished = wishlistIds.has(game.id);
+    return (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          if (wished) removeFromWishlist(game.id);
+          else addToWishlist(game.id);
+        }}
+        title={wished ? "Von der Wunschliste entfernen" : "Zur Wunschliste hinzufügen"}
+        className={`flex h-7 w-7 items-center justify-center rounded-full text-sm ${
+          wished
+            ? "bg-pink-600/80 text-white"
+            : "bg-black/40 text-white/70 hover:bg-black/60 hover:text-white"
+        }`}
+      >
+        {wished ? "♥" : "♡"}
       </button>
     );
   }
@@ -330,6 +381,40 @@ export function StoreView() {
               className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
             />
           </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1 text-sm text-zinc-300">
+              Minimale Systemanforderungen
+              <textarea
+                value={minSpecs}
+                onChange={(e) => setMinSpecs(e.target.value)}
+                rows={4}
+                placeholder={"OS: ...\nCPU: ...\nRAM: ...\nGPU: ...\nSpeicher: ..."}
+                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-zinc-300">
+              Empfohlene Systemanforderungen
+              <textarea
+                value={recommendedSpecs}
+                onChange={(e) => setRecommendedSpecs(e.target.value)}
+                rows={4}
+                placeholder={"OS: ...\nCPU: ...\nRAM: ...\nGPU: ...\nSpeicher: ..."}
+                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+              />
+            </label>
+          </div>
+          <label className="flex flex-col gap-1 text-sm text-zinc-300">
+            Speicherort der Spielstände (für Cloud-Saves)
+            <input
+              value={savePathHint}
+              onChange={(e) => setSavePathHint(e.target.value)}
+              placeholder="z. B. %APPDATA%/MeinSpiel/saves"
+              className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+            />
+            <span className="text-xs text-zinc-500">
+              Wird Spielern angezeigt, damit sie wissen, welchen Ordner sie für Cloud-Saves hoch- bzw. runterladen sollen.
+            </span>
+          </label>
           <TagInput
             tags={newTags}
             onChange={setNewTags}
@@ -344,7 +429,14 @@ export function StoreView() {
         </form>
       )}
 
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && (
+        <div className="flex items-center justify-between rounded bg-red-900/30 px-4 py-2 text-sm text-red-400">
+          <span>{error}</span>
+          <button onClick={clearError} className="font-bold">
+            ✕
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-zinc-500">Katalog wird geladen...</p>
@@ -382,7 +474,10 @@ export function StoreView() {
                 )}
               </div>
 
-              <div className="flex h-[380px] overflow-hidden rounded-xl shadow-2xl">
+              <div
+                onClick={() => openGameDetail(hero)}
+                className="flex h-[380px] cursor-pointer overflow-hidden rounded-xl shadow-2xl"
+              >
                 <div
                   className="relative flex-1"
                   style={{
@@ -419,7 +514,10 @@ export function StoreView() {
                     <span className="text-base font-bold text-sky-400">
                       {formatPrice(hero.price_cents)}
                     </span>
-                    {renderPurchaseControl(hero, ownedIds.has(hero.id), "lg")}
+                    <div className="flex items-center gap-2">
+                      {renderWishlistButton(hero, ownedIds.has(hero.id))}
+                      {renderPurchaseControl(hero, ownedIds.has(hero.id), "lg")}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -486,6 +584,18 @@ export function StoreView() {
                     className="w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
                   />
                 </div>
+                {token && (
+                  <button
+                    onClick={() => setWishlistOnly(!wishlistOnly)}
+                    className={`h-[46px] rounded-lg border px-4 text-sm font-semibold ${
+                      wishlistOnly
+                        ? "border-pink-400/50 bg-gradient-to-b from-pink-500 to-pink-700 text-white"
+                        : "border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10"
+                    }`}
+                  >
+                    ♥ Wunschliste{wishlist.length > 0 ? ` (${wishlist.length})` : ""}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -502,7 +612,8 @@ export function StoreView() {
                   return (
                     <div
                       key={game.id}
-                      className="group flex flex-col overflow-hidden rounded-lg border border-white/5 bg-[#141c26] shadow-lg transition-transform hover:-translate-y-1"
+                      onClick={() => openGameDetail(game)}
+                      className="group flex cursor-pointer flex-col overflow-hidden rounded-lg border border-white/5 bg-[#141c26] shadow-lg transition-transform hover:-translate-y-1"
                     >
                       <div
                         className="relative aspect-[3/4] w-full"
@@ -520,6 +631,11 @@ export function StoreView() {
                               "linear-gradient(180deg, rgba(0,0,0,0) 45%, rgba(0,0,0,.55) 100%)",
                           }}
                         />
+                        {!owned && token && (
+                          <div className="absolute right-3 top-3">
+                            {renderWishlistButton(game, owned)}
+                          </div>
+                        )}
                         {tags.length > 0 && (
                           <div className="absolute left-3 top-3 flex flex-wrap gap-1">
                             {tags.slice(0, 3).map((tag) => (
@@ -548,6 +664,12 @@ export function StoreView() {
                             {game.status === "pending" ? "In Prüfung" : "Abgelehnt"}
                           </span>
                         )}
+                        {game.review_count > 0 && (
+                          <span className="flex items-center gap-1 text-xs">
+                            <Stars rating={game.avg_rating ?? 0} />
+                            <span className="text-zinc-500">({game.review_count})</span>
+                          </span>
+                        )}
                         {game.file_size_bytes != null && (
                           <span className="text-xs text-zinc-500">
                             Download: {formatSize(game.file_size_bytes)} · v{game.version}
@@ -561,7 +683,10 @@ export function StoreView() {
                         </div>
                         {isPublisher && (
                           <button
-                            onClick={() => startUpload(game)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startUpload(game);
+                            }}
                             disabled={uploadingId === game.id}
                             className="rounded bg-zinc-800 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
                           >
@@ -580,6 +705,15 @@ export function StoreView() {
             )}
           </section>
         </>
+      )}
+
+      {detailGame && (
+        <GameDetailPage
+          owned={ownedIds.has(detailGame.id)}
+          isPublisher={authUser?.id === detailGame.publisher_user_id}
+          purchasing={purchasingId === detailGame.id}
+          onPurchase={() => purchaseGame(detailGame.id)}
+        />
       )}
 
       <input

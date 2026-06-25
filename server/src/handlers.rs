@@ -8,8 +8,10 @@ use std::path::Path as FsPath;
 
 use crate::auth::{create_token, hash_password, user_id_from_headers, verify_password, AdminUser, AuthUser};
 use crate::models::{
-    AuthResponse, CatalogGame, ImageUpload, LoginRequest, NewCatalogGame, ProfileScreenshot,
-    PublicProfile, RegisterRequest, UpdateProfileRequest, User,
+    AuthResponse, CatalogGame, CloudSave, GameReview, GameScreenshot, GameVersionNote,
+    ImageUpload, LoginRequest, NewCatalogGame, NewGameReview, NewGameVersionNote,
+    ProfileScreenshot, PublicProfile, RegisterRequest, SetPlayingRequest, UpdateProfileRequest,
+    User,
 };
 use crate::state::AppState;
 
@@ -379,6 +381,23 @@ pub async fn get_user_profile(
         .filter_map(|s| s.ok())
         .collect();
 
+    // Only approved games — a pending/rejected game on someone's wishlist
+    // isn't browsable by anyone else anyway, so showing it here would just
+    // be a dead/confusing entry.
+    let mut wishlist_stmt = conn
+        .prepare(&format!(
+            "SELECT {GAME_COLUMNS} FROM catalog_games \
+             JOIN wishlist_items ON wishlist_items.catalog_game_id = catalog_games.id \
+             WHERE wishlist_items.user_id = ?1 AND catalog_games.status = 'approved' \
+             ORDER BY wishlist_items.created_at DESC"
+        ))
+        .map_err(internal_error)?;
+    let wishlist = wishlist_stmt
+        .query_map(params![user_id], row_to_game)
+        .map_err(internal_error)?
+        .filter_map(|g| g.ok())
+        .collect();
+
     Ok(Json(PublicProfile {
         id: user.id,
         display_name: user.display_name,
@@ -387,6 +406,7 @@ pub async fn get_user_profile(
         bio: user.bio,
         created_at: user.created_at,
         screenshots,
+        wishlist,
     }))
 }
 
@@ -432,6 +452,7 @@ fn row_to_user_summary(row: &rusqlite::Row) -> rusqlite::Result<crate::models::U
         display_name: row.get(1)?,
         avatar_url: row.get(2)?,
         online: row.get(3)?,
+        playing_title: row.get(4)?,
     })
 }
 
@@ -439,8 +460,16 @@ fn row_to_user_summary(row: &rusqlite::Row) -> rusqlite::Result<crate::models::U
 /// the last 90 seconds. There's no dedicated heartbeat — `AuthUser` stamps
 /// `last_seen_at` on every authenticated request, so this is an
 /// approximation based on recent activity rather than an open connection.
+///
+/// `playing_title` is only surfaced while online, so a launcher that crashed
+/// without clearing `currently_playing_catalog_game_id` doesn't leave
+/// friends staring at a stale "playing X" forever — it just fades out with
+/// the online status once activity stops.
 const USER_SUMMARY_COLUMNS: &str = "u.id, u.display_name, u.avatar_url, \
-    (u.last_seen_at IS NOT NULL AND (strftime('%s','now') - strftime('%s', u.last_seen_at)) < 90) AS online";
+    (u.last_seen_at IS NOT NULL AND (strftime('%s','now') - strftime('%s', u.last_seen_at)) < 90) AS online, \
+    CASE WHEN (u.last_seen_at IS NOT NULL AND (strftime('%s','now') - strftime('%s', u.last_seen_at)) < 90) \
+         THEN (SELECT title FROM catalog_games WHERE id = u.currently_playing_catalog_game_id) \
+         ELSE NULL END AS playing_title";
 
 /// Sends a friend request from the current user to `target_id`. Also
 /// accepts an incoming request from `target_id` automatically (matching the
@@ -602,11 +631,235 @@ fn row_to_game(row: &rusqlite::Row) -> rusqlite::Result<CatalogGame> {
         version: row.get(9)?,
         tags: row.get(10)?,
         status: row.get(11)?,
+        min_specs: row.get(12)?,
+        recommended_specs: row.get(13)?,
+        save_path_hint: row.get(14)?,
+        avg_rating: row.get(15)?,
+        review_count: row.get(16)?,
     })
 }
 
-const GAME_COLUMNS: &str = "id, publisher_user_id, title, description, cover_url, price_cents, \
-    created_at, file_url, file_size_bytes, version, tags, status";
+const GAME_COLUMNS: &str = "catalog_games.id, catalog_games.publisher_user_id, catalog_games.title, \
+    catalog_games.description, catalog_games.cover_url, catalog_games.price_cents, \
+    catalog_games.created_at, catalog_games.file_url, catalog_games.file_size_bytes, \
+    catalog_games.version, catalog_games.tags, catalog_games.status, catalog_games.min_specs, \
+    catalog_games.recommended_specs, catalog_games.save_path_hint, \
+    (SELECT AVG(rating) FROM game_reviews WHERE catalog_game_id = catalog_games.id), \
+    (SELECT COUNT(*) FROM game_reviews WHERE catalog_game_id = catalog_games.id)";
+
+const GAME_SCREENSHOT_COLUMNS: &str = "id, catalog_game_id, image_url, created_at";
+
+fn row_to_game_screenshot(row: &rusqlite::Row) -> rusqlite::Result<GameScreenshot> {
+    Ok(GameScreenshot {
+        id: row.get(0)?,
+        catalog_game_id: row.get(1)?,
+        image_url: row.get(2)?,
+        created_at: row.get(3)?,
+    })
+}
+
+const GAME_REVIEW_COLUMNS: &str = "game_reviews.id, game_reviews.catalog_game_id, game_reviews.user_id, \
+    users.display_name, game_reviews.rating, game_reviews.body, game_reviews.created_at";
+
+fn row_to_game_review(row: &rusqlite::Row) -> rusqlite::Result<GameReview> {
+    Ok(GameReview {
+        id: row.get(0)?,
+        catalog_game_id: row.get(1)?,
+        user_id: row.get(2)?,
+        reviewer_display_name: row.get(3)?,
+        rating: row.get(4)?,
+        body: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
+/// Publisher-uploaded gallery images shown on a game's store page.
+pub async fn list_game_screenshots(
+    State(state): State<AppState>,
+    Path(game_id): Path<i64>,
+) -> Result<Json<Vec<GameScreenshot>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {GAME_SCREENSHOT_COLUMNS} FROM game_screenshots \
+             WHERE catalog_game_id = ?1 ORDER BY id ASC"
+        ))
+        .map_err(internal_error)?;
+    let shots = stmt
+        .query_map(params![game_id], row_to_game_screenshot)
+        .map_err(internal_error)?
+        .filter_map(|s| s.ok())
+        .collect();
+    Ok(Json(shots))
+}
+
+pub async fn add_game_screenshot(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+    Json(req): Json<ImageUpload>,
+) -> Result<Json<GameScreenshot>, ApiError> {
+    {
+        let conn = state.db.lock().map_err(internal_error)?;
+        let publisher_id: i64 = conn
+            .query_row(
+                "SELECT publisher_user_id FROM catalog_games WHERE id = ?1",
+                params![game_id],
+                |r| r.get(0),
+            )
+            .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+        if publisher_id != user_id {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Nur der Publisher kann Bilder hinzufügen".to_string(),
+            ));
+        }
+    }
+
+    let url = save_data_url_image(&req.image)?;
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.execute(
+        "INSERT INTO game_screenshots (catalog_game_id, image_url) VALUES (?1, ?2)",
+        params![game_id, url],
+    )
+    .map_err(internal_error)?;
+
+    let id = conn.last_insert_rowid();
+    conn.query_row(
+        &format!("SELECT {GAME_SCREENSHOT_COLUMNS} FROM game_screenshots WHERE id = ?1"),
+        params![id],
+        row_to_game_screenshot,
+    )
+    .map(Json)
+    .map_err(internal_error)
+}
+
+pub async fn delete_game_screenshot(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path((game_id, screenshot_id)): Path<(i64, i64)>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let publisher_id: i64 = conn
+        .query_row(
+            "SELECT publisher_user_id FROM catalog_games WHERE id = ?1",
+            params![game_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+    if publisher_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur der Publisher kann Bilder entfernen".to_string(),
+        ));
+    }
+
+    let affected = conn
+        .execute(
+            "DELETE FROM game_screenshots WHERE id = ?1 AND catalog_game_id = ?2",
+            params![screenshot_id, game_id],
+        )
+        .map_err(internal_error)?;
+    if affected == 0 {
+        return Err((StatusCode::NOT_FOUND, "Bild nicht gefunden".to_string()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn list_game_reviews(
+    State(state): State<AppState>,
+    Path(game_id): Path<i64>,
+) -> Result<Json<Vec<GameReview>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {GAME_REVIEW_COLUMNS} FROM game_reviews \
+             JOIN users ON users.id = game_reviews.user_id \
+             WHERE game_reviews.catalog_game_id = ?1 \
+             ORDER BY game_reviews.created_at DESC"
+        ))
+        .map_err(internal_error)?;
+    let reviews = stmt
+        .query_map(params![game_id], row_to_game_review)
+        .map_err(internal_error)?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(Json(reviews))
+}
+
+/// Creates or updates the caller's own review for a game. Reviewing is
+/// restricted to owners — mirrors Steam's "verified purchase" review gate —
+/// since `ownerships` already covers free games too (purchasing is required
+/// even at price 0).
+pub async fn upsert_game_review(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+    Json(req): Json<NewGameReview>,
+) -> Result<Json<GameReview>, ApiError> {
+    let doubled = req.rating * 2.0;
+    let is_half_step = (doubled - doubled.round()).abs() < 1e-6;
+    if !(1.0..=10.0).contains(&doubled) || !is_half_step {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Bewertung muss zwischen 0.5 und 5 in 0.5-Schritten liegen".to_string(),
+        ));
+    }
+
+    let conn = state.db.lock().map_err(internal_error)?;
+
+    let owns = conn
+        .query_row(
+            "SELECT 1 FROM ownerships WHERE user_id = ?1 AND catalog_game_id = ?2",
+            params![user_id, game_id],
+            |_| Ok(()),
+        )
+        .is_ok();
+    if !owns {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Du musst das Spiel besitzen, um es zu bewerten".to_string(),
+        ));
+    }
+
+    conn.execute(
+        "INSERT INTO game_reviews (catalog_game_id, user_id, rating, body) VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT(catalog_game_id, user_id) DO UPDATE SET \
+         rating = excluded.rating, body = excluded.body, created_at = datetime('now')",
+        params![game_id, user_id, req.rating, req.body],
+    )
+    .map_err(internal_error)?;
+
+    conn.query_row(
+        &format!(
+            "SELECT {GAME_REVIEW_COLUMNS} FROM game_reviews \
+             JOIN users ON users.id = game_reviews.user_id \
+             WHERE game_reviews.catalog_game_id = ?1 AND game_reviews.user_id = ?2"
+        ),
+        params![game_id, user_id],
+        row_to_game_review,
+    )
+    .map(Json)
+    .map_err(internal_error)
+}
+
+pub async fn delete_game_review(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let affected = conn
+        .execute(
+            "DELETE FROM game_reviews WHERE catalog_game_id = ?1 AND user_id = ?2",
+            params![game_id, user_id],
+        )
+        .map_err(internal_error)?;
+    if affected == 0 {
+        return Err((StatusCode::NOT_FOUND, "Bewertung nicht gefunden".to_string()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
 
 /// Catalog browsing is public, but a signed-in publisher should still see
 /// their own pending/rejected games in the catalog (e.g. to manage uploads)
@@ -803,8 +1056,18 @@ pub async fn create_game(
 ) -> Result<Json<CatalogGame>, ApiError> {
     let conn = state.db.lock().map_err(internal_error)?;
     conn.execute(
-        "INSERT INTO catalog_games (publisher_user_id, title, description, cover_url, tags) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![user_id, req.title, req.description, req.cover_url, req.tags],
+        "INSERT INTO catalog_games (publisher_user_id, title, description, cover_url, tags, min_specs, recommended_specs, save_path_hint) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            user_id,
+            req.title,
+            req.description,
+            req.cover_url,
+            req.tags,
+            req.min_specs,
+            req.recommended_specs,
+            req.save_path_hint
+        ],
     )
     .map_err(internal_error)?;
 
@@ -839,6 +1102,12 @@ pub async fn purchase_game(
     )
     .map_err(internal_error)?;
 
+    // Mirrors Steam: a purchased game no longer needs to be wished for.
+    let _ = conn.execute(
+        "DELETE FROM wishlist_items WHERE user_id = ?1 AND catalog_game_id = ?2",
+        params![user_id, game_id],
+    );
+
     Ok(Json(game))
 }
 
@@ -861,17 +1130,12 @@ pub async fn list_library(
     AuthUser(user_id): AuthUser,
 ) -> Result<Json<Vec<CatalogGame>>, ApiError> {
     let conn = state.db.lock().map_err(internal_error)?;
-    let prefixed_columns = GAME_COLUMNS
-        .split(", ")
-        .map(|c| format!("cg.{c}"))
-        .collect::<Vec<_>>()
-        .join(", ");
 
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT {prefixed_columns} FROM catalog_games cg \
-             JOIN ownerships o ON o.catalog_game_id = cg.id \
-             WHERE o.user_id = ?1 ORDER BY o.purchased_at DESC"
+            "SELECT {GAME_COLUMNS} FROM catalog_games \
+             JOIN ownerships ON ownerships.catalog_game_id = catalog_games.id \
+             WHERE ownerships.user_id = ?1 ORDER BY ownerships.purchased_at DESC"
         ))
         .map_err(internal_error)?;
     let games = stmt
@@ -880,6 +1144,55 @@ pub async fn list_library(
         .filter_map(|g| g.ok())
         .collect();
     Ok(Json(games))
+}
+
+pub async fn list_wishlist(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<Json<Vec<CatalogGame>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {GAME_COLUMNS} FROM catalog_games \
+             JOIN wishlist_items ON wishlist_items.catalog_game_id = catalog_games.id \
+             WHERE wishlist_items.user_id = ?1 ORDER BY wishlist_items.created_at DESC"
+        ))
+        .map_err(internal_error)?;
+    let games = stmt
+        .query_map(params![user_id], row_to_game)
+        .map_err(internal_error)?
+        .filter_map(|g| g.ok())
+        .collect();
+    Ok(Json(games))
+}
+
+pub async fn add_to_wishlist(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.execute(
+        "INSERT OR IGNORE INTO wishlist_items (user_id, catalog_game_id) VALUES (?1, ?2)",
+        params![user_id, game_id],
+    )
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn remove_from_wishlist(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.execute(
+        "DELETE FROM wishlist_items WHERE user_id = ?1 AND catalog_game_id = ?2",
+        params![user_id, game_id],
+    )
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(serde::Deserialize)]
@@ -1179,4 +1492,346 @@ pub async fn get_storage_usage(
         used_bytes,
         quota_bytes,
     }))
+}
+
+/// Per-save and per-user caps for cloud saves. Kept separate from the
+/// publisher game-file quota (`storage_quota_bytes`) since this is a
+/// consumer-facing feature unrelated to publishing — every account gets the
+/// same modest allowance regardless of publisher quota.
+const CLOUD_SAVE_MAX_BYTES: i64 = 100 * 1024 * 1024;
+const CLOUD_SAVE_USER_QUOTA_BYTES: i64 = 1024 * 1024 * 1024;
+
+pub async fn get_cloud_save(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+) -> Result<Json<CloudSave>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.query_row(
+        "SELECT catalog_game_id, size_bytes, updated_at FROM cloud_saves \
+         WHERE user_id = ?1 AND catalog_game_id = ?2",
+        params![user_id, game_id],
+        |row| {
+            Ok(CloudSave {
+                catalog_game_id: row.get(0)?,
+                size_bytes: row.get(1)?,
+                updated_at: row.get(2)?,
+            })
+        },
+    )
+    .map(Json)
+    .map_err(|_| (StatusCode::NOT_FOUND, "Kein Cloud-Save vorhanden".to_string()))
+}
+
+pub async fn upload_cloud_save(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+    body: axum::body::Bytes,
+) -> Result<Json<CloudSave>, ApiError> {
+    let bad_request = |msg: &str| (StatusCode::BAD_REQUEST, msg.to_string());
+
+    if body.is_empty() {
+        return Err(bad_request("Leere Datei"));
+    }
+    if body.len() as i64 > CLOUD_SAVE_MAX_BYTES {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "Cloud-Save darf höchstens {} groß sein.",
+                format_bytes(CLOUD_SAVE_MAX_BYTES)
+            ),
+        ));
+    }
+
+    {
+        let conn = state.db.lock().map_err(internal_error)?;
+        conn.query_row(
+            "SELECT id FROM catalog_games WHERE id = ?1",
+            params![game_id],
+            |_| Ok(()),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+    }
+
+    if let Some(clamd_address) = &state.clamd_address {
+        let tcp = clamav_client::tokio::Tcp {
+            host_address: clamd_address.as_str(),
+        };
+        let response = clamav_client::tokio::scan_buffer(&body, tcp, None)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!("Malware-Scan momentan nicht verfügbar: {e}"),
+                )
+            })?;
+        let response_str = String::from_utf8_lossy(&response).trim().to_string();
+        if response_str.contains("FOUND") {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("Datei wurde vom Malware-Scan abgelehnt: {response_str}"),
+            ));
+        }
+        if !response_str.contains("OK") {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("Unerwartete Antwort vom Malware-Scanner: {response_str}"),
+            ));
+        }
+    }
+
+    let old_url: Option<String> = {
+        let conn = state.db.lock().map_err(internal_error)?;
+        let usage_excluding_this_game: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(size_bytes), 0) FROM cloud_saves WHERE user_id = ?1 AND catalog_game_id != ?2",
+                params![user_id, game_id],
+                |row| row.get(0),
+            )
+            .map_err(internal_error)?;
+        if usage_excluding_this_game + body.len() as i64 > CLOUD_SAVE_USER_QUOTA_BYTES {
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!(
+                    "Cloud-Save-Speicherquote überschritten: {} von {} belegt.",
+                    format_bytes(usage_excluding_this_game),
+                    format_bytes(CLOUD_SAVE_USER_QUOTA_BYTES)
+                ),
+            ));
+        }
+        conn.query_row(
+            "SELECT file_url FROM cloud_saves WHERE user_id = ?1 AND catalog_game_id = ?2",
+            params![user_id, game_id],
+            |row| row.get(0),
+        )
+        .ok()
+    };
+
+    if let Some(available) = available_disk_bytes(FsPath::new("data")) {
+        if available < body.len() as u64 + state.min_free_disk_bytes {
+            return Err((
+                StatusCode::from_u16(507).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+                "Nicht genug freier Speicherplatz auf dem Server für diesen Upload.".to_string(),
+            ));
+        }
+    }
+
+    let saves_dir = FsPath::new("data/uploads/saves");
+    std::fs::create_dir_all(saves_dir).map_err(internal_error)?;
+    let filename = format!("{}-{game_id}-{}.bin", user_id, uuid::Uuid::new_v4());
+    let file_path = saves_dir.join(&filename);
+    std::fs::write(&file_path, &body).map_err(internal_error)?;
+    let file_url = format!("/uploads/saves/{filename}");
+
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.execute(
+        "INSERT INTO cloud_saves (user_id, catalog_game_id, file_url, size_bytes, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, datetime('now')) \
+         ON CONFLICT(user_id, catalog_game_id) DO UPDATE SET \
+         file_url = excluded.file_url, size_bytes = excluded.size_bytes, updated_at = excluded.updated_at",
+        params![user_id, game_id, file_url, body.len() as i64],
+    )
+    .map_err(internal_error)?;
+
+    // Best-effort: remove the previous blob now that the new one is
+    // committed to the DB, so a crash between write and DB update never
+    // leaves the row pointing at a missing file.
+    if let Some(old_url) = old_url {
+        if old_url != file_url {
+            let old_path = FsPath::new("data").join(old_url.trim_start_matches('/'));
+            let _ = std::fs::remove_file(old_path);
+        }
+    }
+
+    conn.query_row(
+        "SELECT catalog_game_id, size_bytes, updated_at FROM cloud_saves \
+         WHERE user_id = ?1 AND catalog_game_id = ?2",
+        params![user_id, game_id],
+        |row| {
+            Ok(CloudSave {
+                catalog_game_id: row.get(0)?,
+                size_bytes: row.get(1)?,
+                updated_at: row.get(2)?,
+            })
+        },
+    )
+    .map(Json)
+    .map_err(internal_error)
+}
+
+pub async fn download_cloud_save(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+) -> Result<Vec<u8>, ApiError> {
+    let file_url: String = {
+        let conn = state.db.lock().map_err(internal_error)?;
+        conn.query_row(
+            "SELECT file_url FROM cloud_saves WHERE user_id = ?1 AND catalog_game_id = ?2",
+            params![user_id, game_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Kein Cloud-Save vorhanden".to_string()))?
+    };
+    let path = FsPath::new("data").join(file_url.trim_start_matches('/'));
+    std::fs::read(path).map_err(internal_error)
+}
+
+pub async fn delete_cloud_save(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let file_url: Option<String> = conn
+        .query_row(
+            "SELECT file_url FROM cloud_saves WHERE user_id = ?1 AND catalog_game_id = ?2",
+            params![user_id, game_id],
+            |row| row.get(0),
+        )
+        .ok();
+    conn.execute(
+        "DELETE FROM cloud_saves WHERE user_id = ?1 AND catalog_game_id = ?2",
+        params![user_id, game_id],
+    )
+    .map_err(internal_error)?;
+    if let Some(file_url) = file_url {
+        let path = FsPath::new("data").join(file_url.trim_start_matches('/'));
+        let _ = std::fs::remove_file(path);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+const GAME_VERSION_NOTE_COLUMNS: &str = "id, catalog_game_id, version, notes, created_at";
+
+fn row_to_version_note(row: &rusqlite::Row) -> rusqlite::Result<GameVersionNote> {
+    Ok(GameVersionNote {
+        id: row.get(0)?,
+        catalog_game_id: row.get(1)?,
+        version: row.get(2)?,
+        notes: row.get(3)?,
+        created_at: row.get(4)?,
+    })
+}
+
+/// Patch notes per published version, newest first — shown at the bottom of
+/// a game's store page. Public like screenshots/reviews: browsing a
+/// changelog shouldn't require an account.
+pub async fn list_version_notes(
+    State(state): State<AppState>,
+    Path(game_id): Path<i64>,
+) -> Result<Json<Vec<GameVersionNote>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {GAME_VERSION_NOTE_COLUMNS} FROM game_version_notes \
+             WHERE catalog_game_id = ?1 ORDER BY created_at DESC"
+        ))
+        .map_err(internal_error)?;
+    let notes = stmt
+        .query_map(params![game_id], row_to_version_note)
+        .map_err(internal_error)?
+        .filter_map(|n| n.ok())
+        .collect();
+    Ok(Json(notes))
+}
+
+/// Creates or updates the patch notes for one version of a game. Publisher
+/// only — re-publishing notes for the same version overwrites them rather
+/// than duplicating, so editing a typo doesn't leave two entries.
+pub async fn upsert_version_note(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+    Json(req): Json<NewGameVersionNote>,
+) -> Result<Json<GameVersionNote>, ApiError> {
+    if req.version.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Version darf nicht leer sein".to_string()));
+    }
+
+    let conn = state.db.lock().map_err(internal_error)?;
+    let publisher_id: i64 = conn
+        .query_row(
+            "SELECT publisher_user_id FROM catalog_games WHERE id = ?1",
+            params![game_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+    if publisher_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur der Publisher kann Patch-Notes hinzufügen".to_string(),
+        ));
+    }
+
+    conn.execute(
+        "INSERT INTO game_version_notes (catalog_game_id, version, notes) VALUES (?1, ?2, ?3) \
+         ON CONFLICT(catalog_game_id, version) DO UPDATE SET \
+         notes = excluded.notes, created_at = datetime('now')",
+        params![game_id, req.version.trim(), req.notes],
+    )
+    .map_err(internal_error)?;
+
+    conn.query_row(
+        &format!(
+            "SELECT {GAME_VERSION_NOTE_COLUMNS} FROM game_version_notes \
+             WHERE catalog_game_id = ?1 AND version = ?2"
+        ),
+        params![game_id, req.version.trim()],
+        row_to_version_note,
+    )
+    .map(Json)
+    .map_err(internal_error)
+}
+
+pub async fn delete_version_note(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path((game_id, note_id)): Path<(i64, i64)>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let publisher_id: i64 = conn
+        .query_row(
+            "SELECT publisher_user_id FROM catalog_games WHERE id = ?1",
+            params![game_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+    if publisher_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur der Publisher kann Patch-Notes entfernen".to_string(),
+        ));
+    }
+    let affected = conn
+        .execute(
+            "DELETE FROM game_version_notes WHERE id = ?1 AND catalog_game_id = ?2",
+            params![note_id, game_id],
+        )
+        .map_err(internal_error)?;
+    if affected == 0 {
+        return Err((StatusCode::NOT_FOUND, "Patch-Note nicht gefunden".to_string()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Marks the caller as currently playing (or, with `catalog_game_id: null`,
+/// no longer playing) a catalog game — called by the launcher around game
+/// launch/exit, the same way `try_sync_cloud_save_*` does. Friends see this
+/// via `playing_title` on `UserSummary` for as long as the player stays
+/// "online" (recent activity), so a crashed launcher self-heals once
+/// activity stops rather than leaving a stale status.
+pub async fn set_playing(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Json(req): Json<SetPlayingRequest>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.execute(
+        "UPDATE users SET currently_playing_catalog_game_id = ?1 WHERE id = ?2",
+        params![req.catalog_game_id, user_id],
+    )
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }

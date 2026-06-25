@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuthStore } from "../../authStore";
 
 interface Props {
@@ -16,6 +16,11 @@ export function LoginDialog({ onClose }: Props) {
   const error = useAuthStore((s) => s.error);
   const token = useAuthStore((s) => s.token);
   const clearError = useAuthStore((s) => s.clearError);
+
+  useEffect(() => {
+    clearError();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (token) {
     onClose();

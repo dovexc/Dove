@@ -23,6 +23,7 @@ pub fn run() {
                 db: Arc::new(Mutex::new(conn)),
                 running: Arc::new(Mutex::new(Default::default())),
                 downloads: Arc::new(Mutex::new(Default::default())),
+                auth_token: Arc::new(Mutex::new(None)),
             });
             Ok(())
         })
@@ -39,6 +40,7 @@ pub fn run() {
             commands::install_catalog_game,
             commands::pause_download,
             commands::check_for_update,
+            commands::set_auth_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

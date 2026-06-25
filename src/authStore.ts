@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import type { ProfileScreenshot, StoreUser } from "./types";
 
 const API_BASE = "http://127.0.0.1:4000";
@@ -172,9 +173,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   fetchScreenshots: async () => {
     const user = get().user;
-    if (!user) return;
+    const token = get().token;
+    if (!user || !token) return;
     try {
-      const response = await fetch(`${API_BASE}/api/users/${user.id}`);
+      const response = await fetch(`${API_BASE}/api/users/${user.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (!response.ok) throw new Error(await parseErrorMessage(response));
       const profile = await response.json();
       set({ screenshots: profile.screenshots });
@@ -252,5 +256,18 @@ export function getAuthHeader(): Record<string, string> {
   const token = useAuthStore.getState().token;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
+
+// Mirrors the bearer token into Rust-side state (see commands::set_auth_session
+// in src-tauri). The token only lives in this store/localStorage otherwise,
+// but cloud-save sync runs from Rust around game launch/exit and needs it.
+function syncAuthSessionToTauri(token: string | null) {
+  invoke("set_auth_session", { token }).catch(() => {});
+}
+syncAuthSessionToTauri(useAuthStore.getState().token);
+useAuthStore.subscribe((state, prevState) => {
+  if (state.token !== prevState.token) {
+    syncAuthSessionToTauri(state.token);
+  }
+});
 
 export { API_BASE };

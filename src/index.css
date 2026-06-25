@@ -36,3 +36,48 @@
   --color-sky-500: #f97316;
   --color-sky-600: #ea580c;
 }
+
+.prose-patch-notes h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 0.75rem 0 0.4rem;
+  color: #e4e4e7;
+}
+.prose-patch-notes h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0.6rem 0 0.35rem;
+  color: #e4e4e7;
+}
+.prose-patch-notes h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0.5rem 0 0.3rem;
+  color: #d4d4d8;
+}
+.prose-patch-notes p {
+  margin: 0.35rem 0;
+}
+.prose-patch-notes ul,
+.prose-patch-notes ol {
+  margin: 0.35rem 0 0.35rem 1.25rem;
+}
+.prose-patch-notes ul {
+  list-style: disc;
+}
+.prose-patch-notes ol {
+  list-style: decimal;
+}
+.prose-patch-notes blockquote {
+  border-left: 2px solid #3f3f46;
+  padding-left: 0.75rem;
+  color: #a1a1aa;
+  margin: 0.5rem 0;
+}
+.prose-patch-notes code {
+  background: #27272a;
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.25rem;
+  font-size: 0.85em;
+}
+

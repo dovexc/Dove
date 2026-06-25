@@ -94,10 +94,16 @@ function FriendCard({
       <Avatar user={user} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-base font-bold text-zinc-100">{user.display_name}</div>
-        {statusInfo.label && (
-          <div className="mt-0.5 text-[13px]" style={{ color: statusInfo.text }}>
-            {statusInfo.label}
+        {showOnlineStatus && user.online && user.playing_title ? (
+          <div className="mt-0.5 truncate text-[13px] font-semibold" style={{ color: "#66c0f4" }}>
+            Spielt: {user.playing_title}
           </div>
+        ) : (
+          statusInfo.label && (
+            <div className="mt-0.5 text-[13px]" style={{ color: statusInfo.text }}>
+              {statusInfo.label}
+            </div>
+          )
         )}
       </div>
       {actionLabel && onAction && (
@@ -185,7 +191,7 @@ export function FriendsView({ onClose }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-40 flex flex-col overflow-y-auto"
+      className="h-full flex flex-col overflow-y-auto"
       style={{
         background:
           "radial-gradient(1200px 600px at 50% -150px, #1c2c3e 0%, #0d141c 55%, #0b1016 100%)",

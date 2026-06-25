@@ -22,6 +22,7 @@ pub struct PublicProfile {
     pub bio: Option<String>,
     pub created_at: String,
     pub screenshots: Vec<ProfileScreenshot>,
+    pub wishlist: Vec<CatalogGame>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -83,6 +84,11 @@ pub struct CatalogGame {
     pub version: String,
     pub tags: Option<String>,
     pub status: String,
+    pub min_specs: Option<String>,
+    pub recommended_specs: Option<String>,
+    pub save_path_hint: Option<String>,
+    pub avg_rating: Option<f64>,
+    pub review_count: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,6 +97,56 @@ pub struct NewCatalogGame {
     pub description: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<String>,
+    pub min_specs: Option<String>,
+    pub recommended_specs: Option<String>,
+    pub save_path_hint: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct CloudSave {
+    pub catalog_game_id: i64,
+    pub size_bytes: i64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct GameVersionNote {
+    pub id: i64,
+    pub catalog_game_id: i64,
+    pub version: String,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewGameVersionNote {
+    pub version: String,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GameScreenshot {
+    pub id: i64,
+    pub catalog_game_id: i64,
+    pub image_url: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct GameReview {
+    pub id: i64,
+    pub catalog_game_id: i64,
+    pub user_id: i64,
+    pub reviewer_display_name: String,
+    pub rating: f64,
+    pub body: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewGameReview {
+    pub rating: f64,
+    pub body: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -118,6 +174,12 @@ pub struct UserSummary {
     pub display_name: String,
     pub avatar_url: Option<String>,
     pub online: bool,
+    pub playing_title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetPlayingRequest {
+    pub catalog_game_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Clone)]

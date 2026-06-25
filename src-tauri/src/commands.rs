@@ -273,6 +273,18 @@ pub fn reveal_game_folder(state: State<AppState>, id: i64) -> Result<(), String>
     open::that(&folder).map_err(|e| format!("Ordner konnte nicht geöffnet werden: {e}"))
 }
 
+/// Restores the frontend's bearer token into Rust-side state. The JWT
+/// itself only lives in the webview's localStorage (managed by
+/// `authStore.ts`); cloud-save sync runs around game launch/exit from Rust,
+/// so the frontend calls this on every login/logout/hydrate to keep this
+/// mirror in sync.
+#[tauri::command]
+pub fn set_auth_session(state: State<AppState>, token: Option<String>) -> Result<(), String> {
+    let mut guard = state.auth_token.lock().map_err(|e| e.to_string())?;
+    *guard = token;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<(), String> {
     let exe_path = {
@@ -284,6 +296,18 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
         )
         .map_err(|e| e.to_string())?
     };
+
+    let catalog_game_id: Option<i64> = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT catalog_game_id FROM games WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?
+    };
+    try_sync_cloud_save_down(&state.auth_token, catalog_game_id);
+    set_remote_playing_status(&state.auth_token, catalog_game_id);
 
     if exe_path.starts_with("store://") {
         return Err(
@@ -309,8 +333,17 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
             let db = state.db.clone();
             let running_set = state.running.clone();
             let app_handle = app.clone();
+            let auth_token = state.auth_token.clone();
             std::thread::spawn(move || {
-                watch_process_under_dir(db, running_set, app_handle, id, install_dir);
+                watch_process_under_dir(
+                    db,
+                    running_set,
+                    app_handle,
+                    id,
+                    install_dir,
+                    auth_token,
+                    catalog_game_id,
+                );
             });
         }
 
@@ -324,8 +357,17 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
         let running_set = state.running.clone();
         let app_handle = app.clone();
         let bundle_path = exe_path.clone();
+        let auth_token = state.auth_token.clone();
         std::thread::spawn(move || {
-            watch_process_under_dir(db, running_set, app_handle, id, bundle_path);
+            watch_process_under_dir(
+                db,
+                running_set,
+                app_handle,
+                id,
+                bundle_path,
+                auth_token,
+                catalog_game_id,
+            );
         });
 
         return Ok(());
@@ -363,6 +405,7 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
     let db = state.db.clone();
     let running_set = state.running.clone();
     let app_handle = app.clone();
+    let auth_token = state.auth_token.clone();
 
     std::thread::spawn(move || {
         let _ = child.wait();
@@ -383,6 +426,8 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
             running.remove(&id);
         }
         app_handle.emit("game-stopped", id).ok();
+        try_sync_cloud_save_up(&auth_token, catalog_game_id);
+        set_remote_playing_status(&auth_token, None);
     });
 
     Ok(())
@@ -398,6 +443,8 @@ fn watch_process_under_dir(
     app: AppHandle,
     id: i64,
     install_dir: String,
+    auth_token: Arc<Mutex<Option<String>>>,
+    catalog_game_id: Option<i64>,
 ) {
     let install_dir_lower = install_dir.to_lowercase();
     let mut sys = System::new();
@@ -462,6 +509,8 @@ fn watch_process_under_dir(
         running.remove(&id);
     }
     app.emit("game-stopped", id).ok();
+    try_sync_cloud_save_up(&auth_token, catalog_game_id);
+    set_remote_playing_status(&auth_token, None);
 }
 
 const STORE_API_BASE: &str = "http://127.0.0.1:4000";
@@ -478,6 +527,245 @@ fn collect_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
                 out.push(path);
             }
         }
+    }
+}
+
+const CLOUD_SAVE_MAX_BYTES: usize = 100 * 1024 * 1024;
+
+/// Expands the placeholders a publisher might use in `save_path_hint`
+/// (e.g. `%APPDATA%/MyGame/saves`, `~/Library/.../MyGame`). Returns `None`
+/// if a placeholder can't be resolved on this OS (e.g. `%APPDATA%` on
+/// macOS) — callers treat that as "skip sync", since a hint is free text
+/// written for whichever platform the publisher targeted, not necessarily
+/// this one.
+fn expand_save_path(hint: &str) -> Option<std::path::PathBuf> {
+    let trimmed = hint.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut expanded = trimmed.to_string();
+    for (placeholder, env_var) in [
+        ("%APPDATA%", "APPDATA"),
+        ("%LOCALAPPDATA%", "LOCALAPPDATA"),
+        ("%USERPROFILE%", "USERPROFILE"),
+    ] {
+        if expanded.to_uppercase().contains(placeholder) {
+            let value = std::env::var(env_var).ok()?;
+            expanded = expanded.replace(placeholder, &value);
+        }
+    }
+    if let Some(rest) = expanded.strip_prefix('~') {
+        let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok()?;
+        expanded = format!("{home}{rest}");
+    }
+    Some(std::path::PathBuf::from(expanded))
+}
+
+#[derive(serde::Deserialize)]
+struct RemoteSavePathHint {
+    save_path_hint: Option<String>,
+}
+
+fn fetch_save_path_hint(catalog_game_id: i64) -> Option<String> {
+    let info: RemoteSavePathHint =
+        ureq::get(&format!("{STORE_API_BASE}/api/games/{catalog_game_id}"))
+            .call()
+            .ok()?
+            .into_json()
+            .ok()?;
+    info.save_path_hint
+}
+
+#[derive(serde::Deserialize)]
+struct RemoteCloudSaveMeta {
+    updated_at: String,
+}
+
+fn zip_dir_to_bytes(dir: &std::path::Path) -> Result<Vec<u8>, String> {
+    let mut files = Vec::new();
+    collect_files(dir, &mut files);
+    if files.is_empty() {
+        return Err("Spielstand-Ordner ist leer".to_string());
+    }
+    let mut buf = Vec::new();
+    {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for file_path in &files {
+            let relative = file_path.strip_prefix(dir).map_err(|e| e.to_string())?;
+            let name = relative.to_string_lossy().replace('\\', "/");
+            writer.start_file(name, options).map_err(|e| e.to_string())?;
+            let mut f = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
+            std::io::copy(&mut f, &mut writer).map_err(|e| e.to_string())?;
+        }
+        writer.finish().map_err(|e| e.to_string())?;
+    }
+    Ok(buf)
+}
+
+fn unzip_bytes_to_dir(bytes: &[u8], dir: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let mut archive =
+        zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        if entry.is_dir() {
+            continue;
+        }
+        let Some(relative) = entry.enclosed_name() else {
+            continue;
+        };
+        let out_path = dir.join(relative);
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut out_file = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut out_file).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Unix timestamp of the most recently modified file in `dir`, recursively.
+fn newest_mtime_unix(dir: &std::path::Path) -> Option<i64> {
+    let mut files = Vec::new();
+    collect_files(dir, &mut files);
+    files
+        .iter()
+        .filter_map(|f| std::fs::metadata(f).ok()?.modified().ok())
+        .filter_map(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .max()
+}
+
+/// Pulls the cloud save down before launch if it's newer than the local
+/// save folder. Best-effort and silent by design: missing token, no
+/// `save_path_hint`, no cloud save yet, network errors, or an
+/// unresolvable placeholder on this OS all just skip the sync rather than
+/// blocking or failing the actual game launch.
+fn try_sync_cloud_save_down(auth_token: &Arc<Mutex<Option<String>>>, catalog_game_id: Option<i64>) {
+    let Some(catalog_game_id) = catalog_game_id else {
+        return;
+    };
+    let Some(token) = auth_token.lock().ok().and_then(|t| t.clone()) else {
+        return;
+    };
+    let Some(hint) = fetch_save_path_hint(catalog_game_id) else {
+        return;
+    };
+    let Some(save_dir) = expand_save_path(&hint) else {
+        return;
+    };
+
+    let meta: RemoteCloudSaveMeta = match ureq::get(&format!(
+        "{STORE_API_BASE}/api/games/{catalog_game_id}/cloud-save"
+    ))
+    .set("Authorization", &format!("Bearer {token}"))
+    .call()
+    {
+        Ok(response) => match response.into_json() {
+            Ok(meta) => meta,
+            Err(_) => return,
+        },
+        // 404 (no cloud save yet) or a network error — nothing to pull.
+        Err(_) => return,
+    };
+
+    let remote_updated_at_unix =
+        chrono::NaiveDateTime::parse_from_str(&meta.updated_at, "%Y-%m-%d %H:%M:%S")
+            .ok()
+            .map(|naive| naive.and_utc().timestamp());
+
+    let local_newer = match (newest_mtime_unix(&save_dir), remote_updated_at_unix) {
+        (Some(local_ts), Some(remote_ts)) => local_ts > remote_ts,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    if local_newer {
+        return;
+    }
+
+    let response = match ureq::get(&format!(
+        "{STORE_API_BASE}/api/games/{catalog_game_id}/cloud-save/download"
+    ))
+    .set("Authorization", &format!("Bearer {token}"))
+    .call()
+    {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Cloud-Save-Download fehlgeschlagen: {e}");
+            return;
+        }
+    };
+    let mut bytes = Vec::new();
+    {
+        use std::io::Read;
+        if response.into_reader().read_to_end(&mut bytes).is_err() {
+            return;
+        }
+    }
+    if let Err(e) = unzip_bytes_to_dir(&bytes, &save_dir) {
+        eprintln!("Cloud-Save konnte nicht entpackt werden: {e}");
+    }
+}
+
+/// Zips the local save folder and pushes it after the game exits. Same
+/// best-effort/silent philosophy as the download side.
+fn try_sync_cloud_save_up(auth_token: &Arc<Mutex<Option<String>>>, catalog_game_id: Option<i64>) {
+    let Some(catalog_game_id) = catalog_game_id else {
+        return;
+    };
+    let Some(token) = auth_token.lock().ok().and_then(|t| t.clone()) else {
+        return;
+    };
+    let Some(hint) = fetch_save_path_hint(catalog_game_id) else {
+        return;
+    };
+    let Some(save_dir) = expand_save_path(&hint) else {
+        return;
+    };
+    if !save_dir.is_dir() {
+        return;
+    }
+
+    let bytes = match zip_dir_to_bytes(&save_dir) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+    if bytes.len() > CLOUD_SAVE_MAX_BYTES {
+        eprintln!("Cloud-Save zu groß, Upload übersprungen");
+        return;
+    }
+
+    if let Err(e) = ureq::put(&format!(
+        "{STORE_API_BASE}/api/games/{catalog_game_id}/cloud-save"
+    ))
+    .set("Authorization", &format!("Bearer {token}"))
+    .set("Content-Type", "application/octet-stream")
+    .send_bytes(&bytes)
+    {
+        eprintln!("Cloud-Save-Upload fehlgeschlagen: {e}");
+    }
+}
+
+/// Tells the store who's playing what, so friends see "spielt gerade X" —
+/// the server only surfaces this while the player is also "online" (recent
+/// activity), so a crashed launcher that never clears this self-heals
+/// rather than leaving a permanently stale status. Best-effort: no token or
+/// a network error just means the status doesn't update this time.
+fn set_remote_playing_status(
+    auth_token: &Arc<Mutex<Option<String>>>,
+    catalog_game_id: Option<i64>,
+) {
+    let Some(token) = auth_token.lock().ok().and_then(|t| t.clone()) else {
+        return;
+    };
+    let body = serde_json::json!({ "catalog_game_id": catalog_game_id });
+    if let Err(e) = ureq::patch(&format!("{STORE_API_BASE}/api/me/playing"))
+        .set("Authorization", &format!("Bearer {token}"))
+        .send_json(body)
+    {
+        eprintln!("Spielstatus konnte nicht aktualisiert werden: {e}");
     }
 }
 

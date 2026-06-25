@@ -59,6 +59,14 @@ fn init_schema(conn: &Connection, default_quota_bytes: i64) {
             UNIQUE(user_id, catalog_game_id)
         );
 
+        CREATE TABLE IF NOT EXISTS wishlist_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            catalog_game_id INTEGER NOT NULL REFERENCES catalog_games(id),
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(user_id, catalog_game_id)
+        );
+
         CREATE TABLE IF NOT EXISTS game_file_manifest (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             catalog_game_id INTEGER NOT NULL REFERENCES catalog_games(id),
@@ -76,9 +84,77 @@ fn init_schema(conn: &Connection, default_quota_bytes: i64) {
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(requester_id, recipient_id)
         );
+
+        CREATE TABLE IF NOT EXISTS game_screenshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            catalog_game_id INTEGER NOT NULL REFERENCES catalog_games(id),
+            image_url TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS game_version_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            catalog_game_id INTEGER NOT NULL REFERENCES catalog_games(id),
+            version TEXT NOT NULL,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(catalog_game_id, version)
+        );
+
+        CREATE TABLE IF NOT EXISTS cloud_saves (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            catalog_game_id INTEGER NOT NULL REFERENCES catalog_games(id),
+            file_url TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(user_id, catalog_game_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS game_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            catalog_game_id INTEGER NOT NULL REFERENCES catalog_games(id),
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            rating REAL NOT NULL CHECK(rating BETWEEN 0.5 AND 5),
+            body TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(catalog_game_id, user_id)
+        );
         ",
     )
     .expect("failed to initialize schema");
+
+    // SQLite can't ALTER a CHECK constraint in place, so a database created
+    // before half-star ratings existed (integer 1-5) needs its table rebuilt
+    // to allow 0.5-5 in half-point steps.
+    let needs_rating_migration = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'game_reviews'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|sql| sql.contains("BETWEEN 1 AND 5"))
+        .unwrap_or(false);
+
+    if needs_rating_migration {
+        conn.execute_batch(
+            "
+            CREATE TABLE game_reviews_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                catalog_game_id INTEGER NOT NULL REFERENCES catalog_games(id),
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                rating REAL NOT NULL CHECK(rating BETWEEN 0.5 AND 5),
+                body TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(catalog_game_id, user_id)
+            );
+            INSERT INTO game_reviews_new SELECT id, catalog_game_id, user_id, rating, body, created_at FROM game_reviews;
+            DROP TABLE game_reviews;
+            ALTER TABLE game_reviews_new RENAME TO game_reviews;
+            ",
+        )
+        .expect("failed to migrate game_reviews rating constraint");
+    }
 
     // Migrate older databases created before profile columns existed.
     for column in ["avatar_url", "background_url", "bio"] {
@@ -124,4 +200,18 @@ fn init_schema(conn: &Connection, default_quota_bytes: i64) {
     if added_status_column {
         let _ = conn.execute("UPDATE catalog_games SET status = 'approved'", []);
     }
+
+    let _ = conn.execute("ALTER TABLE catalog_games ADD COLUMN min_specs TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE catalog_games ADD COLUMN recommended_specs TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE catalog_games ADD COLUMN save_path_hint TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE users ADD COLUMN currently_playing_catalog_game_id INTEGER",
+        [],
+    );
 }
