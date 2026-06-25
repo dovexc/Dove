@@ -9,6 +9,12 @@ function formatPrize(priceCents: number): string {
   return priceCents === 0 ? "Kein Preisgeld" : `${(priceCents / 100).toFixed(2)} €`;
 }
 
+function totalPrize(event: GameEvent): number {
+  return event.prize_mode === "split"
+    ? event.prize_cents + event.prize_second_cents + event.prize_third_cents
+    : event.prize_cents;
+}
+
 function formatDate(value: string | null): string | null {
   if (!value) return null;
   const date = new Date(value);
@@ -21,7 +27,12 @@ function isRegistrationOpen(event: GameEvent): boolean {
   return new Date(event.registration_deadline).getTime() >= Date.now();
 }
 
-type SortMode = "deadline" | "prize" | "newest";
+function gameName(event: GameEvent): string {
+  return event.catalog_game_title || event.custom_game_title || "";
+}
+
+type SortMode = "deadline" | "prize" | "newest" | "game";
+type TypeFilter = "all" | "jam" | "tournament";
 
 export function EventsPage() {
   const events = useEventsStore((s) => s.events);
@@ -45,15 +56,21 @@ export function EventsPage() {
   const [onlyWithPrize, setOnlyWithPrize] = useState(false);
   const [minPrizeEuros, setMinPrizeEuros] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("deadline");
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [gameSearch, setGameSearch] = useState("");
 
   const [showHostForm, setShowHostForm] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [catalogGameId, setCatalogGameId] = useState("");
+  const [customGameTitle, setCustomGameTitle] = useState("");
   const [registrationDeadline, setRegistrationDeadline] = useState("");
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
   const [prizeEuros, setPrizeEuros] = useState("");
+  const [prizeMode, setPrizeMode] = useState<"winner_takes_all" | "split">("winner_takes_all");
+  const [prizeSecondEuros, setPrizeSecondEuros] = useState("");
+  const [prizeThirdEuros, setPrizeThirdEuros] = useState("");
 
   useEffect(() => {
     fetchEvents();
@@ -62,21 +79,33 @@ export function EventsPage() {
 
   const filteredEvents = useMemo(() => {
     const minPrizeCents = Math.round((parseFloat(minPrizeEuros) || 0) * 100);
+    const gameQuery = gameSearch.trim().toLowerCase();
     let list = events.filter((e) => {
       if (onlyOpenRegistration && !isRegistrationOpen(e)) return false;
-      if (onlyWithPrize && e.prize_cents <= 0) return false;
-      if (minPrizeCents > 0 && e.prize_cents < minPrizeCents) return false;
+      if (onlyWithPrize && totalPrize(e) <= 0) return false;
+      if (minPrizeCents > 0 && totalPrize(e) < minPrizeCents) return false;
+      if (typeFilter === "jam" && gameName(e)) return false;
+      if (typeFilter === "tournament" && !gameName(e)) return false;
+      if (gameQuery && !gameName(e).toLowerCase().includes(gameQuery)) return false;
       return true;
     });
     list = [...list].sort((a, b) => {
-      if (sortMode === "prize") return b.prize_cents - a.prize_cents;
+      if (sortMode === "prize") return totalPrize(b) - totalPrize(a);
       if (sortMode === "newest") return b.id - a.id;
+      if (sortMode === "game") {
+        const aName = gameName(a);
+        const bName = gameName(b);
+        if (!aName && !bName) return 0;
+        if (!aName) return 1;
+        if (!bName) return -1;
+        return aName.localeCompare(bName);
+      }
       const aDeadline = a.registration_deadline ? new Date(a.registration_deadline).getTime() : Infinity;
       const bDeadline = b.registration_deadline ? new Date(b.registration_deadline).getTime() : Infinity;
       return aDeadline - bDeadline;
     });
     return list;
-  }, [events, onlyOpenRegistration, onlyWithPrize, minPrizeEuros, sortMode]);
+  }, [events, onlyOpenRegistration, onlyWithPrize, minPrizeEuros, sortMode, typeFilter, gameSearch]);
 
   async function handleHostSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -85,18 +114,26 @@ export function EventsPage() {
       title: title.trim(),
       description: description.trim() || null,
       catalog_game_id: catalogGameId ? Number(catalogGameId) : null,
+      custom_game_title: catalogGameId ? null : customGameTitle.trim() || null,
       registration_deadline: registrationDeadline || null,
       starts_at: startsAt || null,
       ends_at: endsAt || null,
       prize_cents: Math.round((parseFloat(prizeEuros) || 0) * 100),
+      prize_mode: prizeMode,
+      prize_second_cents: Math.round((parseFloat(prizeSecondEuros) || 0) * 100),
+      prize_third_cents: Math.round((parseFloat(prizeThirdEuros) || 0) * 100),
     });
     setTitle("");
     setDescription("");
     setCatalogGameId("");
+    setCustomGameTitle("");
     setRegistrationDeadline("");
     setStartsAt("");
     setEndsAt("");
     setPrizeEuros("");
+    setPrizeMode("winner_takes_all");
+    setPrizeSecondEuros("");
+    setPrizeThirdEuros("");
     setShowHostForm(false);
   }
 
@@ -178,6 +215,17 @@ export function EventsPage() {
                 ))}
             </select>
           </label>
+          {!catalogGameId && (
+            <label className="flex flex-col gap-1 text-sm text-zinc-300">
+              Oder eigenes Spiel angeben (nicht im Game Launcher)
+              <input
+                value={customGameTitle}
+                onChange={(e) => setCustomGameTitle(e.target.value)}
+                placeholder="z. B. Fortnite, Valorant, ..."
+                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+              />
+            </label>
+          )}
           <div className="grid grid-cols-3 gap-3">
             <label className="flex flex-col gap-1 text-sm text-zinc-300">
               Anmeldeschluss
@@ -208,7 +256,7 @@ export function EventsPage() {
             </label>
           </div>
           <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            Preisgeld (€)
+            {prizeMode === "split" ? "Preisgeld 1. Platz (€)" : "Preisgeld (€)"}
             <input
               type="number"
               min="0"
@@ -219,6 +267,60 @@ export function EventsPage() {
               className="w-40 rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
             />
           </label>
+
+          <div className="flex flex-col gap-2 text-sm text-zinc-300">
+            Aufteilung des Preisgelds
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="prizeMode"
+                  checked={prizeMode === "winner_takes_all"}
+                  onChange={() => setPrizeMode("winner_takes_all")}
+                />
+                Winner takes it all
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="prizeMode"
+                  checked={prizeMode === "split"}
+                  onChange={() => setPrizeMode("split")}
+                />
+                Aufteilung auf Platz 1–3
+              </label>
+            </div>
+          </div>
+
+          {prizeMode === "split" && (
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex flex-col gap-1 text-sm text-zinc-300">
+                Preisgeld 2. Platz (€)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={prizeSecondEuros}
+                  onChange={(e) => setPrizeSecondEuros(e.target.value)}
+                  placeholder="0"
+                  className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-zinc-300">
+                Preisgeld 3. Platz (€)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={prizeThirdEuros}
+                  onChange={(e) => setPrizeThirdEuros(e.target.value)}
+                  placeholder="0"
+                  className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                />
+              </label>
+            </div>
+          )}
+
           <button
             type="submit"
             className="self-end rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
@@ -229,6 +331,27 @@ export function EventsPage() {
       )}
 
       <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 text-sm text-zinc-400">
+          Art:
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as TypeFilter)}
+            className="rounded bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700"
+          >
+            <option value="all">Alle</option>
+            <option value="jam">Game Jams</option>
+            <option value="tournament">Turniere</option>
+          </select>
+        </div>
+        <div className="flex h-[42px] items-center gap-2 rounded-lg border border-white/10 bg-[#10171f] px-3">
+          <span className="text-zinc-500">🔍</span>
+          <input
+            value={gameSearch}
+            onChange={(e) => setGameSearch(e.target.value)}
+            placeholder="Turnier nach Spiel suchen"
+            className="w-44 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
+          />
+        </div>
         <button
           onClick={() => setOnlyOpenRegistration((v) => !v)}
           className={`rounded-lg border px-4 py-2 text-sm font-semibold ${
@@ -270,6 +393,7 @@ export function EventsPage() {
             <option value="deadline">Anmeldeschluss</option>
             <option value="prize">Preisgeld</option>
             <option value="newest">Neueste</option>
+            <option value="game">Spiel</option>
           </select>
         </div>
       </div>
@@ -297,16 +421,17 @@ export function EventsPage() {
                     <h3 className="text-base font-bold text-zinc-100">{event.title}</h3>
                     <p className="text-xs text-zinc-500">von {event.host_display_name}</p>
                   </div>
-                  {event.prize_cents > 0 && (
+                  {totalPrize(event) > 0 && (
                     <span className="shrink-0 rounded bg-amber-900/50 px-2 py-1 text-xs font-bold text-amber-300">
-                      {formatPrize(event.prize_cents)}
+                      {formatPrize(totalPrize(event))}
+                      {event.prize_mode === "split" && " (aufgeteilt)"}
                     </span>
                   )}
                 </div>
 
-                {event.catalog_game_title && (
+                {(event.catalog_game_title || event.custom_game_title) && (
                   <span className="self-start rounded bg-sky-900/50 px-2 py-1 text-[11px] font-semibold text-sky-300">
-                    Turnier: {event.catalog_game_title}
+                    Turnier: {event.catalog_game_title || event.custom_game_title}
                   </span>
                 )}
 

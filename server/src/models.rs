@@ -133,10 +133,14 @@ pub struct GameEvent {
     pub description: Option<String>,
     pub catalog_game_id: Option<i64>,
     pub catalog_game_title: Option<String>,
+    pub custom_game_title: Option<String>,
     pub registration_deadline: Option<String>,
     pub starts_at: Option<String>,
     pub ends_at: Option<String>,
     pub prize_cents: i64,
+    pub prize_mode: String,
+    pub prize_second_cents: i64,
+    pub prize_third_cents: i64,
     pub created_at: String,
     pub participant_count: i64,
     pub joined: bool,
@@ -147,10 +151,16 @@ pub struct NewGameEvent {
     pub title: String,
     pub description: Option<String>,
     pub catalog_game_id: Option<i64>,
+    pub custom_game_title: Option<String>,
     pub registration_deadline: Option<String>,
     pub starts_at: Option<String>,
     pub ends_at: Option<String>,
     pub prize_cents: i64,
+    pub prize_mode: String,
+    #[serde(default)]
+    pub prize_second_cents: i64,
+    #[serde(default)]
+    pub prize_third_cents: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

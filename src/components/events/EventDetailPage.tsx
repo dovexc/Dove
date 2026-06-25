@@ -5,6 +5,12 @@ function formatPrize(priceCents: number): string {
   return priceCents === 0 ? "Kein Preisgeld" : `${(priceCents / 100).toFixed(2)} €`;
 }
 
+function totalPrize(event: { prize_mode: string; prize_cents: number; prize_second_cents: number; prize_third_cents: number }): number {
+  return event.prize_mode === "split"
+    ? event.prize_cents + event.prize_second_cents + event.prize_third_cents
+    : event.prize_cents;
+}
+
 function formatDate(value: string | null): string | null {
   if (!value) return null;
   const date = new Date(value);
@@ -59,17 +65,34 @@ export function EventDetailPage() {
             <h1 className="text-3xl font-black tracking-tight text-white">{event.title}</h1>
             <p className="mt-1 text-sm text-zinc-500">von {event.host_display_name}</p>
           </div>
-          {event.prize_cents > 0 && (
+          {totalPrize(event) > 0 && (
             <span className="rounded bg-amber-900/50 px-3 py-2 text-sm font-bold text-amber-300">
-              {formatPrize(event.prize_cents)}
+              {formatPrize(totalPrize(event))}
             </span>
           )}
         </div>
 
-        {event.catalog_game_title && (
+        {(event.catalog_game_title || event.custom_game_title) && (
           <span className="mt-3 inline-block rounded bg-sky-900/50 px-3 py-1.5 text-sm font-semibold text-sky-300">
-            Turnier: {event.catalog_game_title}
+            Turnier: {event.catalog_game_title || event.custom_game_title}
           </span>
+        )}
+
+        {totalPrize(event) > 0 && (
+          <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 text-sm">
+            <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">
+              Preisgeldverteilung
+            </div>
+            {event.prize_mode === "split" ? (
+              <div className="flex flex-col gap-1 text-zinc-200">
+                <span>🥇 1. Platz: {formatPrize(event.prize_cents)}</span>
+                <span>🥈 2. Platz: {formatPrize(event.prize_second_cents)}</span>
+                <span>🥉 3. Platz: {formatPrize(event.prize_third_cents)}</span>
+              </div>
+            ) : (
+              <span className="text-zinc-200">Winner takes it all — der Gewinner erhält das gesamte Preisgeld.</span>
+            )}
+          </div>
         )}
 
         <div className="mt-6 grid grid-cols-3 gap-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 text-sm">

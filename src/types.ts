@@ -153,10 +153,14 @@ export interface GameEvent {
   description: string | null;
   catalog_game_id: number | null;
   catalog_game_title: string | null;
+  custom_game_title: string | null;
   registration_deadline: string | null;
   starts_at: string | null;
   ends_at: string | null;
   prize_cents: number;
+  prize_mode: "winner_takes_all" | "split";
+  prize_second_cents: number;
+  prize_third_cents: number;
   created_at: string;
   participant_count: number;
   joined: boolean;
@@ -166,10 +170,14 @@ export interface NewGameEvent {
   title: string;
   description: string | null;
   catalog_game_id: number | null;
+  custom_game_title: string | null;
   registration_deadline: string | null;
   starts_at: string | null;
   ends_at: string | null;
   prize_cents: number;
+  prize_mode: "winner_takes_all" | "split";
+  prize_second_cents: number;
+  prize_third_cents: number;
 }
 
 export interface StorageUsage {

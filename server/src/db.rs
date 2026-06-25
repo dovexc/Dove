@@ -107,10 +107,14 @@ fn init_schema(conn: &Connection, default_quota_bytes: i64) {
             title TEXT NOT NULL,
             description TEXT,
             catalog_game_id INTEGER REFERENCES catalog_games(id),
+            custom_game_title TEXT,
             registration_deadline TEXT,
             starts_at TEXT,
             ends_at TEXT,
             prize_cents INTEGER NOT NULL DEFAULT 0,
+            prize_mode TEXT NOT NULL DEFAULT 'winner_takes_all',
+            prize_second_cents INTEGER NOT NULL DEFAULT 0,
+            prize_third_cents INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -233,6 +237,19 @@ fn init_schema(conn: &Connection, default_quota_bytes: i64) {
     );
     let _ = conn.execute(
         "ALTER TABLE users ADD COLUMN currently_playing_catalog_game_id INTEGER",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE events ADD COLUMN custom_game_title TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE events ADD COLUMN prize_mode TEXT NOT NULL DEFAULT 'winner_takes_all'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE events ADD COLUMN prize_second_cents INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE events ADD COLUMN prize_third_cents INTEGER NOT NULL DEFAULT 0",
         [],
     );
 }

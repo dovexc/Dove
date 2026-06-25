@@ -1845,13 +1845,17 @@ fn row_to_event(row: &rusqlite::Row) -> rusqlite::Result<GameEvent> {
         description: row.get(4)?,
         catalog_game_id: row.get(5)?,
         catalog_game_title: row.get(6)?,
-        registration_deadline: row.get(7)?,
-        starts_at: row.get(8)?,
-        ends_at: row.get(9)?,
-        prize_cents: row.get(10)?,
-        created_at: row.get(11)?,
-        participant_count: row.get(12)?,
-        joined: row.get(13)?,
+        custom_game_title: row.get(7)?,
+        registration_deadline: row.get(8)?,
+        starts_at: row.get(9)?,
+        ends_at: row.get(10)?,
+        prize_cents: row.get(11)?,
+        prize_mode: row.get(12)?,
+        prize_second_cents: row.get(13)?,
+        prize_third_cents: row.get(14)?,
+        created_at: row.get(15)?,
+        participant_count: row.get(16)?,
+        joined: row.get(17)?,
     })
 }
 
@@ -1859,8 +1863,9 @@ fn row_to_event(row: &rusqlite::Row) -> rusqlite::Result<GameEvent> {
 /// anonymous browsing, like `list_games` does) — every query using this
 /// constant binds it first.
 const EVENT_COLUMNS: &str = "events.id, events.host_user_id, users.display_name, events.title, \
-    events.description, events.catalog_game_id, catalog_games.title, events.registration_deadline, \
-    events.starts_at, events.ends_at, events.prize_cents, events.created_at, \
+    events.description, events.catalog_game_id, catalog_games.title, events.custom_game_title, \
+    events.registration_deadline, events.starts_at, events.ends_at, events.prize_cents, \
+    events.prize_mode, events.prize_second_cents, events.prize_third_cents, events.created_at, \
     (SELECT COUNT(*) FROM event_participants WHERE event_id = events.id), \
     EXISTS(SELECT 1 FROM event_participants WHERE event_id = events.id AND user_id = ?1) AS joined";
 
@@ -1915,26 +1920,38 @@ pub async fn create_event(
     if req.title.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "Titel darf nicht leer sein".to_string()));
     }
-    if req.prize_cents < 0 {
+    if req.prize_cents < 0 || req.prize_second_cents < 0 || req.prize_third_cents < 0 {
         return Err((
             StatusCode::BAD_REQUEST,
             "Preisgeld darf nicht negativ sein".to_string(),
         ));
     }
+    if req.prize_mode != "winner_takes_all" && req.prize_mode != "split" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Ungültiger Preisgeld-Modus".to_string(),
+        ));
+    }
+    let prize_second_cents = if req.prize_mode == "split" { req.prize_second_cents } else { 0 };
+    let prize_third_cents = if req.prize_mode == "split" { req.prize_third_cents } else { 0 };
 
     let conn = state.db.lock().map_err(internal_error)?;
     conn.execute(
-        "INSERT INTO events (host_user_id, title, description, catalog_game_id, registration_deadline, starts_at, ends_at, prize_cents) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO events (host_user_id, title, description, catalog_game_id, custom_game_title, registration_deadline, starts_at, ends_at, prize_cents, prize_mode, prize_second_cents, prize_third_cents) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             user_id,
             req.title.trim(),
             req.description,
             req.catalog_game_id,
+            req.custom_game_title.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
             req.registration_deadline,
             req.starts_at,
             req.ends_at,
-            req.prize_cents
+            req.prize_cents,
+            req.prize_mode,
+            prize_second_cents,
+            prize_third_cents
         ],
     )
     .map_err(internal_error)?;
