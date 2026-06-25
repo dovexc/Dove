@@ -90,6 +90,16 @@ export interface FriendRequests {
   outgoing: UserSummary[];
 }
 
+export interface Notification {
+  id: number;
+  kind: string;
+  message: string;
+  event_id: number | null;
+  actor_user_id: number | null;
+  is_read: boolean;
+  created_at: string;
+}
+
 export interface CatalogGame {
   id: number;
   publisher_user_id: number;
@@ -161,6 +171,11 @@ export interface GameEvent {
   prize_mode: "winner_takes_all" | "split";
   prize_second_cents: number;
   prize_third_cents: number;
+  team_size: number;
+  max_entries: number | null;
+  format: "knockout" | "all";
+  is_private: boolean;
+  join_code: string | null;
   created_at: string;
   participant_count: number;
   joined: boolean;
@@ -178,6 +193,38 @@ export interface NewGameEvent {
   prize_mode: "winner_takes_all" | "split";
   prize_second_cents: number;
   prize_third_cents: number;
+  team_size: number;
+  max_entries: number | null;
+  format: "knockout" | "all";
+  is_private: boolean;
+}
+
+export interface EventTeam {
+  id: number;
+  event_id: number;
+  name: string;
+  created_by: number;
+  member_count: number;
+  members: UserSummary[];
+}
+
+export interface BracketEntry {
+  id: number;
+  name: string;
+}
+
+export interface EventMatch {
+  id: number;
+  round: number;
+  slot: number;
+  entry_a_id: number | null;
+  entry_b_id: number | null;
+  winner_entry_id: number | null;
+}
+
+export interface EventBracket {
+  entries: BracketEntry[];
+  matches: EventMatch[];
 }
 
 export interface StorageUsage {

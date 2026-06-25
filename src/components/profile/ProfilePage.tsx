@@ -1,10 +1,15 @@
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuthStore } from "../../authStore";
 import { API_BASE } from "../../authStore";
+import { useFriendsStore } from "../../friendsStore";
+import { useLibraryStore } from "../../store";
+import { convertFileSrc, formatPlaytime } from "../../utils";
 
 interface Props {
-  onClose: () => void;
+  onOpenFriends: () => void;
 }
+
+const FRIENDS_PREVIEW_COUNT = 5;
 
 function resolveUrl(url: string | null): string | null {
   if (!url) return null;
@@ -20,7 +25,19 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-export function ProfilePage({ onClose }: Props) {
+function formatRelativeTime(value: string): string {
+  const diffMs = Date.now() - new Date(value).getTime();
+  const days = Math.floor(diffMs / 86_400_000);
+  if (days <= 0) return "heute";
+  if (days === 1) return "vor 1 Tag";
+  if (days < 30) return `vor ${days} Tagen`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return months === 1 ? "vor 1 Monat" : `vor ${months} Monaten`;
+  const years = Math.floor(months / 12);
+  return years === 1 ? "vor 1 Jahr" : `vor ${years} Jahren`;
+}
+
+export function ProfilePage({ onOpenFriends }: Props) {
   const user = useAuthStore((s) => s.user);
   const screenshots = useAuthStore((s) => s.screenshots);
   const loading = useAuthStore((s) => s.loading);
@@ -31,8 +48,18 @@ export function ProfilePage({ onClose }: Props) {
   const addScreenshot = useAuthStore((s) => s.addScreenshot);
   const deleteScreenshot = useAuthStore((s) => s.deleteScreenshot);
   const clearError = useAuthStore((s) => s.clearError);
-  const logout = useAuthStore((s) => s.logout);
 
+  const friends = useFriendsStore((s) => s.friends);
+  const loadingFriends = useFriendsStore((s) => s.loadingFriends);
+  const fetchFriends = useFriendsStore((s) => s.fetchFriends);
+
+  const games = useLibraryStore((s) => s.games);
+
+  useEffect(() => {
+    fetchFriends();
+  }, [fetchFriends]);
+
+  const [editMode, setEditMode] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [name, setName] = useState(user?.display_name ?? "");
   const [editingBio, setEditingBio] = useState(false);
@@ -41,6 +68,19 @@ export function ProfilePage({ onClose }: Props) {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
   const screenshotInputRef = useRef<HTMLInputElement>(null);
+
+  const totalPlaytimeSeconds = useMemo(
+    () => games.reduce((sum, g) => sum + g.total_playtime_seconds, 0),
+    [games]
+  );
+
+  const lastPlayedGame = useMemo(
+    () =>
+      games
+        .filter((g): g is typeof g & { last_played_at: string } => Boolean(g.last_played_at))
+        .sort((a, b) => (a.last_played_at < b.last_played_at ? 1 : -1))[0] ?? null,
+    [games]
+  );
 
   if (!user) return null;
 
@@ -80,36 +120,31 @@ export function ProfilePage({ onClose }: Props) {
   const backgroundUrl = resolveUrl(user.background_url);
   const avatarUrl = resolveUrl(user.avatar_url);
 
+  const stats: { value: string; label: string; color: string }[] = [
+    { value: String(games.length), label: "Spiele", color: "#66c0f4" },
+    { value: String(friends.length), label: "Freunde", color: "#9fb2c2" },
+    { value: formatPlaytime(totalPlaytimeSeconds), label: "Spielzeit", color: "#a4d007" },
+  ];
+
   return (
-    <div className="h-full overflow-y-auto bg-zinc-950">
+    <div className="h-full overflow-y-auto bg-[#0b1016]">
       <div
-        className="relative h-56 w-full bg-zinc-800 bg-cover bg-center"
-        style={backgroundUrl ? { backgroundImage: `url(${backgroundUrl})` } : undefined}
+        className="relative h-[280px] w-full bg-cover bg-center"
+        style={{
+          background: backgroundUrl
+            ? `url(${backgroundUrl}) center/cover`
+            : "linear-gradient(125deg,#1c3a5e 0%,#2c1f4a 50%,#3a2151 100%)",
+        }}
       >
-        <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/40 to-transparent" />
-        <div className="absolute right-4 top-4 flex gap-2">
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0b1016]/15 via-[#0b1016]/55 to-[#0b1016]" />
+        {editMode && (
           <button
-            onClick={() => {
-              logout();
-              onClose();
-            }}
-            className="rounded bg-black/50 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-900/70"
+            onClick={() => backgroundInputRef.current?.click()}
+            className="absolute bottom-4 right-8 rounded-md bg-black/40 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-black/60"
           >
-            Abmelden
+            Hintergrund ändern
           </button>
-          <button
-            onClick={onClose}
-            className="rounded bg-black/50 px-3 py-1.5 text-sm font-semibold text-white hover:bg-black/70"
-          >
-            Schließen
-          </button>
-        </div>
-        <button
-          onClick={() => backgroundInputRef.current?.click()}
-          className="absolute bottom-4 right-4 rounded bg-black/50 px-3 py-1.5 text-sm font-semibold text-white hover:bg-black/70"
-        >
-          Hintergrund ändern
-        </button>
+        )}
         <input
           ref={backgroundInputRef}
           type="file"
@@ -119,22 +154,31 @@ export function ProfilePage({ onClose }: Props) {
         />
       </div>
 
-      <div className="mx-auto max-w-3xl px-6 pb-12">
-        <div className="-mt-12">
-          <div className="group relative h-24 w-24 shrink-0 overflow-hidden rounded-full ring-4 ring-zinc-950">
-            {avatarUrl ? (
-              <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center bg-zinc-700 text-2xl font-bold text-zinc-300">
-                {user.display_name.slice(0, 1).toUpperCase()}
-              </div>
-            )}
-            <button
-              onClick={() => avatarInputRef.current?.click()}
-              className="absolute inset-0 flex items-center justify-center bg-black/60 text-xs font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100"
+      <div className="mx-auto max-w-[1180px] px-10 pb-[90px]">
+        <div className="relative z-[2] -mt-[72px] flex items-end gap-6">
+          <div className="group relative shrink-0">
+            <div
+              className="flex h-[148px] w-[148px] items-center justify-center rounded-3xl border-4 border-[#0b1016] text-5xl font-black text-white shadow-2xl"
+              style={{ background: "linear-gradient(135deg,#3aa0ff,#7b4397)" }}
             >
-              Ändern
-            </button>
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="" className="h-full w-full rounded-3xl object-cover" />
+              ) : (
+                user.display_name.slice(0, 1).toUpperCase()
+              )}
+            </div>
+            <span
+              className="absolute bottom-2 right-2 h-[22px] w-[22px] rounded-full border-4 border-[#0b1016] bg-[#5fd17a]"
+              style={{ boxShadow: "0 0 10px #5fd17a" }}
+            />
+            {editMode && (
+              <button
+                onClick={() => avatarInputRef.current?.click()}
+                className="absolute inset-0 flex items-center justify-center rounded-3xl bg-black/60 text-xs font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100"
+              >
+                Ändern
+              </button>
+            )}
             <input
               ref={avatarInputRef}
               type="file"
@@ -143,47 +187,55 @@ export function ProfilePage({ onClose }: Props) {
               onChange={handleAvatarChange}
             />
           </div>
-        </div>
 
-        <div className="mt-3">
-          {editingName ? (
-            <div className="flex gap-2">
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                autoFocus
-                className="rounded bg-zinc-800 px-3 py-1.5 text-lg font-bold text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
-              />
-              <button
-                onClick={saveName}
-                className="rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
-              >
-                Speichern
-              </button>
-              <button
-                onClick={() => {
-                  setName(user.display_name);
-                  setEditingName(false);
-                }}
-                className="rounded px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-800"
-              >
-                Abbrechen
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <h2 className="py-1 text-2xl font-bold leading-relaxed text-zinc-100">
-                {user.display_name}
-              </h2>
-              <button
-                onClick={() => setEditingName(true)}
-                className="text-xs text-sky-400 hover:underline"
-              >
-                Bearbeiten
-              </button>
-            </div>
-          )}
-          <p className="text-sm text-zinc-500">{user.email}</p>
+          <div className="flex-1 pb-2">
+            {editingName ? (
+              <div className="flex gap-2">
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  autoFocus
+                  className="rounded bg-zinc-800 px-3 py-1.5 text-2xl font-bold text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                />
+                <button
+                  onClick={saveName}
+                  className="rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
+                >
+                  Speichern
+                </button>
+                <button
+                  onClick={() => {
+                    setName(user.display_name);
+                    setEditingName(false);
+                  }}
+                  className="rounded px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-800"
+                >
+                  Abbrechen
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-3.5">
+                <h1
+                  onClick={() => editMode && setEditingName(true)}
+                  className={`text-[38px] font-black tracking-tight text-white ${editMode ? "cursor-pointer hover:underline" : ""}`}
+                  title={editMode ? "Klicken, um den Namen zu ändern" : undefined}
+                >
+                  {user.display_name}
+                </h1>
+                <button
+                  onClick={() => setEditMode((v) => !v)}
+                  className={`rounded-md px-3.5 py-1.5 text-[13px] font-bold ${
+                    editMode
+                      ? "bg-sky-600 text-white hover:bg-sky-500"
+                      : "border border-sky-400/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 hover:text-white"
+                  }`}
+                >
+                  {editMode ? "Fertig" : "Bearbeiten"}
+                </button>
+              </div>
+            )}
+            <p className="mt-1.5 text-[15px] text-zinc-500">{user.email}</p>
+          </div>
         </div>
 
         {error && (
@@ -195,90 +247,212 @@ export function ProfilePage({ onClose }: Props) {
           </div>
         )}
 
-        <div className="mt-8">
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Über mich
-          </h3>
-          {editingBio ? (
-            <div className="flex flex-col gap-2">
-              <textarea
-                value={bio}
-                onChange={(e) => setBio(e.target.value)}
-                rows={4}
-                autoFocus
-                placeholder="Erzähl etwas über dich..."
-                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
-              />
-              <div className="flex gap-2">
+        <div className="mt-7 flex overflow-hidden rounded-[13px] border border-white/[0.06] bg-gradient-to-b from-[#161f2a] to-[#121a23]">
+          {stats.map((s, i) => (
+            <div
+              key={s.label}
+              className={`flex-1 px-6 py-5 ${i < stats.length - 1 ? "border-r border-white/[0.05]" : ""}`}
+            >
+              <div className="text-[28px] font-black tracking-tight" style={{ color: s.color }}>
+                {s.value}
+              </div>
+              <div className="mt-1 text-xs font-bold uppercase tracking-[1.5px] text-[#6b7884]">
+                {s.label}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-[30px] grid grid-cols-1 gap-6 lg:grid-cols-[1.6fr_1fr]">
+          <div className="flex flex-col gap-[30px]">
+            <div>
+              <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+                Über mich
+              </div>
+              {editingBio ? (
+                <div className="flex flex-col gap-2">
+                  <textarea
+                    value={bio}
+                    onChange={(e) => setBio(e.target.value)}
+                    rows={4}
+                    autoFocus
+                    placeholder="Erzähl etwas über dich..."
+                    className="rounded-[11px] bg-[#141d27] px-4 py-3 text-[15px] text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={saveBio}
+                      className="rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
+                    >
+                      Speichern
+                    </button>
+                    <button
+                      onClick={() => {
+                        setBio(user.bio ?? "");
+                        setEditingBio(false);
+                      }}
+                      className="rounded px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-800"
+                    >
+                      Abbrechen
+                    </button>
+                  </div>
+                </div>
+              ) : (
                 <button
-                  onClick={saveBio}
-                  className="rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
+                  onClick={() => setEditingBio(true)}
+                  className="block w-full rounded-[11px] border border-dashed border-white/10 bg-gradient-to-b from-[#141d27] to-[#111923] px-[22px] py-[22px] text-left text-[15px] text-[#7b8794] transition-colors hover:border-sky-400/40 hover:bg-[#16212d]"
                 >
-                  Speichern
+                  {user.bio || "Klicke hier, um eine Beschreibung hinzuzufügen."}
                 </button>
+              )}
+            </div>
+
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+                  Screenshots
+                </div>
                 <button
-                  onClick={() => {
-                    setBio(user.bio ?? "");
-                    setEditingBio(false);
-                  }}
-                  className="rounded px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-800"
+                  onClick={() => screenshotInputRef.current?.click()}
+                  disabled={loading}
+                  className="rounded-md border border-sky-400/30 bg-sky-500/10 px-3.5 py-1.5 text-[13px] font-bold text-sky-300 hover:bg-sky-500/20 hover:text-white disabled:opacity-50"
                 >
-                  Abbrechen
+                  + Screenshot hinzufügen
+                </button>
+                <input
+                  ref={screenshotInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleScreenshotChange}
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                {screenshots.map((s) => (
+                  <div
+                    key={s.id}
+                    className="group relative aspect-[16/10] overflow-hidden rounded-[9px] bg-zinc-900"
+                  >
+                    <img
+                      src={resolveUrl(s.image_url) ?? ""}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                    <button
+                      onClick={() => deleteScreenshot(s.id)}
+                      className="absolute right-1.5 top-1.5 rounded bg-black/60 px-2 py-1 text-xs font-semibold text-white opacity-0 transition-opacity hover:bg-red-900/80 group-hover:opacity-100"
+                    >
+                      Entfernen
+                    </button>
+                  </div>
+                ))}
+                <button
+                  onClick={() => screenshotInputRef.current?.click()}
+                  className="flex aspect-[16/10] items-center justify-center rounded-[9px] border border-dashed border-white/10 bg-white/[0.02] text-3xl font-light text-[#3e4a57] transition-colors hover:border-sky-400/40 hover:text-[#5b8db8]"
+                >
+                  +
                 </button>
               </div>
             </div>
-          ) : (
-            <button
-              onClick={() => setEditingBio(true)}
-              className="block w-full rounded bg-zinc-900 px-4 py-3 text-left text-sm text-zinc-300 hover:bg-zinc-800"
-            >
-              {user.bio || "Klicke hier, um eine Beschreibung hinzuzufügen."}
-            </button>
-          )}
-        </div>
-
-        <div className="mt-8">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
-              Screenshots
-            </h3>
-            <button
-              onClick={() => screenshotInputRef.current?.click()}
-              disabled={loading}
-              className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
-            >
-              + Screenshot hinzufügen
-            </button>
-            <input
-              ref={screenshotInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleScreenshotChange}
-            />
           </div>
 
-          {screenshots.length === 0 ? (
-            <p className="text-sm text-zinc-500">Noch keine Screenshots hinzugefügt.</p>
-          ) : (
-            <div className="grid grid-cols-3 gap-3">
-              {screenshots.map((s) => (
-                <div key={s.id} className="group relative aspect-video overflow-hidden rounded bg-zinc-900">
-                  <img
-                    src={resolveUrl(s.image_url) ?? ""}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
+          <div className="flex flex-col gap-[30px]">
+            <div>
+              <button
+                onClick={onOpenFriends}
+                className="mb-3 flex w-full items-center justify-between text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8] hover:text-sky-300"
+              >
+                Freunde ({friends.length})
+                <span aria-hidden className="text-base">
+                  ›
+                </span>
+              </button>
+              {loadingFriends ? (
+                <p className="text-sm text-zinc-500">Lädt...</p>
+              ) : friends.length === 0 ? (
+                <div className="rounded-[11px] border border-white/[0.06] bg-gradient-to-b from-[#141d27] to-[#111923] px-[22px] py-[34px] text-center">
+                  <div className="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-[14px] bg-white/[0.04] text-2xl text-[#3e4a57]">
+                    👥
+                  </div>
+                  <div className="mb-4 text-sm text-[#7b8794]">Noch keine Freunde hinzugefügt.</div>
                   <button
-                    onClick={() => deleteScreenshot(s.id)}
-                    className="absolute right-1.5 top-1.5 rounded bg-black/60 px-2 py-1 text-xs font-semibold text-white opacity-0 transition-opacity hover:bg-red-900/80 group-hover:opacity-100"
+                    onClick={onOpenFriends}
+                    className="rounded-lg px-[22px] py-2.5 text-sm font-bold text-white shadow-lg"
+                    style={{ background: "linear-gradient(180deg,#3aa0ff,#2475c7)" }}
                   >
-                    Entfernen
+                    Freunde finden
                   </button>
                 </div>
-              ))}
+              ) : (
+                <div className="rounded-[11px] border border-white/[0.06] bg-gradient-to-b from-[#141d27] to-[#111923] p-4">
+                  <div className="grid grid-cols-5 gap-2">
+                    {friends.slice(0, FRIENDS_PREVIEW_COUNT).map((f) => {
+                      const fAvatarUrl = resolveUrl(f.avatar_url);
+                      return (
+                        <button
+                          key={f.id}
+                          onClick={onOpenFriends}
+                          className="flex flex-col items-center gap-1.5 rounded p-1 text-center hover:bg-white/5"
+                        >
+                          <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full bg-zinc-700">
+                            {fAvatarUrl ? (
+                              <img src={fAvatarUrl} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center text-base font-bold text-zinc-300">
+                                {f.display_name.slice(0, 1).toUpperCase()}
+                              </div>
+                            )}
+                            <span
+                              className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-[#141d27]"
+                              style={{ background: f.online ? "#5fd17a" : "#5b6671" }}
+                            />
+                          </div>
+                          <span className="w-full truncate text-[11px] text-zinc-300">
+                            {f.display_name}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
-          )}
+
+            <div>
+              <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+                Letzte Aktivität
+              </div>
+              {lastPlayedGame ? (
+                <div className="flex items-center gap-3.5 rounded-[11px] border border-white/[0.06] bg-gradient-to-b from-[#141d27] to-[#111923] px-5 py-[18px]">
+                  <div className="h-[46px] w-[46px] shrink-0 overflow-hidden rounded-[11px] bg-zinc-800">
+                    {lastPlayedGame.cover_path ? (
+                      <img
+                        src={convertFileSrc(lastPlayedGame.cover_path)}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div
+                        className="h-full w-full"
+                        style={{ background: "linear-gradient(135deg,#2b5876,#4e4376)" }}
+                      />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-bold text-[#f0f6fb]">
+                      {lastPlayedGame.name}
+                    </div>
+                    <div className="mt-0.5 text-[13px] text-[#7b8794]">
+                      Zuletzt gespielt · {formatRelativeTime(lastPlayedGame.last_played_at)}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-zinc-500">Noch keine Aktivität vorhanden.</p>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

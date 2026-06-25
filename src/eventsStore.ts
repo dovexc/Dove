@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { API_BASE, getAuthHeader, useAuthStore } from "./authStore";
-import type { GameEvent, NewGameEvent, UserSummary } from "./types";
+import type { EventBracket, EventTeam, GameEvent, NewGameEvent, UserSummary } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   const text = await response.text();
@@ -13,16 +13,40 @@ interface EventsState {
   error: string | null;
   joiningId: number | null;
   detailEvent: GameEvent | null;
+  detailEventCode: string | null;
   detailParticipants: UserSummary[];
+  detailTeams: EventTeam[];
+  detailBracket: EventBracket | null;
   detailLoading: boolean;
+  teamActionPending: boolean;
   fetchEvents: () => Promise<void>;
-  createEvent: (event: NewGameEvent) => Promise<void>;
+  createEvent: (event: NewGameEvent) => Promise<GameEvent | null>;
   deleteEvent: (eventId: number) => Promise<void>;
   joinEvent: (eventId: number) => Promise<void>;
   leaveEvent: (eventId: number) => Promise<void>;
+  createTeam: (eventId: number, name: string) => Promise<void>;
+  joinTeam: (eventId: number, teamId: number) => Promise<void>;
+  startTournament: (eventId: number) => Promise<void>;
+  setMatchWinner: (eventId: number, matchId: number, winnerEntryId: number) => Promise<void>;
+  findEventByCode: (code: string) => Promise<void>;
   clearError: () => void;
   openEventDetail: (eventId: number) => Promise<void>;
   closeEventDetail: () => void;
+}
+
+async function fetchDetailExtras(eventId: number) {
+  const [eventRes, participantsRes, teamsRes, bracketRes] = await Promise.all([
+    fetch(`${API_BASE}/api/events/${eventId}`, { headers: getAuthHeader() }),
+    fetch(`${API_BASE}/api/events/${eventId}/participants`),
+    fetch(`${API_BASE}/api/events/${eventId}/teams`),
+    fetch(`${API_BASE}/api/events/${eventId}/bracket`),
+  ]);
+  if (!eventRes.ok) throw new Error(await errorMessage(eventRes));
+  const detailEvent: GameEvent = await eventRes.json();
+  const detailParticipants: UserSummary[] = participantsRes.ok ? await participantsRes.json() : [];
+  const detailTeams: EventTeam[] = teamsRes.ok ? await teamsRes.json() : [];
+  const detailBracket: EventBracket | null = bracketRes.ok ? await bracketRes.json() : null;
+  return { detailEvent, detailParticipants, detailTeams, detailBracket };
 }
 
 export const useEventsStore = create<EventsState>((set, get) => ({
@@ -31,8 +55,12 @@ export const useEventsStore = create<EventsState>((set, get) => ({
   error: null,
   joiningId: null,
   detailEvent: null,
+  detailEventCode: null,
   detailParticipants: [],
+  detailTeams: [],
+  detailBracket: null,
   detailLoading: false,
+  teamActionPending: false,
 
   fetchEvents: async () => {
     set({ loading: true, error: null });
@@ -55,9 +83,12 @@ export const useEventsStore = create<EventsState>((set, get) => ({
         body: JSON.stringify(event),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
+      const created: GameEvent = await response.json();
       await get().fetchEvents();
+      return created;
     } catch (e) {
       set({ error: String(e) });
+      return null;
     }
   },
 
@@ -78,9 +109,11 @@ export const useEventsStore = create<EventsState>((set, get) => ({
   joinEvent: async (eventId) => {
     set({ error: null, joiningId: eventId });
     try {
+      const code = get().detailEvent?.id === eventId ? get().detailEventCode : null;
       const response = await fetch(`${API_BASE}/api/events/${eventId}/join`, {
         method: "POST",
-        headers: getAuthHeader(),
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify({ code }),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
       const bump = (e: GameEvent) =>
@@ -124,6 +157,12 @@ export const useEventsStore = create<EventsState>((set, get) => ({
           state.detailEvent?.id === eventId && me
             ? state.detailParticipants.filter((p) => p.id !== me.id)
             : state.detailParticipants,
+        detailTeams:
+          state.detailEvent?.id === eventId && me
+            ? state.detailTeams
+                .map((t) => ({ ...t, members: t.members.filter((m) => m.id !== me.id) }))
+                .filter((t) => t.members.length > 0)
+            : state.detailTeams,
       }));
     } catch (e) {
       set({ error: String(e) });
@@ -132,25 +171,116 @@ export const useEventsStore = create<EventsState>((set, get) => ({
     }
   },
 
-  clearError: () => set({ error: null }),
+  createTeam: async (eventId, name) => {
+    set({ error: null, teamActionPending: true });
+    try {
+      const code = get().detailEvent?.id === eventId ? get().detailEventCode : null;
+      const response = await fetch(`${API_BASE}/api/events/${eventId}/teams`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify({ name, code }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const extras = await fetchDetailExtras(eventId);
+      set(extras);
+      await get().fetchEvents();
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ teamActionPending: false });
+    }
+  },
 
-  openEventDetail: async (eventId) => {
+  joinTeam: async (eventId, teamId) => {
+    set({ error: null, teamActionPending: true });
+    try {
+      const code = get().detailEvent?.id === eventId ? get().detailEventCode : null;
+      const response = await fetch(`${API_BASE}/api/events/${eventId}/teams/${teamId}/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify({ code }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const extras = await fetchDetailExtras(eventId);
+      set(extras);
+      await get().fetchEvents();
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ teamActionPending: false });
+    }
+  },
+
+  startTournament: async (eventId) => {
+    set({ error: null, teamActionPending: true });
+    try {
+      const response = await fetch(`${API_BASE}/api/events/${eventId}/start`, {
+        method: "POST",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const detailBracket: EventBracket = await response.json();
+      set({ detailBracket });
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ teamActionPending: false });
+    }
+  },
+
+  setMatchWinner: async (eventId, matchId, winnerEntryId) => {
+    set({ error: null, teamActionPending: true });
+    try {
+      const response = await fetch(`${API_BASE}/api/events/${eventId}/matches/${matchId}/winner`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify({ winner_entry_id: winnerEntryId }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const detailBracket: EventBracket = await response.json();
+      set({ detailBracket });
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ teamActionPending: false });
+    }
+  },
+
+  findEventByCode: async (code) => {
     set({ detailLoading: true, error: null });
     try {
-      const [eventRes, participantsRes] = await Promise.all([
-        fetch(`${API_BASE}/api/events/${eventId}`, { headers: getAuthHeader() }),
-        fetch(`${API_BASE}/api/events/${eventId}/participants`),
-      ]);
-      if (!eventRes.ok) throw new Error(await errorMessage(eventRes));
-      const detailEvent: GameEvent = await eventRes.json();
-      const detailParticipants: UserSummary[] = participantsRes.ok
-        ? await participantsRes.json()
-        : [];
-      set({ detailEvent, detailParticipants, detailLoading: false });
+      const response = await fetch(`${API_BASE}/api/events/by-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify({ code }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const found: GameEvent = await response.json();
+      const extras = await fetchDetailExtras(found.id);
+      set({ ...extras, detailEventCode: code.trim().toUpperCase(), detailLoading: false });
     } catch (e) {
       set({ error: String(e), detailLoading: false });
     }
   },
 
-  closeEventDetail: () => set({ detailEvent: null, detailParticipants: [] }),
+  clearError: () => set({ error: null }),
+
+  openEventDetail: async (eventId) => {
+    set({ detailLoading: true, error: null, detailEventCode: null });
+    try {
+      const extras = await fetchDetailExtras(eventId);
+      set({ ...extras, detailLoading: false });
+    } catch (e) {
+      set({ error: String(e), detailLoading: false });
+    }
+  },
+
+  closeEventDetail: () =>
+    set({
+      detailEvent: null,
+      detailEventCode: null,
+      detailParticipants: [],
+      detailTeams: [],
+      detailBracket: null,
+    }),
 }));

@@ -141,6 +141,14 @@ pub struct GameEvent {
     pub prize_mode: String,
     pub prize_second_cents: i64,
     pub prize_third_cents: i64,
+    pub team_size: i64,
+    pub max_entries: Option<i64>,
+    pub format: String,
+    pub is_private: bool,
+    /// Only populated when the requesting user is the host — see
+    /// `CASE WHEN host_user_id = ?1` in `EVENT_COLUMNS`. Everyone else gets
+    /// `null` so the code can't be read back off a public event payload.
+    pub join_code: Option<String>,
     pub created_at: String,
     pub participant_count: i64,
     pub joined: bool,
@@ -161,6 +169,77 @@ pub struct NewGameEvent {
     pub prize_second_cents: i64,
     #[serde(default)]
     pub prize_third_cents: i64,
+    #[serde(default = "default_team_size")]
+    pub team_size: i64,
+    #[serde(default)]
+    pub max_entries: Option<i64>,
+    #[serde(default = "default_event_format")]
+    pub format: String,
+    #[serde(default)]
+    pub is_private: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct JoinWithCode {
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct JoinByCodeRequest {
+    pub code: String,
+}
+
+fn default_team_size() -> i64 {
+    1
+}
+
+fn default_event_format() -> String {
+    "knockout".to_string()
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct EventTeam {
+    pub id: i64,
+    pub event_id: i64,
+    pub name: String,
+    pub created_by: i64,
+    pub member_count: i64,
+    pub members: Vec<UserSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewEventTeam {
+    pub name: String,
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct EventMatch {
+    pub id: i64,
+    pub round: i64,
+    pub slot: i64,
+    pub entry_a_id: Option<i64>,
+    pub entry_b_id: Option<i64>,
+    pub winner_entry_id: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct BracketEntry {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct EventBracket {
+    pub entries: Vec<BracketEntry>,
+    pub matches: Vec<EventMatch>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetMatchWinner {
+    pub winner_entry_id: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -225,4 +304,15 @@ pub struct SetPlayingRequest {
 pub struct FriendRequests {
     pub incoming: Vec<UserSummary>,
     pub outgoing: Vec<UserSummary>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct Notification {
+    pub id: i64,
+    pub kind: String,
+    pub message: String,
+    pub event_id: Option<i64>,
+    pub actor_user_id: Option<i64>,
+    pub is_read: bool,
+    pub created_at: String,
 }

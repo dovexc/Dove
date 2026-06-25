@@ -22,6 +22,8 @@ import { SettingsView } from "./components/settings/SettingsView";
 import { AdminModerationView } from "./components/admin/AdminModerationView";
 import { WishlistPage } from "./components/store/WishlistPage";
 import { EventsPage } from "./components/events/EventsPage";
+import { NotificationsBell } from "./components/NotificationsBell";
+import { useEventsStore } from "./eventsStore";
 
 const SIDEBAR_WIDTH_KEY = "library_sidebar_width";
 const SIDEBAR_MIN_WIDTH = 180;
@@ -75,6 +77,7 @@ function App() {
   const authToken = useAuthStore((s) => s.token);
   const hydrateUser = useAuthStore((s) => s.hydrateUser);
   const logout = useAuthStore((s) => s.logout);
+  const openEventDetail = useEventsStore((s) => s.openEventDetail);
 
   const games = useLibraryStore((s) => s.games);
   const selectedGameId = useLibraryStore((s) => s.selectedGameId);
@@ -232,6 +235,14 @@ function App() {
             </>
           )}
           {authToken && authUser ? (
+            <NotificationsBell
+              onOpenEvent={(eventId) => {
+                setActiveTab("events");
+                openEventDetail(eventId);
+              }}
+            />
+          ) : null}
+          {authToken && authUser ? (
             <UserMenu
               displayName={authUser.display_name}
               isAdmin={authUser.is_admin}
@@ -334,7 +345,7 @@ function App() {
         </div>
       ) : activeTab === "profile" ? (
         <div className="flex-1 overflow-hidden">
-          <ProfilePage onClose={() => setActiveTab("library")} />
+          <ProfilePage onOpenFriends={() => setActiveTab("friends")} />
         </div>
       ) : activeTab === "friends" ? (
         <div className="flex-1 overflow-hidden">

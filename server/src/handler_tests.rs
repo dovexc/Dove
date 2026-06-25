@@ -311,6 +311,565 @@ async fn admin_cannot_demote_themselves() {
     assert_eq!(result.unwrap_err().0, StatusCode::BAD_REQUEST);
 }
 
+// ---- notifications ----
+
+#[tokio::test]
+async fn friend_request_and_accept_each_notify_the_other_party() {
+    let state = AppState::for_tests();
+    let alice = register_user(&state, "nalice@test.de", "password123", "Alice").await;
+    let bob = register_user(&state, "nbob@test.de", "password123", "Bob").await;
+
+    send_friend_request(State(state.clone()), AuthUser(alice.id), Path(bob.id))
+        .await
+        .unwrap();
+    let bob_notifications = list_notifications(State(state.clone()), AuthUser(bob.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(bob_notifications.len(), 1);
+    assert_eq!(bob_notifications[0].kind, "friend_request");
+    assert!(!bob_notifications[0].is_read);
+
+    accept_friend_request(State(state.clone()), AuthUser(bob.id), Path(alice.id))
+        .await
+        .unwrap();
+    let alice_notifications = list_notifications(State(state.clone()), AuthUser(alice.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(alice_notifications.len(), 1);
+    assert_eq!(alice_notifications[0].kind, "friend_accepted");
+
+    // Marking one as read doesn't touch the other user's notifications.
+    mark_notification_read(
+        State(state.clone()),
+        AuthUser(bob.id),
+        Path(bob_notifications[0].id),
+    )
+    .await
+    .unwrap();
+    let bob_after = list_notifications(State(state.clone()), AuthUser(bob.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(bob_after[0].is_read);
+    let alice_after = list_notifications(State(state.clone()), AuthUser(alice.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(!alice_after[0].is_read);
+
+    mark_all_notifications_read(State(state.clone()), AuthUser(alice.id))
+        .await
+        .unwrap();
+    let alice_final = list_notifications(State(state.clone()), AuthUser(alice.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(alice_final.iter().all(|n| n.is_read));
+}
+
+#[tokio::test]
+async fn match_result_notifies_both_sides_and_team_join_notifies_teammates() {
+    let state = AppState::for_tests();
+    let host = register_user(&state, "mnhost@test.de", "password123", "Host").await;
+    let a1 = register_user(&state, "mna1@test.de", "password123", "A1").await;
+    let a2 = register_user(&state, "mna2@test.de", "password123", "A2").await;
+    let b1 = register_user(&state, "mnb1@test.de", "password123", "B1").await;
+    let b2 = register_user(&state, "mnb2@test.de", "password123", "B2").await;
+
+    let event = create_event(
+        State(state.clone()),
+        AuthUser(host.id),
+        Json(new_event_req("Notify Cup", 2, None, "knockout", false)),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    let team_a = create_event_team(
+        State(state.clone()),
+        AuthUser(a1.id),
+        Path(event.id),
+        Json(NewEventTeam { name: "Team A".to_string(), code: None }),
+    )
+    .await
+    .unwrap()
+    .0;
+    let _ = join_event_team(
+        State(state.clone()),
+        AuthUser(a2.id),
+        Path((event.id, team_a.id)),
+        Json(JoinWithCode::default()),
+    )
+    .await
+    .unwrap();
+    // A1 (the team creator) should be notified that A2 joined.
+    let a1_notifications = list_notifications(State(state.clone()), AuthUser(a1.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(a1_notifications.iter().any(|n| n.kind == "team_joined"));
+
+    let team_b = create_event_team(
+        State(state.clone()),
+        AuthUser(b1.id),
+        Path(event.id),
+        Json(NewEventTeam { name: "Team B".to_string(), code: None }),
+    )
+    .await
+    .unwrap()
+    .0;
+    let _ = join_event_team(
+        State(state.clone()),
+        AuthUser(b2.id),
+        Path((event.id, team_b.id)),
+        Json(JoinWithCode::default()),
+    )
+    .await
+    .unwrap();
+
+    let bracket = start_event_tournament(State(state.clone()), AuthUser(host.id), Path(event.id))
+        .await
+        .unwrap()
+        .0;
+    // Everyone gets a "tournament started" notification.
+    let a2_notifications = list_notifications(State(state.clone()), AuthUser(a2.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(a2_notifications.iter().any(|n| n.kind == "tournament_started"));
+
+    let only_match = &bracket.matches[0];
+    let _ = set_match_winner(
+        State(state.clone()),
+        AuthUser(host.id),
+        Path((event.id, only_match.id)),
+        Json(SetMatchWinner { winner_entry_id: team_a.id }),
+    )
+    .await
+    .unwrap();
+
+    let a1_final = list_notifications(State(state.clone()), AuthUser(a1.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(a1_final.iter().any(|n| n.kind == "match_won"));
+    let b1_final = list_notifications(State(state.clone()), AuthUser(b1.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(b1_final.iter().any(|n| n.kind == "match_lost"));
+}
+
+#[tokio::test]
+async fn deleting_an_event_cleans_up_participants_teams_matches_and_notifications() {
+    let state = AppState::for_tests();
+    let host = register_user(&state, "delhost@test.de", "password123", "Host").await;
+    let p1 = register_user(&state, "del1@test.de", "password123", "P1").await;
+    let p2 = register_user(&state, "del2@test.de", "password123", "P2").await;
+
+    let event = create_event(
+        State(state.clone()),
+        AuthUser(host.id),
+        Json(new_event_req("Doomed Cup", 1, None, "knockout", false)),
+    )
+    .await
+    .unwrap()
+    .0;
+    for p in [&p1, &p2] {
+        join_event(State(state.clone()), AuthUser(p.id), Path(event.id), Json(JoinWithCode::default()))
+            .await
+            .unwrap();
+    }
+    // Generates event_matches rows and, via set_match_winner, a notification
+    // referencing this event — both have FK columns pointing at `events`.
+    let bracket = start_event_tournament(State(state.clone()), AuthUser(host.id), Path(event.id))
+        .await
+        .unwrap()
+        .0;
+    let _ = set_match_winner(
+        State(state.clone()),
+        AuthUser(host.id),
+        Path((event.id, bracket.matches[0].id)),
+        Json(SetMatchWinner { winner_entry_id: p1.id }),
+    )
+    .await
+    .unwrap();
+
+    // Must not fail with a foreign key constraint error.
+    delete_event(State(state.clone()), AuthUser(host.id), Path(event.id))
+        .await
+        .expect("deleting an event with participants/matches/notifications should succeed");
+
+    let after = get_event(State(state.clone()), HeaderMap::new(), Path(event.id)).await;
+    assert_eq!(after.unwrap_err().0, StatusCode::NOT_FOUND);
+
+    // The notification survives with its event reference detached, rather
+    // than being silently dropped or blocking the delete.
+    let p1_notifications = list_notifications(State(state.clone()), AuthUser(p1.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(p1_notifications.iter().any(|n| n.kind == "match_won" && n.event_id.is_none()));
+}
+
+// ---- events: tournaments, teams, brackets ----
+
+/// All `NewGameEvent` fields a test doesn't care about get sane zero/None
+/// defaults — only the knobs relevant to bracket/team/privacy behavior are
+/// parameterized, so each test body stays focused on what it's checking.
+fn new_event_req(
+    title: &str,
+    team_size: i64,
+    max_entries: Option<i64>,
+    format: &str,
+    is_private: bool,
+) -> NewGameEvent {
+    NewGameEvent {
+        title: title.to_string(),
+        description: None,
+        catalog_game_id: None,
+        custom_game_title: None,
+        registration_deadline: None,
+        starts_at: None,
+        ends_at: None,
+        prize_cents: 0,
+        prize_mode: "winner_takes_all".to_string(),
+        prize_second_cents: 0,
+        prize_third_cents: 0,
+        team_size,
+        max_entries,
+        format: format.to_string(),
+        is_private,
+    }
+}
+
+#[tokio::test]
+async fn knockout_bracket_handles_byes_and_propagates_winners_to_the_final() {
+    let state = AppState::for_tests();
+    let host = register_user(&state, "host@test.de", "password123", "Host").await;
+    let p1 = register_user(&state, "p1@test.de", "password123", "P1").await;
+    let p2 = register_user(&state, "p2@test.de", "password123", "P2").await;
+    let p3 = register_user(&state, "p3@test.de", "password123", "P3").await;
+
+    let event = create_event(
+        State(state.clone()),
+        AuthUser(host.id),
+        Json(new_event_req("3-Way Cup", 1, None, "knockout", false)),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    for p in [&p1, &p2, &p3] {
+        join_event(
+            State(state.clone()),
+            AuthUser(p.id),
+            Path(event.id),
+            Json(JoinWithCode::default()),
+        )
+        .await
+        .unwrap();
+    }
+
+    let bracket = start_event_tournament(State(state.clone()), AuthUser(host.id), Path(event.id))
+        .await
+        .unwrap()
+        .0;
+
+    // 3 entries -> bracket of 4 -> round 1 has 2 matches, round 2 is the final.
+    assert_eq!(bracket.entries.len(), 3);
+    assert_eq!(bracket.matches.len(), 3);
+    let round1: Vec<_> = bracket.matches.iter().filter(|m| m.round == 1).collect();
+    let round2: Vec<_> = bracket.matches.iter().filter(|m| m.round == 2).collect();
+    assert_eq!(round1.len(), 2);
+    assert_eq!(round2.len(), 1);
+
+    // Exactly one round-1 match got a bye (only one entry, auto-resolved winner).
+    let bye_match = round1.iter().find(|m| m.winner_entry_id.is_some()).unwrap();
+    let real_match = round1.iter().find(|m| m.winner_entry_id.is_none()).unwrap();
+    assert!(real_match.entry_a_id.is_some() && real_match.entry_b_id.is_some());
+
+    // The bye's winner should already be sitting in the final.
+    let final_match = round2[0];
+    assert!(
+        final_match.entry_a_id == bye_match.winner_entry_id
+            || final_match.entry_b_id == bye_match.winner_entry_id
+    );
+
+    // Resolve the real round-1 match and confirm the winner advances.
+    let winner_id = real_match.entry_a_id.unwrap();
+    let bracket = set_match_winner(
+        State(state.clone()),
+        AuthUser(host.id),
+        Path((event.id, real_match.id)),
+        Json(SetMatchWinner { winner_entry_id: winner_id }),
+    )
+    .await
+    .unwrap()
+    .0;
+    let final_match = bracket.matches.iter().find(|m| m.round == 2).unwrap();
+    assert!(final_match.entry_a_id == Some(winner_id) || final_match.entry_b_id == Some(winner_id));
+    assert!(final_match.entry_a_id.is_some() && final_match.entry_b_id.is_some());
+
+    // Crown a champion.
+    let champion = bracket
+        .matches
+        .iter()
+        .find(|m| m.round == 1 && m.winner_entry_id.is_some())
+        .unwrap()
+        .winner_entry_id
+        .unwrap();
+    let bracket = set_match_winner(
+        State(state.clone()),
+        AuthUser(host.id),
+        Path((event.id, final_match.id)),
+        Json(SetMatchWinner { winner_entry_id: champion }),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert_eq!(
+        bracket.matches.iter().find(|m| m.round == 2).unwrap().winner_entry_id,
+        Some(champion)
+    );
+}
+
+#[tokio::test]
+async fn team_event_blocks_direct_join_and_requires_full_teams_to_start() {
+    let state = AppState::for_tests();
+    let host = register_user(&state, "thost@test.de", "password123", "Host").await;
+    let a1 = register_user(&state, "a1@test.de", "password123", "A1").await;
+    let a2 = register_user(&state, "a2@test.de", "password123", "A2").await;
+    let b1 = register_user(&state, "b1@test.de", "password123", "B1").await;
+
+    let event = create_event(
+        State(state.clone()),
+        AuthUser(host.id),
+        Json(new_event_req("Duo Cup", 2, None, "knockout", false)),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    // Solo join must be rejected — this event is team-only.
+    let direct_join = join_event(
+        State(state.clone()),
+        AuthUser(a1.id),
+        Path(event.id),
+        Json(JoinWithCode::default()),
+    )
+    .await;
+    assert_eq!(direct_join.unwrap_err().0, StatusCode::BAD_REQUEST);
+
+    let team_a = create_event_team(
+        State(state.clone()),
+        AuthUser(a1.id),
+        Path(event.id),
+        Json(NewEventTeam { name: "Team A".to_string(), code: None }),
+    )
+    .await
+    .unwrap()
+    .0;
+    let _ = join_event_team(
+        State(state.clone()),
+        AuthUser(a2.id),
+        Path((event.id, team_a.id)),
+        Json(JoinWithCode::default()),
+    )
+    .await
+    .unwrap();
+
+    // Team B is created but left incomplete (1/2 members).
+    let _ = create_event_team(
+        State(state.clone()),
+        AuthUser(b1.id),
+        Path(event.id),
+        Json(NewEventTeam { name: "Team B".to_string(), code: None }),
+    )
+    .await
+    .unwrap();
+
+    let blocked_start =
+        start_event_tournament(State(state.clone()), AuthUser(host.id), Path(event.id)).await;
+    assert_eq!(blocked_start.unwrap_err().0, StatusCode::BAD_REQUEST);
+
+    // A team that's already full can't be joined again.
+    let c1 = register_user(&state, "c1@test.de", "password123", "C1").await;
+    let overfull = join_event_team(
+        State(state.clone()),
+        AuthUser(c1.id),
+        Path((event.id, team_a.id)),
+        Json(JoinWithCode::default()),
+    )
+    .await;
+    assert_eq!(overfull.unwrap_err().0, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn max_entries_caps_join_event() {
+    let state = AppState::for_tests();
+    let host = register_user(&state, "caphost@test.de", "password123", "Host").await;
+    let p1 = register_user(&state, "cap1@test.de", "password123", "P1").await;
+    let p2 = register_user(&state, "cap2@test.de", "password123", "P2").await;
+
+    let event = create_event(
+        State(state.clone()),
+        AuthUser(host.id),
+        Json(new_event_req("Small Cup", 1, Some(1), "all", false)),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    join_event(State(state.clone()), AuthUser(p1.id), Path(event.id), Json(JoinWithCode::default()))
+        .await
+        .unwrap();
+    let result = join_event(
+        State(state.clone()),
+        AuthUser(p2.id),
+        Path(event.id),
+        Json(JoinWithCode::default()),
+    )
+    .await;
+    assert_eq!(result.unwrap_err().0, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn private_event_requires_code_and_is_hidden_from_strangers() {
+    let state = AppState::for_tests();
+    let host = register_user(&state, "phost@test.de", "password123", "Host").await;
+    let joiner = register_user(&state, "pjoiner@test.de", "password123", "Joiner").await;
+    let stranger = register_user(&state, "pstranger@test.de", "password123", "Stranger").await;
+
+    let created = create_event(
+        State(state.clone()),
+        AuthUser(host.id),
+        Json(new_event_req("Invite Only", 1, None, "all", true)),
+    )
+    .await
+    .unwrap()
+    .0;
+    let code = created.join_code.clone().expect("host should see the join code");
+
+    // Wrong/missing code is rejected.
+    let no_code = join_event(
+        State(state.clone()),
+        AuthUser(joiner.id),
+        Path(created.id),
+        Json(JoinWithCode::default()),
+    )
+    .await;
+    assert_eq!(no_code.unwrap_err().0, StatusCode::FORBIDDEN);
+    let wrong_code = join_event(
+        State(state.clone()),
+        AuthUser(joiner.id),
+        Path(created.id),
+        Json(JoinWithCode { code: Some("WRONG1".to_string()) }),
+    )
+    .await;
+    assert_eq!(wrong_code.unwrap_err().0, StatusCode::FORBIDDEN);
+
+    // Correct code (case-insensitive) works.
+    join_event(
+        State(state.clone()),
+        AuthUser(joiner.id),
+        Path(created.id),
+        Json(JoinWithCode { code: Some(code.to_lowercase()) }),
+    )
+    .await
+    .unwrap();
+
+    // Hidden from a stranger's listing, but visible to the host and the joiner.
+    let stranger_list = list_events(State(state.clone()), bearer_headers(&state, stranger.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(stranger_list.iter().all(|e| e.id != created.id));
+    let host_list = list_events(State(state.clone()), bearer_headers(&state, host.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(host_list.iter().any(|e| e.id == created.id));
+    let joiner_list = list_events(State(state.clone()), bearer_headers(&state, joiner.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(joiner_list.iter().any(|e| e.id == created.id));
+
+    // The join code itself is only ever handed back to the host.
+    let as_joiner = get_event(State(state.clone()), bearer_headers(&state, joiner.id), Path(created.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(as_joiner.join_code, None);
+    let as_host = get_event(State(state.clone()), bearer_headers(&state, host.id), Path(created.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(as_host.join_code, Some(code.clone()));
+
+    // Findable by code even though it's excluded from the public list.
+    let found = find_event_by_code(
+        State(state.clone()),
+        HeaderMap::new(),
+        Json(JoinByCodeRequest { code }),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert_eq!(found.id, created.id);
+}
+
+#[tokio::test]
+async fn only_host_can_set_match_winner_and_winner_must_be_in_the_match() {
+    let state = AppState::for_tests();
+    let host = register_user(&state, "whost@test.de", "password123", "Host").await;
+    let p1 = register_user(&state, "w1@test.de", "password123", "W1").await;
+    let p2 = register_user(&state, "w2@test.de", "password123", "W2").await;
+
+    let event = create_event(
+        State(state.clone()),
+        AuthUser(host.id),
+        Json(new_event_req("Duel", 1, None, "knockout", false)),
+    )
+    .await
+    .unwrap()
+    .0;
+    for p in [&p1, &p2] {
+        join_event(State(state.clone()), AuthUser(p.id), Path(event.id), Json(JoinWithCode::default()))
+            .await
+            .unwrap();
+    }
+    let bracket = start_event_tournament(State(state.clone()), AuthUser(host.id), Path(event.id))
+        .await
+        .unwrap()
+        .0;
+    let only_match = &bracket.matches[0];
+
+    // Non-host can't decide the match.
+    let as_player = set_match_winner(
+        State(state.clone()),
+        AuthUser(p1.id),
+        Path((event.id, only_match.id)),
+        Json(SetMatchWinner { winner_entry_id: p1.id }),
+    )
+    .await;
+    assert_eq!(as_player.unwrap_err().0, StatusCode::FORBIDDEN);
+
+    // Host can't crown someone who isn't in the match.
+    let stranger = register_user(&state, "w3@test.de", "password123", "W3").await;
+    let bogus_winner = set_match_winner(
+        State(state.clone()),
+        AuthUser(host.id),
+        Path((event.id, only_match.id)),
+        Json(SetMatchWinner { winner_entry_id: stranger.id }),
+    )
+    .await;
+    assert_eq!(bogus_winner.unwrap_err().0, StatusCode::BAD_REQUEST);
+}
+
 // ---- rate limiting ----
 
 #[test]

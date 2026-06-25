@@ -46,6 +46,7 @@ export function EventsPage() {
   const leaveEvent = useEventsStore((s) => s.leaveEvent);
   const clearError = useEventsStore((s) => s.clearError);
   const openEventDetail = useEventsStore((s) => s.openEventDetail);
+  const findEventByCode = useEventsStore((s) => s.findEventByCode);
   const detailEvent = useEventsStore((s) => s.detailEvent);
   const token = useAuthStore((s) => s.token);
   const authUser = useAuthStore((s) => s.user);
@@ -71,6 +72,12 @@ export function EventsPage() {
   const [prizeMode, setPrizeMode] = useState<"winner_takes_all" | "split">("winner_takes_all");
   const [prizeSecondEuros, setPrizeSecondEuros] = useState("");
   const [prizeThirdEuros, setPrizeThirdEuros] = useState("");
+  const [format, setFormat] = useState<"knockout" | "all">("knockout");
+  const [teamSize, setTeamSize] = useState("1");
+  const [maxEntries, setMaxEntries] = useState("");
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [createdJoinCode, setCreatedJoinCode] = useState<string | null>(null);
+  const [joinCodeInput, setJoinCodeInput] = useState("");
 
   useEffect(() => {
     fetchEvents();
@@ -110,7 +117,7 @@ export function EventsPage() {
   async function handleHostSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
-    await createEvent({
+    const created = await createEvent({
       title: title.trim(),
       description: description.trim() || null,
       catalog_game_id: catalogGameId ? Number(catalogGameId) : null,
@@ -122,7 +129,12 @@ export function EventsPage() {
       prize_mode: prizeMode,
       prize_second_cents: Math.round((parseFloat(prizeSecondEuros) || 0) * 100),
       prize_third_cents: Math.round((parseFloat(prizeThirdEuros) || 0) * 100),
+      format,
+      team_size: Math.max(1, Math.round(parseFloat(teamSize) || 1)),
+      max_entries: maxEntries ? Math.max(1, Math.round(parseFloat(maxEntries))) : null,
+      is_private: isPrivate,
     });
+    if (created?.join_code) setCreatedJoinCode(created.join_code);
     setTitle("");
     setDescription("");
     setCatalogGameId("");
@@ -134,6 +146,10 @@ export function EventsPage() {
     setPrizeMode("winner_takes_all");
     setPrizeSecondEuros("");
     setPrizeThirdEuros("");
+    setFormat("knockout");
+    setTeamSize("1");
+    setMaxEntries("");
+    setIsPrivate(false);
     setShowHostForm(false);
   }
 
@@ -321,11 +337,105 @@ export function EventsPage() {
             </div>
           )}
 
+          <div className="flex flex-col gap-2 text-sm text-zinc-300">
+            Turnierformat
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="format"
+                  checked={format === "knockout"}
+                  onChange={() => setFormat("knockout")}
+                />
+                Knockout-Turnier (Turnierbaum)
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  name="format"
+                  checked={format === "all"}
+                  onChange={() => setFormat("all")}
+                />
+                Offene Liste (alle anzeigen)
+              </label>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1 text-sm text-zinc-300">
+              Turniergröße (max. Teilnehmer/Teams)
+              <input
+                type="number"
+                min="1"
+                value={maxEntries}
+                onChange={(e) => setMaxEntries(e.target.value)}
+                placeholder="Unbegrenzt"
+                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-zinc-300">
+              Teamgröße (Personen pro Team)
+              <input
+                type="number"
+                min="1"
+                value={teamSize}
+                onChange={(e) => setTeamSize(e.target.value)}
+                placeholder="1 = Einzelspieler"
+                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+              />
+            </label>
+          </div>
+
+          <label className="flex items-center gap-2 text-sm text-zinc-300">
+            <input
+              type="checkbox"
+              checked={isPrivate}
+              onChange={(e) => setIsPrivate(e.target.checked)}
+            />
+            Privates Turnier (nur mit Code betretbar)
+          </label>
+
           <button
             type="submit"
             className="self-end rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
           >
             Veröffentlichen
+          </button>
+        </form>
+      )}
+
+      {createdJoinCode && (
+        <div className="flex items-center justify-between rounded bg-emerald-900/30 px-4 py-3 text-sm text-emerald-300">
+          <span>
+            Turnier erstellt! Beitritts-Code: <span className="font-mono text-base font-bold">{createdJoinCode}</span> — teile ihn mit den Teilnehmern.
+          </span>
+          <button onClick={() => setCreatedJoinCode(null)} className="font-bold">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {token && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!joinCodeInput.trim()) return;
+            findEventByCode(joinCodeInput.trim());
+            setJoinCodeInput("");
+          }}
+          className="flex items-center gap-2"
+        >
+          <input
+            value={joinCodeInput}
+            onChange={(e) => setJoinCodeInput(e.target.value)}
+            placeholder="Privates Turnier per Code beitreten"
+            className="w-64 rounded border border-white/10 bg-[#10171f] px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
+          />
+          <button
+            type="submit"
+            className="rounded bg-white/5 px-4 py-2 text-sm font-semibold text-zinc-300 hover:bg-white/10"
+          >
+            Suchen
           </button>
         </form>
       )}
@@ -429,11 +539,31 @@ export function EventsPage() {
                   )}
                 </div>
 
-                {(event.catalog_game_title || event.custom_game_title) && (
-                  <span className="self-start rounded bg-sky-900/50 px-2 py-1 text-[11px] font-semibold text-sky-300">
-                    Turnier: {event.catalog_game_title || event.custom_game_title}
+                <div className="flex flex-wrap gap-1.5">
+                  {event.is_private && (
+                    <span className="self-start rounded bg-amber-900/40 px-2 py-1 text-[11px] font-semibold text-amber-300">
+                      🔒 Privat
+                    </span>
+                  )}
+                  {(event.catalog_game_title || event.custom_game_title) && (
+                    <span className="self-start rounded bg-sky-900/50 px-2 py-1 text-[11px] font-semibold text-sky-300">
+                      Turnier: {event.catalog_game_title || event.custom_game_title}
+                    </span>
+                  )}
+                  <span className="self-start rounded bg-white/5 px-2 py-1 text-[11px] font-semibold text-zinc-400">
+                    {event.format === "knockout" ? "Knockout" : "Offene Liste"}
                   </span>
-                )}
+                  {event.team_size > 1 && (
+                    <span className="self-start rounded bg-white/5 px-2 py-1 text-[11px] font-semibold text-zinc-400">
+                      Team: {event.team_size} Personen
+                    </span>
+                  )}
+                  {event.max_entries && (
+                    <span className="self-start rounded bg-white/5 px-2 py-1 text-[11px] font-semibold text-zinc-400">
+                      Max. {event.max_entries} {event.team_size > 1 ? "Teams" : "Teilnehmer"}
+                    </span>
+                  )}
+                </div>
 
                 {event.description && (
                   <p className="line-clamp-3 text-sm text-zinc-400">{event.description}</p>
@@ -451,7 +581,7 @@ export function EventsPage() {
                 </div>
 
                 <div className="mt-auto flex gap-2">
-                  {token && !isHost && (
+                  {token && !isHost && event.team_size <= 1 && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -471,6 +601,17 @@ export function EventsPage() {
                           : open
                             ? "Beitreten"
                             : "Anmeldung geschlossen"}
+                    </button>
+                  )}
+                  {token && !isHost && event.team_size > 1 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openEventDetail(event.id);
+                      }}
+                      className="flex-1 rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
+                    >
+                      Team wählen
                     </button>
                   )}
                   {isHost && (

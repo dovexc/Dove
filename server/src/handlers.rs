@@ -8,10 +8,11 @@ use std::path::Path as FsPath;
 
 use crate::auth::{create_token, hash_password, user_id_from_headers, verify_password, AdminUser, AuthUser};
 use crate::models::{
-    AuthResponse, CatalogGame, CloudSave, GameEvent, GameReview, GameScreenshot, GameVersionNote,
-    ImageUpload, LoginRequest, NewCatalogGame, NewGameEvent, NewGameReview, NewGameVersionNote,
-    ProfileScreenshot, PublicProfile, RegisterRequest, SetPlayingRequest, UpdateProfileRequest,
-    User,
+    AuthResponse, BracketEntry, CatalogGame, CloudSave, EventBracket, EventMatch, EventTeam,
+    GameEvent, GameReview, GameScreenshot, GameVersionNote, ImageUpload, LoginRequest,
+    NewCatalogGame, NewEventTeam, NewGameEvent, NewGameReview, NewGameVersionNote, Notification,
+    ProfileScreenshot, PublicProfile, RegisterRequest, SetMatchWinner, SetPlayingRequest,
+    UpdateProfileRequest, User,
 };
 use crate::state::AppState;
 
@@ -503,6 +504,15 @@ pub async fn send_friend_request(
             params![id],
         )
         .map_err(internal_error)?;
+        let name = user_display_name(&conn, user_id);
+        create_notification(
+            &conn,
+            target_id,
+            "friend_accepted",
+            &format!("{name} hat deine Freundschaftsanfrage angenommen"),
+            None,
+            Some(user_id),
+        );
         return Ok(StatusCode::OK);
     }
 
@@ -511,6 +521,15 @@ pub async fn send_friend_request(
         params![user_id, target_id],
     )
     .map_err(internal_error)?;
+    let name = user_display_name(&conn, user_id);
+    create_notification(
+        &conn,
+        target_id,
+        "friend_request",
+        &format!("{name} hat dir eine Freundschaftsanfrage gesendet"),
+        None,
+        Some(user_id),
+    );
 
     Ok(StatusCode::CREATED)
 }
@@ -535,6 +554,15 @@ pub async fn accept_friend_request(
             "Keine offene Freundschaftsanfrage gefunden".to_string(),
         ));
     }
+    let name = user_display_name(&conn, user_id);
+    create_notification(
+        &conn,
+        target_id,
+        "friend_accepted",
+        &format!("{name} hat deine Freundschaftsanfrage angenommen"),
+        None,
+        Some(user_id),
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1853,19 +1881,28 @@ fn row_to_event(row: &rusqlite::Row) -> rusqlite::Result<GameEvent> {
         prize_mode: row.get(12)?,
         prize_second_cents: row.get(13)?,
         prize_third_cents: row.get(14)?,
-        created_at: row.get(15)?,
-        participant_count: row.get(16)?,
-        joined: row.get(17)?,
+        team_size: row.get(15)?,
+        max_entries: row.get(16)?,
+        format: row.get(17)?,
+        is_private: row.get(18)?,
+        join_code: row.get(19)?,
+        created_at: row.get(20)?,
+        participant_count: row.get(21)?,
+        joined: row.get(22)?,
     })
 }
 
 /// `?1` in the `joined` EXISTS clause is always the viewer's id (or `-1` for
 /// anonymous browsing, like `list_games` does) — every query using this
-/// constant binds it first.
+/// constant binds it first. The same `?1` masks `join_code` so only the host
+/// ever gets the code back in a payload.
 const EVENT_COLUMNS: &str = "events.id, events.host_user_id, users.display_name, events.title, \
     events.description, events.catalog_game_id, catalog_games.title, events.custom_game_title, \
     events.registration_deadline, events.starts_at, events.ends_at, events.prize_cents, \
-    events.prize_mode, events.prize_second_cents, events.prize_third_cents, events.created_at, \
+    events.prize_mode, events.prize_second_cents, events.prize_third_cents, \
+    events.team_size, events.max_entries, events.format, events.is_private, \
+    CASE WHEN events.host_user_id = ?1 THEN events.join_code ELSE NULL END, \
+    events.created_at, \
     (SELECT COUNT(*) FROM event_participants WHERE event_id = events.id), \
     EXISTS(SELECT 1 FROM event_participants WHERE event_id = events.id AND user_id = ?1) AS joined";
 
@@ -1877,6 +1914,10 @@ const EVENT_FROM: &str = "FROM events \
 /// shouldn't require an account), but reads an optional bearer token —
 /// mirrors `list_games` — so a signed-in viewer still gets `joined` filled
 /// in correctly.
+///
+/// Private tournaments are excluded unless the viewer is the host or
+/// already a participant — they're meant to be found only via their join
+/// code (`find_event_by_code`), not by browsing.
 pub async fn list_events(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -1885,7 +1926,10 @@ pub async fn list_events(
     let conn = state.db.lock().map_err(internal_error)?;
     let mut stmt = conn
         .prepare(&format!(
-            "SELECT {EVENT_COLUMNS} {EVENT_FROM} ORDER BY events.created_at DESC"
+            "SELECT {EVENT_COLUMNS} {EVENT_FROM} \
+             WHERE events.is_private = 0 OR events.host_user_id = ?1 \
+             OR EXISTS(SELECT 1 FROM event_participants WHERE event_id = events.id AND user_id = ?1) \
+             ORDER BY events.created_at DESC"
         ))
         .map_err(internal_error)?;
     let events = stmt
@@ -1934,11 +1978,29 @@ pub async fn create_event(
     }
     let prize_second_cents = if req.prize_mode == "split" { req.prize_second_cents } else { 0 };
     let prize_third_cents = if req.prize_mode == "split" { req.prize_third_cents } else { 0 };
+    if req.team_size < 1 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Teamgröße muss mindestens 1 sein".to_string(),
+        ));
+    }
+    if let Some(max) = req.max_entries {
+        if max < 1 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Turniergröße muss mindestens 1 sein".to_string(),
+            ));
+        }
+    }
+    if req.format != "knockout" && req.format != "all" {
+        return Err((StatusCode::BAD_REQUEST, "Ungültiges Turnierformat".to_string()));
+    }
 
     let conn = state.db.lock().map_err(internal_error)?;
+    let join_code = if req.is_private { Some(generate_join_code(&conn)) } else { None };
     conn.execute(
-        "INSERT INTO events (host_user_id, title, description, catalog_game_id, custom_game_title, registration_deadline, starts_at, ends_at, prize_cents, prize_mode, prize_second_cents, prize_third_cents) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        "INSERT INTO events (host_user_id, title, description, catalog_game_id, custom_game_title, registration_deadline, starts_at, ends_at, prize_cents, prize_mode, prize_second_cents, prize_third_cents, team_size, max_entries, format, is_private, join_code) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             user_id,
             req.title.trim(),
@@ -1951,7 +2013,12 @@ pub async fn create_event(
             req.prize_cents,
             req.prize_mode,
             prize_second_cents,
-            prize_third_cents
+            prize_third_cents,
+            req.team_size,
+            req.max_entries,
+            req.format,
+            req.is_private,
+            join_code
         ],
     )
     .map_err(internal_error)?;
@@ -1972,23 +2039,39 @@ pub async fn delete_event(
     Path(event_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     let conn = state.db.lock().map_err(internal_error)?;
-    let affected = conn
-        .execute(
-            "DELETE FROM events WHERE id = ?1 AND host_user_id = ?2",
-            params![event_id, user_id],
+    let host_user_id: i64 = conn
+        .query_row(
+            "SELECT host_user_id FROM events WHERE id = ?1",
+            params![event_id],
+            |row| row.get(0),
         )
-        .map_err(internal_error)?;
-    if affected == 0 {
+        .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    if host_user_id != user_id {
         return Err((
             StatusCode::NOT_FOUND,
             "Event nicht gefunden oder du bist nicht der Host".to_string(),
         ));
     }
+    // Children must go before the parent row — event_participants also
+    // references event_teams, so it has to be cleared before event_teams
+    // too, and notifications.event_id is nullable so we detach it instead
+    // of deleting the user's notification history outright.
     conn.execute(
         "DELETE FROM event_participants WHERE event_id = ?1",
         params![event_id],
     )
     .map_err(internal_error)?;
+    conn.execute("DELETE FROM event_matches WHERE event_id = ?1", params![event_id])
+        .map_err(internal_error)?;
+    conn.execute("DELETE FROM event_teams WHERE event_id = ?1", params![event_id])
+        .map_err(internal_error)?;
+    conn.execute(
+        "UPDATE notifications SET event_id = NULL WHERE event_id = ?1",
+        params![event_id],
+    )
+    .map_err(internal_error)?;
+    conn.execute("DELETE FROM events WHERE id = ?1", params![event_id])
+        .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1996,14 +2079,37 @@ pub async fn join_event(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
     Path(event_id): Path<i64>,
+    Json(req): Json<crate::models::JoinWithCode>,
 ) -> Result<StatusCode, ApiError> {
     let conn = state.db.lock().map_err(internal_error)?;
-    conn.query_row(
-        "SELECT 1 FROM events WHERE id = ?1",
-        params![event_id],
-        |_| Ok(()),
-    )
-    .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    let (team_size, max_entries, is_private, join_code): (i64, Option<i64>, bool, Option<String>) =
+        conn.query_row(
+            "SELECT team_size, max_entries, is_private, join_code FROM events WHERE id = ?1",
+            params![event_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    if team_size > 1 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Dieses Event hat Teams — bitte trete einem Team bei oder erstelle eines".to_string(),
+        ));
+    }
+    if is_private && normalize_code(&req.code) != join_code {
+        return Err((StatusCode::FORBIDDEN, "Falscher oder fehlender Code".to_string()));
+    }
+    if let Some(max) = max_entries {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM event_participants WHERE event_id = ?1",
+                params![event_id],
+                |row| row.get(0),
+            )
+            .map_err(internal_error)?;
+        if count >= max {
+            return Err((StatusCode::BAD_REQUEST, "Turnier ist bereits voll".to_string()));
+        }
+    }
     conn.execute(
         "INSERT OR IGNORE INTO event_participants (event_id, user_id) VALUES (?1, ?2)",
         params![event_id, user_id],
@@ -2018,12 +2124,620 @@ pub async fn leave_event(
     Path(event_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     let conn = state.db.lock().map_err(internal_error)?;
+    let team_id: Option<i64> = conn
+        .query_row(
+            "SELECT team_id FROM event_participants WHERE event_id = ?1 AND user_id = ?2",
+            params![event_id, user_id],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten();
     conn.execute(
         "DELETE FROM event_participants WHERE event_id = ?1 AND user_id = ?2",
         params![event_id, user_id],
     )
     .map_err(internal_error)?;
+    if let Some(team_id) = team_id {
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM event_participants WHERE team_id = ?1",
+                params![team_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if remaining == 0 {
+            let _ = conn.execute("DELETE FROM event_teams WHERE id = ?1", params![team_id]);
+        }
+    }
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn load_event_team(conn: &rusqlite::Connection, team_id: i64) -> Result<EventTeam, ApiError> {
+    let (event_id, name, created_by): (i64, String, i64) = conn
+        .query_row(
+            "SELECT event_id, name, created_by FROM event_teams WHERE id = ?1",
+            params![team_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Team nicht gefunden".to_string()))?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
+             JOIN event_participants ep ON ep.user_id = u.id \
+             WHERE ep.team_id = ?1 ORDER BY ep.joined_at ASC"
+        ))
+        .map_err(internal_error)?;
+    let members: Vec<crate::models::UserSummary> = stmt
+        .query_map(params![team_id], row_to_user_summary)
+        .map_err(internal_error)?
+        .filter_map(|m| m.ok())
+        .collect();
+    Ok(EventTeam {
+        id: team_id,
+        event_id,
+        name,
+        created_by,
+        member_count: members.len() as i64,
+        members,
+    })
+}
+
+/// Public team list for an event's detail page — same reasoning as
+/// `list_event_participants`: browsing who's signed up shouldn't require
+/// an account.
+pub async fn list_event_teams(
+    State(state): State<AppState>,
+    Path(event_id): Path<i64>,
+) -> Result<Json<Vec<EventTeam>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let team_ids: Vec<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT id FROM event_teams WHERE event_id = ?1 ORDER BY created_at ASC")
+            .map_err(internal_error)?;
+        let rows = stmt
+            .query_map(params![event_id], |row| row.get(0))
+            .map_err(internal_error)?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let teams = team_ids
+        .into_iter()
+        .filter_map(|id| load_event_team(&conn, id).ok())
+        .collect();
+    Ok(Json(teams))
+}
+
+pub async fn create_event_team(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(event_id): Path<i64>,
+    Json(req): Json<NewEventTeam>,
+) -> Result<Json<EventTeam>, ApiError> {
+    if req.name.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Teamname darf nicht leer sein".to_string()));
+    }
+    let conn = state.db.lock().map_err(internal_error)?;
+    let (team_size, max_entries, is_private, join_code): (i64, Option<i64>, bool, Option<String>) =
+        conn.query_row(
+            "SELECT team_size, max_entries, is_private, join_code FROM events WHERE id = ?1",
+            params![event_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    if team_size <= 1 {
+        return Err((StatusCode::BAD_REQUEST, "Dieses Event hat keine Teams".to_string()));
+    }
+    if is_private && normalize_code(&req.code) != join_code {
+        return Err((StatusCode::FORBIDDEN, "Falscher oder fehlender Code".to_string()));
+    }
+    let already_in: bool = conn
+        .query_row(
+            "SELECT 1 FROM event_participants WHERE event_id = ?1 AND user_id = ?2",
+            params![event_id, user_id],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    if already_in {
+        return Err((StatusCode::BAD_REQUEST, "Du bist bereits angemeldet".to_string()));
+    }
+    if let Some(max) = max_entries {
+        let team_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM event_teams WHERE event_id = ?1",
+                params![event_id],
+                |row| row.get(0),
+            )
+            .map_err(internal_error)?;
+        if team_count >= max {
+            return Err((StatusCode::BAD_REQUEST, "Turnier ist bereits voll".to_string()));
+        }
+    }
+    conn.execute(
+        "INSERT INTO event_teams (event_id, name, created_by) VALUES (?1, ?2, ?3)",
+        params![event_id, req.name.trim(), user_id],
+    )
+    .map_err(internal_error)?;
+    let team_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO event_participants (event_id, user_id, team_id) VALUES (?1, ?2, ?3)",
+        params![event_id, user_id, team_id],
+    )
+    .map_err(internal_error)?;
+    load_event_team(&conn, team_id).map(Json)
+}
+
+pub async fn join_event_team(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path((event_id, team_id)): Path<(i64, i64)>,
+    Json(req): Json<crate::models::JoinWithCode>,
+) -> Result<Json<EventTeam>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let (team_size, is_private, join_code): (i64, bool, Option<String>) = conn
+        .query_row(
+            "SELECT team_size, is_private, join_code FROM events WHERE id = ?1",
+            params![event_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    let team_event_id: i64 = conn
+        .query_row(
+            "SELECT event_id FROM event_teams WHERE id = ?1",
+            params![team_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Team nicht gefunden".to_string()))?;
+    if team_event_id != event_id {
+        return Err((StatusCode::BAD_REQUEST, "Team gehört nicht zu diesem Event".to_string()));
+    }
+    if is_private && normalize_code(&req.code) != join_code {
+        return Err((StatusCode::FORBIDDEN, "Falscher oder fehlender Code".to_string()));
+    }
+    let already_in: bool = conn
+        .query_row(
+            "SELECT 1 FROM event_participants WHERE event_id = ?1 AND user_id = ?2",
+            params![event_id, user_id],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    if already_in {
+        return Err((StatusCode::BAD_REQUEST, "Du bist bereits angemeldet".to_string()));
+    }
+    let member_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM event_participants WHERE team_id = ?1",
+            params![team_id],
+            |row| row.get(0),
+        )
+        .map_err(internal_error)?;
+    if member_count >= team_size {
+        return Err((StatusCode::BAD_REQUEST, "Team ist bereits voll".to_string()));
+    }
+    conn.execute(
+        "INSERT INTO event_participants (event_id, user_id, team_id) VALUES (?1, ?2, ?3)",
+        params![event_id, user_id, team_id],
+    )
+    .map_err(internal_error)?;
+
+    let joiner_name = user_display_name(&conn, user_id);
+    let (team_name, event_title): (String, String) = conn
+        .query_row(
+            "SELECT event_teams.name, events.title FROM event_teams \
+             JOIN events ON events.id = event_teams.event_id WHERE event_teams.id = ?1",
+            params![team_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap_or_default();
+    let mut stmt = conn
+        .prepare("SELECT user_id FROM event_participants WHERE team_id = ?1 AND user_id != ?2")
+        .map_err(internal_error)?;
+    let teammates: Vec<i64> = stmt
+        .query_map(params![team_id, user_id], |row| row.get(0))
+        .map_err(internal_error)?
+        .filter_map(|r| r.ok())
+        .collect();
+    for teammate_id in teammates {
+        create_notification(
+            &conn,
+            teammate_id,
+            "team_joined",
+            &format!("{joiner_name} ist deinem Team \"{team_name}\" im Turnier \"{event_title}\" beigetreten"),
+            Some(event_id),
+            Some(user_id),
+        );
+    }
+
+    load_event_team(&conn, team_id).map(Json)
+}
+
+fn shuffle<T>(items: &mut [T]) {
+    use rand_core::{OsRng, RngCore};
+    let mut rng = OsRng;
+    for i in (1..items.len()).rev() {
+        let j = (rng.next_u32() as usize) % (i + 1);
+        items.swap(i, j);
+    }
+}
+
+/// 6 chars from an ambiguity-reduced alphabet (no `0/O/1/I`), regenerated on
+/// collision — codes are short-lived join tokens, not security secrets, so a
+/// linear retry loop is plenty.
+fn generate_join_code(conn: &rusqlite::Connection) -> String {
+    use rand_core::{OsRng, RngCore};
+    const CHARS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let mut rng = OsRng;
+    loop {
+        let code: String = (0..6)
+            .map(|_| CHARS[(rng.next_u32() as usize) % CHARS.len()] as char)
+            .collect();
+        let exists: bool = conn
+            .query_row("SELECT 1 FROM events WHERE join_code = ?1", params![code], |_| Ok(true))
+            .unwrap_or(false);
+        if !exists {
+            return code;
+        }
+    }
+}
+
+fn normalize_code(code: &Option<String>) -> Option<String> {
+    code.as_ref().map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty())
+}
+
+/// Looks up a private tournament by its join code — the only discovery path
+/// for private events, since `list_events` excludes them from browsing.
+pub async fn find_event_by_code(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<crate::models::JoinByCodeRequest>,
+) -> Result<Json<GameEvent>, ApiError> {
+    let current_user_id = user_id_from_headers(&headers, &state.jwt_secret).unwrap_or(-1);
+    let code = req.code.trim().to_uppercase();
+    if code.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Code darf nicht leer sein".to_string()));
+    }
+    let conn = state.db.lock().map_err(internal_error)?;
+    let event_id: i64 = conn
+        .query_row("SELECT id FROM events WHERE join_code = ?1", params![code], |row| {
+            row.get(0)
+        })
+        .map_err(|_| (StatusCode::NOT_FOUND, "Kein Turnier mit diesem Code gefunden".to_string()))?;
+    conn.query_row(
+        &format!("SELECT {EVENT_COLUMNS} {EVENT_FROM} WHERE events.id = ?2"),
+        params![current_user_id, event_id],
+        row_to_event,
+    )
+    .map(Json)
+    .map_err(internal_error)
+}
+
+fn load_bracket(conn: &rusqlite::Connection, event_id: i64) -> Result<EventBracket, ApiError> {
+    let team_size: i64 = conn
+        .query_row(
+            "SELECT team_size FROM events WHERE id = ?1",
+            params![event_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, round, slot, entry_a_id, entry_b_id, winner_entry_id \
+             FROM event_matches WHERE event_id = ?1 ORDER BY round ASC, slot ASC",
+        )
+        .map_err(internal_error)?;
+    let matches: Vec<EventMatch> = stmt
+        .query_map(params![event_id], |row| {
+            Ok(EventMatch {
+                id: row.get(0)?,
+                round: row.get(1)?,
+                slot: row.get(2)?,
+                entry_a_id: row.get(3)?,
+                entry_b_id: row.get(4)?,
+                winner_entry_id: row.get(5)?,
+            })
+        })
+        .map_err(internal_error)?
+        .filter_map(|m| m.ok())
+        .collect();
+
+    let mut entry_ids: Vec<i64> = Vec::new();
+    for m in &matches {
+        for id in [m.entry_a_id, m.entry_b_id] {
+            if let Some(id) = id {
+                if !entry_ids.contains(&id) {
+                    entry_ids.push(id);
+                }
+            }
+        }
+    }
+
+    let name_query = if team_size > 1 {
+        "SELECT name FROM event_teams WHERE id = ?1"
+    } else {
+        "SELECT display_name FROM users WHERE id = ?1"
+    };
+    let entries: Vec<BracketEntry> = entry_ids
+        .into_iter()
+        .filter_map(|id| {
+            conn.query_row(name_query, params![id], |row| row.get::<_, String>(0))
+                .ok()
+                .map(|name| BracketEntry { id, name })
+        })
+        .collect();
+
+    Ok(EventBracket { entries, matches })
+}
+
+/// Generates a single-elimination bracket from the current entries (teams
+/// if `team_size > 1`, otherwise individual participants). Byes are handed
+/// out when the entry count isn't a power of two; those matches resolve
+/// immediately and their winner is propagated into round 2 right away.
+pub async fn start_event_tournament(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(event_id): Path<i64>,
+) -> Result<Json<EventBracket>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let (host_user_id, team_size, format, event_title): (i64, i64, String, String) = conn
+        .query_row(
+            "SELECT host_user_id, team_size, format, title FROM events WHERE id = ?1",
+            params![event_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    if host_user_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur der Host kann das Turnier starten".to_string(),
+        ));
+    }
+    if format != "knockout" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Nur Knockout-Turniere haben einen Turnierbaum".to_string(),
+        ));
+    }
+    let existing_matches: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM event_matches WHERE event_id = ?1",
+            params![event_id],
+            |row| row.get(0),
+        )
+        .map_err(internal_error)?;
+    if existing_matches > 0 {
+        return Err((StatusCode::BAD_REQUEST, "Turnier wurde bereits gestartet".to_string()));
+    }
+
+    let mut entries: Vec<BracketEntry> = if team_size > 1 {
+        let mut stmt = conn
+            .prepare("SELECT id, name FROM event_teams WHERE event_id = ?1")
+            .map_err(internal_error)?;
+        let teams: Vec<(i64, String)> = stmt
+            .query_map(params![event_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(internal_error)?
+            .filter_map(|r| r.ok())
+            .collect();
+        for (team_id, name) in &teams {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM event_participants WHERE team_id = ?1",
+                    params![team_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            if count != team_size {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("Team \"{name}\" ist nicht voll ({count}/{team_size})"),
+                ));
+            }
+        }
+        teams
+            .into_iter()
+            .map(|(id, name)| BracketEntry { id, name })
+            .collect()
+    } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT u.id, u.display_name FROM users u \
+                 JOIN event_participants ep ON ep.user_id = u.id WHERE ep.event_id = ?1",
+            )
+            .map_err(internal_error)?;
+        let rows = stmt
+            .query_map(params![event_id], |row| {
+                Ok(BracketEntry { id: row.get(0)?, name: row.get(1)? })
+            })
+            .map_err(internal_error)?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    if entries.len() < 2 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Mindestens 2 Teilnehmer/Teams nötig, um zu starten".to_string(),
+        ));
+    }
+
+    let entry_ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
+    shuffle(&mut entries);
+
+    let n = entries.len();
+    let mut bracket_size = 1usize;
+    while bracket_size < n {
+        bracket_size *= 2;
+    }
+    let rounds = bracket_size.trailing_zeros() as i64;
+
+    let mut slots: Vec<Option<BracketEntry>> = entries.into_iter().map(Some).collect();
+    slots.resize_with(bracket_size, || None);
+
+    for slot in 0..(bracket_size / 2) {
+        let a = slots[slot * 2].take();
+        let b = slots[slot * 2 + 1].take();
+        let winner_id = match (&a, &b) {
+            (Some(a), None) => Some(a.id),
+            (None, Some(b)) => Some(b.id),
+            _ => None,
+        };
+        conn.execute(
+            "INSERT INTO event_matches (event_id, round, slot, entry_a_id, entry_b_id, winner_entry_id) \
+             VALUES (?1, 1, ?2, ?3, ?4, ?5)",
+            params![
+                event_id,
+                slot as i64,
+                a.as_ref().map(|e| e.id),
+                b.as_ref().map(|e| e.id),
+                winner_id
+            ],
+        )
+        .map_err(internal_error)?;
+    }
+    for round in 2..=rounds {
+        let matches_in_round = bracket_size >> round;
+        for slot in 0..matches_in_round {
+            conn.execute(
+                "INSERT INTO event_matches (event_id, round, slot, entry_a_id, entry_b_id, winner_entry_id) \
+                 VALUES (?1, ?2, ?3, NULL, NULL, NULL)",
+                params![event_id, round, slot as i64],
+            )
+            .map_err(internal_error)?;
+        }
+    }
+
+    if rounds >= 2 {
+        let mut stmt = conn
+            .prepare(
+                "SELECT slot, winner_entry_id FROM event_matches \
+                 WHERE event_id = ?1 AND round = 1 AND winner_entry_id IS NOT NULL",
+            )
+            .map_err(internal_error)?;
+        let byes: Vec<(i64, i64)> = stmt
+            .query_map(params![event_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(internal_error)?
+            .filter_map(|r| r.ok())
+            .collect();
+        for (slot, winner_id) in byes {
+            let next_slot = slot / 2;
+            let column = if slot % 2 == 0 { "entry_a_id" } else { "entry_b_id" };
+            conn.execute(
+                &format!(
+                    "UPDATE event_matches SET {column} = ?1 WHERE event_id = ?2 AND round = 2 AND slot = ?3"
+                ),
+                params![winner_id, event_id, next_slot],
+            )
+            .map_err(internal_error)?;
+        }
+    }
+
+    for entry_id in entry_ids {
+        for member_id in entry_member_ids(&conn, team_size, entry_id) {
+            create_notification(
+                &conn,
+                member_id,
+                "tournament_started",
+                &format!("Das Turnier \"{event_title}\" hat begonnen — dein erstes Match steht fest"),
+                Some(event_id),
+                None,
+            );
+        }
+    }
+
+    load_bracket(&conn, event_id).map(Json)
+}
+
+pub async fn get_event_bracket(
+    State(state): State<AppState>,
+    Path(event_id): Path<i64>,
+) -> Result<Json<EventBracket>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    load_bracket(&conn, event_id).map(Json)
+}
+
+pub async fn set_match_winner(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path((event_id, match_id)): Path<(i64, i64)>,
+    Json(req): Json<SetMatchWinner>,
+) -> Result<Json<EventBracket>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let (host_user_id, team_size, event_title): (i64, i64, String) = conn
+        .query_row(
+            "SELECT host_user_id, team_size, title FROM events WHERE id = ?1",
+            params![event_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    if host_user_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur der Host kann Ergebnisse eintragen".to_string(),
+        ));
+    }
+    let (round, slot, entry_a_id, entry_b_id): (i64, i64, Option<i64>, Option<i64>) = conn
+        .query_row(
+            "SELECT round, slot, entry_a_id, entry_b_id FROM event_matches WHERE id = ?1 AND event_id = ?2",
+            params![match_id, event_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "Match nicht gefunden".to_string()))?;
+    if entry_a_id != Some(req.winner_entry_id) && entry_b_id != Some(req.winner_entry_id) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Sieger ist kein Teilnehmer dieses Matches".to_string(),
+        ));
+    }
+    conn.execute(
+        "UPDATE event_matches SET winner_entry_id = ?1 WHERE id = ?2",
+        params![req.winner_entry_id, match_id],
+    )
+    .map_err(internal_error)?;
+
+    let next_round = round + 1;
+    let next_slot = slot / 2;
+    let exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM event_matches WHERE event_id = ?1 AND round = ?2 AND slot = ?3",
+            params![event_id, next_round, next_slot],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    if exists {
+        let column = if slot % 2 == 0 { "entry_a_id" } else { "entry_b_id" };
+        conn.execute(
+            &format!(
+                "UPDATE event_matches SET {column} = ?1 WHERE event_id = ?2 AND round = ?3 AND slot = ?4"
+            ),
+            params![req.winner_entry_id, event_id, next_round, next_slot],
+        )
+        .map_err(internal_error)?;
+    }
+
+    let winner_id = req.winner_entry_id;
+    let loser_id = if entry_a_id == Some(winner_id) { entry_b_id } else { entry_a_id };
+    let winner_name = entry_display_name(&conn, team_size, winner_id);
+    for member_id in entry_member_ids(&conn, team_size, winner_id) {
+        create_notification(
+            &conn,
+            member_id,
+            "match_won",
+            &format!("Ihr habt euer Match in \"{event_title}\" gewonnen — weiter geht's!"),
+            Some(event_id),
+            None,
+        );
+    }
+    if let Some(loser_id) = loser_id {
+        for member_id in entry_member_ids(&conn, team_size, loser_id) {
+            create_notification(
+                &conn,
+                member_id,
+                "match_lost",
+                &format!("{winner_name} hat euer Match in \"{event_title}\" gewonnen — ihr seid ausgeschieden"),
+                Some(event_id),
+                None,
+            );
+        }
+    }
+
+    load_bracket(&conn, event_id).map(Json)
 }
 
 /// Public participant list for an event's detail page — seeing who's
@@ -2046,4 +2760,124 @@ pub async fn list_event_participants(
         .filter_map(|p| p.ok())
         .collect();
     Ok(Json(participants))
+}
+
+// ---- notifications ----
+
+fn user_display_name(conn: &rusqlite::Connection, user_id: i64) -> String {
+    conn.query_row(
+        "SELECT display_name FROM users WHERE id = ?1",
+        params![user_id],
+        |row| row.get(0),
+    )
+    .unwrap_or_else(|_| "Jemand".to_string())
+}
+
+/// Inserts a notification for `user_id`. Failures are logged, not
+/// propagated — a missed notification shouldn't roll back the friend
+/// request / match result / etc. that triggered it.
+fn create_notification(
+    conn: &rusqlite::Connection,
+    user_id: i64,
+    kind: &str,
+    message: &str,
+    event_id: Option<i64>,
+    actor_user_id: Option<i64>,
+) {
+    let _ = conn.execute(
+        "INSERT INTO notifications (user_id, kind, message, event_id, actor_user_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![user_id, kind, message, event_id, actor_user_id],
+    );
+}
+
+/// Resolves the individual user ids behind a bracket entry — the entry
+/// itself for solo events, or every team member for team events. Used to
+/// fan a single tournament notification out to everyone it concerns.
+fn entry_member_ids(conn: &rusqlite::Connection, team_size: i64, entry_id: i64) -> Vec<i64> {
+    if team_size <= 1 {
+        return vec![entry_id];
+    }
+    let mut stmt = match conn.prepare(
+        "SELECT user_id FROM event_participants WHERE team_id = ?1",
+    ) {
+        Ok(stmt) => stmt,
+        Err(_) => return Vec::new(),
+    };
+    stmt.query_map(params![entry_id], |row| row.get(0))
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+}
+
+/// Resolves a bracket entry id to its display name — a team name for team
+/// events, a user's display name otherwise.
+fn entry_display_name(conn: &rusqlite::Connection, team_size: i64, entry_id: i64) -> String {
+    let query = if team_size > 1 {
+        "SELECT name FROM event_teams WHERE id = ?1"
+    } else {
+        "SELECT display_name FROM users WHERE id = ?1"
+    };
+    conn.query_row(query, params![entry_id], |row| row.get(0))
+        .unwrap_or_else(|_| "Jemand".to_string())
+}
+
+const NOTIFICATION_COLUMNS: &str =
+    "id, kind, message, event_id, actor_user_id, is_read, created_at";
+
+fn row_to_notification(row: &rusqlite::Row) -> rusqlite::Result<Notification> {
+    Ok(Notification {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        message: row.get(2)?,
+        event_id: row.get(3)?,
+        actor_user_id: row.get(4)?,
+        is_read: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
+pub async fn list_notifications(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<Json<Vec<Notification>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {NOTIFICATION_COLUMNS} FROM notifications \
+             WHERE user_id = ?1 ORDER BY created_at DESC LIMIT 50"
+        ))
+        .map_err(internal_error)?;
+    let notifications = stmt
+        .query_map(params![user_id], row_to_notification)
+        .map_err(internal_error)?
+        .filter_map(|n| n.ok())
+        .collect();
+    Ok(Json(notifications))
+}
+
+pub async fn mark_notification_read(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(notification_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.execute(
+        "UPDATE notifications SET is_read = 1 WHERE id = ?1 AND user_id = ?2",
+        params![notification_id, user_id],
+    )
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn mark_all_notifications_read(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.execute(
+        "UPDATE notifications SET is_read = 1 WHERE user_id = ?1 AND is_read = 0",
+        params![user_id],
+    )
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }

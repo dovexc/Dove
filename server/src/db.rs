@@ -115,6 +115,19 @@ fn init_schema(conn: &Connection, default_quota_bytes: i64) {
             prize_mode TEXT NOT NULL DEFAULT 'winner_takes_all',
             prize_second_cents INTEGER NOT NULL DEFAULT 0,
             prize_third_cents INTEGER NOT NULL DEFAULT 0,
+            team_size INTEGER NOT NULL DEFAULT 1,
+            max_entries INTEGER,
+            format TEXT NOT NULL DEFAULT 'knockout',
+            is_private INTEGER NOT NULL DEFAULT 0,
+            join_code TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS event_teams (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL REFERENCES events(id),
+            name TEXT NOT NULL,
+            created_by INTEGER NOT NULL REFERENCES users(id),
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -122,8 +135,32 @@ fn init_schema(conn: &Connection, default_quota_bytes: i64) {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_id INTEGER NOT NULL REFERENCES events(id),
             user_id INTEGER NOT NULL REFERENCES users(id),
+            team_id INTEGER REFERENCES event_teams(id),
             joined_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(event_id, user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS event_matches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL REFERENCES events(id),
+            round INTEGER NOT NULL,
+            slot INTEGER NOT NULL,
+            entry_a_id INTEGER,
+            entry_b_id INTEGER,
+            winner_entry_id INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(event_id, round, slot)
+        );
+
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            kind TEXT NOT NULL,
+            message TEXT NOT NULL,
+            event_id INTEGER REFERENCES events(id),
+            actor_user_id INTEGER REFERENCES users(id),
+            is_read INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
         CREATE TABLE IF NOT EXISTS cloud_saves (
@@ -252,4 +289,22 @@ fn init_schema(conn: &Connection, default_quota_bytes: i64) {
         "ALTER TABLE events ADD COLUMN prize_third_cents INTEGER NOT NULL DEFAULT 0",
         [],
     );
+    let _ = conn.execute(
+        "ALTER TABLE events ADD COLUMN team_size INTEGER NOT NULL DEFAULT 1",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE events ADD COLUMN max_entries INTEGER", []);
+    let _ = conn.execute(
+        "ALTER TABLE events ADD COLUMN format TEXT NOT NULL DEFAULT 'knockout'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE event_participants ADD COLUMN team_id INTEGER REFERENCES event_teams(id)",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE events ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE events ADD COLUMN join_code TEXT", []);
 }

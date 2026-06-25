@@ -40,7 +40,7 @@ export function PublicProfileView({
         <button
           onClick={onRemoveFriend}
           disabled={friendActionBusy}
-          className="rounded bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
+          className="rounded-md border border-white/10 bg-white/5 px-3.5 py-1.5 text-[13px] font-bold text-zinc-300 hover:bg-white/10 disabled:opacity-50"
         >
           Freund entfernen
         </button>
@@ -51,7 +51,7 @@ export function PublicProfileView({
         <button
           onClick={onAcceptFriendRequest}
           disabled={friendActionBusy}
-          className="rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+          className="rounded-md bg-emerald-600 px-3.5 py-1.5 text-[13px] font-bold text-white hover:bg-emerald-500 disabled:opacity-50"
         >
           Anfrage annehmen
         </button>
@@ -59,7 +59,7 @@ export function PublicProfileView({
     }
     if (friendStatus === "pending_outgoing") {
       return (
-        <span className="rounded bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-400">
+        <span className="rounded-md border border-white/10 bg-white/5 px-3.5 py-1.5 text-[13px] font-bold text-zinc-400">
           Anfrage gesendet
         </span>
       );
@@ -68,7 +68,7 @@ export function PublicProfileView({
       <button
         onClick={onSendFriendRequest}
         disabled={friendActionBusy}
-        className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+        className="rounded-md border border-sky-400/30 bg-sky-500/10 px-3.5 py-1.5 text-[13px] font-bold text-sky-300 hover:bg-sky-500/20 hover:text-white disabled:opacity-50"
       >
         Als Freund hinzufügen
       </button>
@@ -76,41 +76,49 @@ export function PublicProfileView({
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-zinc-950">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-[#0b1016]">
       <div
-        className="relative h-56 w-full bg-zinc-800 bg-cover bg-center"
-        style={backgroundUrl ? { backgroundImage: `url(${backgroundUrl})` } : undefined}
+        className="relative h-[280px] w-full bg-cover bg-center"
+        style={{
+          background: backgroundUrl
+            ? `url(${backgroundUrl}) center/cover`
+            : "linear-gradient(125deg,#1c3a5e 0%,#2c1f4a 50%,#3a2151 100%)",
+        }}
       >
-        <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/40 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0b1016]/15 via-[#0b1016]/55 to-[#0b1016]" />
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 rounded bg-black/50 px-3 py-1.5 text-sm font-semibold text-white hover:bg-black/70"
+          className="absolute right-8 top-4 rounded-md bg-black/40 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-black/60"
         >
           Schließen
         </button>
       </div>
 
-      <div className="relative z-10 mx-auto max-w-3xl px-6 pb-12">
-        <div className="-mt-12">
-          <div className="h-24 w-24 shrink-0 overflow-hidden rounded-full ring-4 ring-zinc-950">
-            {avatarUrl ? (
-              <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center bg-zinc-700 text-2xl font-bold text-zinc-300">
-                {profile.display_name.slice(0, 1).toUpperCase()}
-              </div>
-            )}
+      <div className="relative z-[2] mx-auto max-w-[1180px] px-10 pb-[90px]">
+        <div className="-mt-[72px] flex flex-wrap items-end gap-6">
+          <div className="shrink-0">
+            <div
+              className="flex h-[148px] w-[148px] items-center justify-center rounded-3xl border-4 border-[#0b1016] text-5xl font-black text-white shadow-2xl"
+              style={{ background: "linear-gradient(135deg,#3aa0ff,#7b4397)" }}
+            >
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="" className="h-full w-full rounded-3xl object-cover" />
+              ) : (
+                profile.display_name.slice(0, 1).toUpperCase()
+              )}
+            </div>
           </div>
-        </div>
 
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <h2 className="py-1 text-2xl font-bold leading-relaxed text-zinc-100">
-            {profile.display_name}
-          </h2>
-          <div className="flex gap-2">
+          <div className="flex-1 pb-2">
+            <h1 className="text-[38px] font-black tracking-tight text-white">
+              {profile.display_name}
+            </h1>
+          </div>
+
+          <div className="flex gap-2 pb-2">
             <button
               onClick={() => setShowWishlist(true)}
-              className="rounded bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
+              className="rounded-md border border-white/10 bg-white/5 px-3.5 py-1.5 text-[13px] font-bold text-zinc-300 hover:bg-white/10"
             >
               ♥ Wunschliste
             </button>
@@ -118,39 +126,40 @@ export function PublicProfileView({
           </div>
         </div>
 
-        <div className="mt-8">
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Über mich
-          </h3>
-          <p className="rounded bg-zinc-900 px-4 py-3 text-sm text-zinc-300">
-            {profile.bio || "Keine Beschreibung vorhanden."}
-          </p>
-        </div>
-
-        <div className="mt-8">
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Screenshots
-          </h3>
-          {profile.screenshots.length === 0 ? (
-            <p className="text-sm text-zinc-500">Noch keine Screenshots vorhanden.</p>
-          ) : (
-            <div className="grid grid-cols-3 gap-3">
-              {profile.screenshots.map((s) => (
-                <div
-                  key={s.id}
-                  className="aspect-video overflow-hidden rounded bg-zinc-900"
-                >
-                  <img
-                    src={resolveUrl(s.image_url) ?? ""}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                </div>
-              ))}
+        <div className="mt-[30px] flex flex-col gap-[30px]">
+          <div>
+            <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+              Über mich
             </div>
-          )}
-        </div>
+            <div className="rounded-[11px] border border-white/[0.06] bg-gradient-to-b from-[#141d27] to-[#111923] px-[22px] py-[22px] text-[15px] text-[#c7d5e0]">
+              {profile.bio || "Keine Beschreibung vorhanden."}
+            </div>
+          </div>
 
+          <div>
+            <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+              Screenshots
+            </div>
+            {profile.screenshots.length === 0 ? (
+              <p className="text-sm text-zinc-500">Noch keine Screenshots vorhanden.</p>
+            ) : (
+              <div className="grid grid-cols-3 gap-3">
+                {profile.screenshots.map((s) => (
+                  <div
+                    key={s.id}
+                    className="aspect-[16/10] overflow-hidden rounded-[9px] bg-zinc-900"
+                  >
+                    <img
+                      src={resolveUrl(s.image_url) ?? ""}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {showWishlist && (

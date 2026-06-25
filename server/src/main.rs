@@ -219,8 +219,24 @@ async fn main() {
         .route("/api/me/friends", get(handlers::list_friends))
         .route("/api/me/playing", axum::routing::patch(handlers::set_playing))
         .route(
+            "/api/me/notifications",
+            get(handlers::list_notifications),
+        )
+        .route(
+            "/api/me/notifications/read-all",
+            post(handlers::mark_all_notifications_read),
+        )
+        .route(
+            "/api/me/notifications/:id/read",
+            post(handlers::mark_notification_read),
+        )
+        .route(
             "/api/events",
             get(handlers::list_events).post(handlers::create_event),
+        )
+        .route(
+            "/api/events/by-code",
+            post(handlers::find_event_by_code),
         )
         .route(
             "/api/events/:id",
@@ -233,6 +249,23 @@ async fn main() {
         .route(
             "/api/events/:id/participants",
             get(handlers::list_event_participants),
+        )
+        .route(
+            "/api/events/:id/teams",
+            get(handlers::list_event_teams).post(handlers::create_event_team),
+        )
+        .route(
+            "/api/events/:id/teams/:team_id/join",
+            post(handlers::join_event_team),
+        )
+        .route(
+            "/api/events/:id/start",
+            post(handlers::start_event_tournament),
+        )
+        .route("/api/events/:id/bracket", get(handlers::get_event_bracket))
+        .route(
+            "/api/events/:id/matches/:match_id/winner",
+            post(handlers::set_match_winner),
         )
         .route(
             "/api/me/friend-requests",
