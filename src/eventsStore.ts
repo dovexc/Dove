@@ -1,0 +1,156 @@
+import { create } from "zustand";
+import { API_BASE, getAuthHeader, useAuthStore } from "./authStore";
+import type { GameEvent, NewGameEvent, UserSummary } from "./types";
+
+async function errorMessage(response: Response): Promise<string> {
+  const text = await response.text();
+  return text || `Fehler (${response.status})`;
+}
+
+interface EventsState {
+  events: GameEvent[];
+  loading: boolean;
+  error: string | null;
+  joiningId: number | null;
+  detailEvent: GameEvent | null;
+  detailParticipants: UserSummary[];
+  detailLoading: boolean;
+  fetchEvents: () => Promise<void>;
+  createEvent: (event: NewGameEvent) => Promise<void>;
+  deleteEvent: (eventId: number) => Promise<void>;
+  joinEvent: (eventId: number) => Promise<void>;
+  leaveEvent: (eventId: number) => Promise<void>;
+  clearError: () => void;
+  openEventDetail: (eventId: number) => Promise<void>;
+  closeEventDetail: () => void;
+}
+
+export const useEventsStore = create<EventsState>((set, get) => ({
+  events: [],
+  loading: false,
+  error: null,
+  joiningId: null,
+  detailEvent: null,
+  detailParticipants: [],
+  detailLoading: false,
+
+  fetchEvents: async () => {
+    set({ loading: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/events`, { headers: getAuthHeader() });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const events: GameEvent[] = await response.json();
+      set({ events, loading: false });
+    } catch (e) {
+      set({ error: String(e), loading: false });
+    }
+  },
+
+  createEvent: async (event) => {
+    set({ error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify(event),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      await get().fetchEvents();
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  deleteEvent: async (eventId) => {
+    set({ error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/events/${eventId}`, {
+        method: "DELETE",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok && response.status !== 404) throw new Error(await errorMessage(response));
+      set({ events: get().events.filter((e) => e.id !== eventId) });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  joinEvent: async (eventId) => {
+    set({ error: null, joiningId: eventId });
+    try {
+      const response = await fetch(`${API_BASE}/api/events/${eventId}/join`, {
+        method: "POST",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const bump = (e: GameEvent) =>
+        e.id === eventId ? { ...e, joined: true, participant_count: e.participant_count + 1 } : e;
+      const me = useAuthStore.getState().user;
+      set((state) => ({
+        events: state.events.map(bump),
+        detailEvent: state.detailEvent ? bump(state.detailEvent) : state.detailEvent,
+        detailParticipants:
+          state.detailEvent?.id === eventId && me && !state.detailParticipants.some((p) => p.id === me.id)
+            ? [
+                ...state.detailParticipants,
+                { id: me.id, display_name: me.display_name, avatar_url: me.avatar_url, online: true, playing_title: null },
+              ]
+            : state.detailParticipants,
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ joiningId: null });
+    }
+  },
+
+  leaveEvent: async (eventId) => {
+    set({ error: null, joiningId: eventId });
+    try {
+      const response = await fetch(`${API_BASE}/api/events/${eventId}/join`, {
+        method: "DELETE",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const drop = (e: GameEvent) =>
+        e.id === eventId
+          ? { ...e, joined: false, participant_count: Math.max(0, e.participant_count - 1) }
+          : e;
+      const me = useAuthStore.getState().user;
+      set((state) => ({
+        events: state.events.map(drop),
+        detailEvent: state.detailEvent ? drop(state.detailEvent) : state.detailEvent,
+        detailParticipants:
+          state.detailEvent?.id === eventId && me
+            ? state.detailParticipants.filter((p) => p.id !== me.id)
+            : state.detailParticipants,
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ joiningId: null });
+    }
+  },
+
+  clearError: () => set({ error: null }),
+
+  openEventDetail: async (eventId) => {
+    set({ detailLoading: true, error: null });
+    try {
+      const [eventRes, participantsRes] = await Promise.all([
+        fetch(`${API_BASE}/api/events/${eventId}`, { headers: getAuthHeader() }),
+        fetch(`${API_BASE}/api/events/${eventId}/participants`),
+      ]);
+      if (!eventRes.ok) throw new Error(await errorMessage(eventRes));
+      const detailEvent: GameEvent = await eventRes.json();
+      const detailParticipants: UserSummary[] = participantsRes.ok
+        ? await participantsRes.json()
+        : [];
+      set({ detailEvent, detailParticipants, detailLoading: false });
+    } catch (e) {
+      set({ error: String(e), detailLoading: false });
+    }
+  },
+
+  closeEventDetail: () => set({ detailEvent: null, detailParticipants: [] }),
+}));

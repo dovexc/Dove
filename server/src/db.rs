@@ -101,6 +101,27 @@ fn init_schema(conn: &Connection, default_quota_bytes: i64) {
             UNIQUE(catalog_game_id, version)
         );
 
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            host_user_id INTEGER NOT NULL REFERENCES users(id),
+            title TEXT NOT NULL,
+            description TEXT,
+            catalog_game_id INTEGER REFERENCES catalog_games(id),
+            registration_deadline TEXT,
+            starts_at TEXT,
+            ends_at TEXT,
+            prize_cents INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS event_participants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL REFERENCES events(id),
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(event_id, user_id)
+        );
+
         CREATE TABLE IF NOT EXISTS cloud_saves (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL REFERENCES users(id),

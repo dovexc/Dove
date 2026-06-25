@@ -219,6 +219,22 @@ async fn main() {
         .route("/api/me/friends", get(handlers::list_friends))
         .route("/api/me/playing", axum::routing::patch(handlers::set_playing))
         .route(
+            "/api/events",
+            get(handlers::list_events).post(handlers::create_event),
+        )
+        .route(
+            "/api/events/:id",
+            get(handlers::get_event).delete(handlers::delete_event),
+        )
+        .route(
+            "/api/events/:id/join",
+            post(handlers::join_event).delete(handlers::leave_event),
+        )
+        .route(
+            "/api/events/:id/participants",
+            get(handlers::list_event_participants),
+        )
+        .route(
             "/api/me/friend-requests",
             get(handlers::list_friend_requests),
         )

@@ -124,6 +124,35 @@ pub struct NewGameVersionNote {
     pub notes: Option<String>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct GameEvent {
+    pub id: i64,
+    pub host_user_id: i64,
+    pub host_display_name: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub catalog_game_id: Option<i64>,
+    pub catalog_game_title: Option<String>,
+    pub registration_deadline: Option<String>,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+    pub prize_cents: i64,
+    pub created_at: String,
+    pub participant_count: i64,
+    pub joined: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewGameEvent {
+    pub title: String,
+    pub description: Option<String>,
+    pub catalog_game_id: Option<i64>,
+    pub registration_deadline: Option<String>,
+    pub starts_at: Option<String>,
+    pub ends_at: Option<String>,
+    pub prize_cents: i64,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GameScreenshot {
     pub id: i64,

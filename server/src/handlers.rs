@@ -8,8 +8,8 @@ use std::path::Path as FsPath;
 
 use crate::auth::{create_token, hash_password, user_id_from_headers, verify_password, AdminUser, AuthUser};
 use crate::models::{
-    AuthResponse, CatalogGame, CloudSave, GameReview, GameScreenshot, GameVersionNote,
-    ImageUpload, LoginRequest, NewCatalogGame, NewGameReview, NewGameVersionNote,
+    AuthResponse, CatalogGame, CloudSave, GameEvent, GameReview, GameScreenshot, GameVersionNote,
+    ImageUpload, LoginRequest, NewCatalogGame, NewGameEvent, NewGameReview, NewGameVersionNote,
     ProfileScreenshot, PublicProfile, RegisterRequest, SetPlayingRequest, UpdateProfileRequest,
     User,
 };
@@ -1834,4 +1834,199 @@ pub async fn set_playing(
     )
     .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn row_to_event(row: &rusqlite::Row) -> rusqlite::Result<GameEvent> {
+    Ok(GameEvent {
+        id: row.get(0)?,
+        host_user_id: row.get(1)?,
+        host_display_name: row.get(2)?,
+        title: row.get(3)?,
+        description: row.get(4)?,
+        catalog_game_id: row.get(5)?,
+        catalog_game_title: row.get(6)?,
+        registration_deadline: row.get(7)?,
+        starts_at: row.get(8)?,
+        ends_at: row.get(9)?,
+        prize_cents: row.get(10)?,
+        created_at: row.get(11)?,
+        participant_count: row.get(12)?,
+        joined: row.get(13)?,
+    })
+}
+
+/// `?1` in the `joined` EXISTS clause is always the viewer's id (or `-1` for
+/// anonymous browsing, like `list_games` does) — every query using this
+/// constant binds it first.
+const EVENT_COLUMNS: &str = "events.id, events.host_user_id, users.display_name, events.title, \
+    events.description, events.catalog_game_id, catalog_games.title, events.registration_deadline, \
+    events.starts_at, events.ends_at, events.prize_cents, events.created_at, \
+    (SELECT COUNT(*) FROM event_participants WHERE event_id = events.id), \
+    EXISTS(SELECT 1 FROM event_participants WHERE event_id = events.id AND user_id = ?1) AS joined";
+
+const EVENT_FROM: &str = "FROM events \
+    JOIN users ON users.id = events.host_user_id \
+    LEFT JOIN catalog_games ON catalog_games.id = events.catalog_game_id";
+
+/// Lists all events, newest first. Public (browsing game jams/tournaments
+/// shouldn't require an account), but reads an optional bearer token —
+/// mirrors `list_games` — so a signed-in viewer still gets `joined` filled
+/// in correctly.
+pub async fn list_events(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Vec<GameEvent>>, ApiError> {
+    let current_user_id = user_id_from_headers(&headers, &state.jwt_secret).unwrap_or(-1);
+    let conn = state.db.lock().map_err(internal_error)?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {EVENT_COLUMNS} {EVENT_FROM} ORDER BY events.created_at DESC"
+        ))
+        .map_err(internal_error)?;
+    let events = stmt
+        .query_map(params![current_user_id], row_to_event)
+        .map_err(internal_error)?
+        .filter_map(|e| e.ok())
+        .collect();
+    Ok(Json(events))
+}
+
+pub async fn get_event(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(event_id): Path<i64>,
+) -> Result<Json<GameEvent>, ApiError> {
+    let current_user_id = user_id_from_headers(&headers, &state.jwt_secret).unwrap_or(-1);
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.query_row(
+        &format!("SELECT {EVENT_COLUMNS} {EVENT_FROM} WHERE events.id = ?2"),
+        params![current_user_id, event_id],
+        row_to_event,
+    )
+    .map(Json)
+    .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))
+}
+
+pub async fn create_event(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Json(req): Json<NewGameEvent>,
+) -> Result<Json<GameEvent>, ApiError> {
+    if req.title.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Titel darf nicht leer sein".to_string()));
+    }
+    if req.prize_cents < 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Preisgeld darf nicht negativ sein".to_string(),
+        ));
+    }
+
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.execute(
+        "INSERT INTO events (host_user_id, title, description, catalog_game_id, registration_deadline, starts_at, ends_at, prize_cents) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            user_id,
+            req.title.trim(),
+            req.description,
+            req.catalog_game_id,
+            req.registration_deadline,
+            req.starts_at,
+            req.ends_at,
+            req.prize_cents
+        ],
+    )
+    .map_err(internal_error)?;
+    let id = conn.last_insert_rowid();
+
+    conn.query_row(
+        &format!("SELECT {EVENT_COLUMNS} {EVENT_FROM} WHERE events.id = ?2"),
+        params![user_id, id],
+        row_to_event,
+    )
+    .map(Json)
+    .map_err(internal_error)
+}
+
+pub async fn delete_event(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(event_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let affected = conn
+        .execute(
+            "DELETE FROM events WHERE id = ?1 AND host_user_id = ?2",
+            params![event_id, user_id],
+        )
+        .map_err(internal_error)?;
+    if affected == 0 {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Event nicht gefunden oder du bist nicht der Host".to_string(),
+        ));
+    }
+    conn.execute(
+        "DELETE FROM event_participants WHERE event_id = ?1",
+        params![event_id],
+    )
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn join_event(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(event_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.query_row(
+        "SELECT 1 FROM events WHERE id = ?1",
+        params![event_id],
+        |_| Ok(()),
+    )
+    .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    conn.execute(
+        "INSERT OR IGNORE INTO event_participants (event_id, user_id) VALUES (?1, ?2)",
+        params![event_id, user_id],
+    )
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn leave_event(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(event_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    conn.execute(
+        "DELETE FROM event_participants WHERE event_id = ?1 AND user_id = ?2",
+        params![event_id, user_id],
+    )
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Public participant list for an event's detail page — seeing who's
+/// signed up for a jam/tournament shouldn't require an account.
+pub async fn list_event_participants(
+    State(state): State<AppState>,
+    Path(event_id): Path<i64>,
+) -> Result<Json<Vec<crate::models::UserSummary>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
+             JOIN event_participants ep ON ep.user_id = u.id \
+             WHERE ep.event_id = ?1 ORDER BY ep.joined_at ASC"
+        ))
+        .map_err(internal_error)?;
+    let participants = stmt
+        .query_map(params![event_id], row_to_user_summary)
+        .map_err(internal_error)?
+        .filter_map(|p| p.ok())
+        .collect();
+    Ok(Json(participants))
 }

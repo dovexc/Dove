@@ -145,6 +145,33 @@ export interface GameVersionNote {
   created_at: string;
 }
 
+export interface GameEvent {
+  id: number;
+  host_user_id: number;
+  host_display_name: string;
+  title: string;
+  description: string | null;
+  catalog_game_id: number | null;
+  catalog_game_title: string | null;
+  registration_deadline: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  prize_cents: number;
+  created_at: string;
+  participant_count: number;
+  joined: boolean;
+}
+
+export interface NewGameEvent {
+  title: string;
+  description: string | null;
+  catalog_game_id: number | null;
+  registration_deadline: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  prize_cents: number;
+}
+
 export interface StorageUsage {
   used_bytes: number;
   quota_bytes: number;

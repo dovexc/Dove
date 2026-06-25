@@ -21,6 +21,7 @@ import { FriendsView } from "./components/friends/FriendsView";
 import { SettingsView } from "./components/settings/SettingsView";
 import { AdminModerationView } from "./components/admin/AdminModerationView";
 import { WishlistPage } from "./components/store/WishlistPage";
+import { EventsPage } from "./components/events/EventsPage";
 
 const SIDEBAR_WIDTH_KEY = "library_sidebar_width";
 const SIDEBAR_MIN_WIDTH = 180;
@@ -28,7 +29,15 @@ const SIDEBAR_MAX_WIDTH = 640;
 
 function App() {
   const [activeTab, setActiveTab] = useState<
-    "library" | "store" | "downloads" | "profile" | "friends" | "settings" | "moderation" | "wishlist"
+    | "library"
+    | "store"
+    | "events"
+    | "downloads"
+    | "profile"
+    | "friends"
+    | "settings"
+    | "moderation"
+    | "wishlist"
   >("library");
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -167,6 +176,25 @@ function App() {
             />
           </button>
           <button
+            onClick={() => setActiveTab("events")}
+            className="flex h-full flex-col items-center justify-center gap-1.5"
+          >
+            <span
+              className={`text-[17px] font-bold tracking-wide ${
+                activeTab === "events" ? "text-white" : "text-[#9aa7b3] hover:text-zinc-200"
+              }`}
+            >
+              Events
+            </span>
+            <span
+              className="h-[3px] w-[22px] rounded-sm"
+              style={{
+                background:
+                  activeTab === "events" ? "linear-gradient(90deg,#3aa0ff,#66c0f4)" : "transparent",
+              }}
+            />
+          </button>
+          <button
             onClick={() => setActiveTab("downloads")}
             className="flex h-full flex-col items-center justify-center gap-1.5"
           >
@@ -290,6 +318,10 @@ function App() {
       ) : activeTab === "store" ? (
         <div className="flex-1 overflow-hidden">
           <StoreView />
+        </div>
+      ) : activeTab === "events" ? (
+        <div className="flex-1 overflow-hidden">
+          <EventsPage />
         </div>
       ) : activeTab === "downloads" ? (
         <div className="flex-1 overflow-hidden">
