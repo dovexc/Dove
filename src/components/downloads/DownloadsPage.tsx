@@ -5,17 +5,19 @@ import { useLibraryStore } from "../../store";
 import { formatSize, formatSpeed } from "../../utils";
 import { Sparkline } from "./Sparkline";
 import { PauseIcon, PlayIcon } from "./icons";
+import { useT } from "../../translations";
+import type { TranslationKey } from "../../translations";
 
 interface Props {
   onOpenGame: (id: number) => void;
 }
 
-function statusLabel(item: DownloadItem): string {
+function statusLabel(item: DownloadItem, t: (key: TranslationKey) => string): string {
   switch (item.status) {
     case "completed":
-      return "Abgeschlossen";
+      return t("dl_completed_status");
     case "error":
-      return "Fehlgeschlagen";
+      return t("dl_failed");
     default:
       return item.status;
   }
@@ -34,6 +36,7 @@ function Thumbnail({ name, coverPath }: { name: string; coverPath?: string | nul
 }
 
 export function DownloadsPage({ onOpenGame }: Props) {
+  const t = useT();
   const queue = useDownloadStore((s) => s.queue);
   const history = useDownloadStore((s) => s.history);
   const removeFromQueue = useDownloadStore((s) => s.removeFromQueue);
@@ -102,7 +105,7 @@ export function DownloadsPage({ onOpenGame }: Props) {
               </div>
               <div className="mt-2 text-sm text-zinc-400">
                 {current.status === "extracting"
-                  ? "Dateien werden entpackt..."
+                  ? t("dl_extracting")
                   : current.total
                     ? `${formatSize(current.downloaded)} / ${formatSize(current.total)}${
                         current.status === "downloading"
@@ -110,8 +113,8 @@ export function DownloadsPage({ onOpenGame }: Props) {
                           : ""
                       } · ${percent ?? 0}%`
                     : current.status === "paused"
-                      ? `Pausiert · ${percent ?? 0}%`
-                      : "Lädt herunter..."}
+                      ? `${t("dl_paused")} · ${percent ?? 0}%`
+                      : t("dl_downloading")}
               </div>
             </div>
             {current.status === "downloading" && (
@@ -121,7 +124,7 @@ export function DownloadsPage({ onOpenGame }: Props) {
               {current.status === "downloading" && (
                 <button
                   onClick={() => pauseDownload(current.id)}
-                  title="Pausieren"
+                  title={t("dl_pause")}
                   className="rounded bg-zinc-800 p-2.5 text-zinc-200 hover:bg-zinc-700"
                 >
                   <PauseIcon />
@@ -130,7 +133,7 @@ export function DownloadsPage({ onOpenGame }: Props) {
               {current.status === "paused" && (
                 <button
                   onClick={() => resumeDownload(current.id)}
-                  title="Fortsetzen"
+                  title={t("dl_resume")}
                   className="rounded bg-sky-600 p-2.5 text-white hover:bg-sky-500"
                 >
                   <PlayIcon />
@@ -140,11 +143,11 @@ export function DownloadsPage({ onOpenGame }: Props) {
           </>
         ) : (
           <div className="flex flex-1 items-center justify-between">
-            <span className="text-sm text-zinc-500">Aktuell läuft kein Download.</span>
+            <span className="text-sm text-zinc-500">{t("dl_no_active")}</span>
             <div className="flex gap-10 text-right text-xs text-zinc-400">
               <div>
                 <div className="font-semibold uppercase tracking-wide text-zinc-500">
-                  Warteschlange
+                  {t("dl_queue")}
                 </div>
                 <div className="text-base font-bold text-zinc-100">{upNext.length}</div>
               </div>
@@ -157,13 +160,13 @@ export function DownloadsPage({ onOpenGame }: Props) {
         <section className="mb-10">
           <div className="mb-3 flex items-center gap-3">
             <h2 className="text-base font-bold text-zinc-100">
-              Warteschlange <span className="text-zinc-500">({queued.length})</span>
+              {t("dl_queue")} <span className="text-zinc-500">({queued.length})</span>
             </h2>
             <div className="h-px flex-1 bg-white/10" />
           </div>
 
           {queued.length === 0 ? (
-            <p className="text-sm text-zinc-500">Keine weiteren Downloads in der Warteschlange.</p>
+            <p className="text-sm text-zinc-500">{t("dl_no_queue")}</p>
           ) : (
             <div className="flex flex-col gap-1">
               {queued.map((item, index) => (
@@ -192,11 +195,13 @@ export function DownloadsPage({ onOpenGame }: Props) {
                   <Thumbnail name={item.name} coverPath={coverFor(item.id)} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium text-zinc-100">{item.name}</div>
-                    <div className="mt-1 text-xs text-zinc-500">In Warteschlange · #{index + 1}</div>
+                    <div className="mt-1 text-xs text-zinc-500">
+                      {t("dl_queued_position")} · #{index + 1}
+                    </div>
                   </div>
                   <button
                     onClick={() => startNow(item.id)}
-                    title="Jetzt starten"
+                    title={t("dl_start_now")}
                     className="rounded bg-zinc-800 p-2 text-zinc-200 hover:bg-sky-600 hover:text-white"
                   >
                     <PlayIcon />
@@ -205,7 +210,7 @@ export function DownloadsPage({ onOpenGame }: Props) {
                     onClick={() => removeFromQueue(item.id)}
                     className="text-xs text-zinc-500 hover:text-red-400"
                   >
-                    Entfernen
+                    {t("dl_remove")}
                   </button>
                 </div>
               ))}
@@ -216,7 +221,7 @@ export function DownloadsPage({ onOpenGame }: Props) {
         <section>
           <div className="mb-3 flex items-center gap-3">
             <h2 className="text-base font-bold text-zinc-100">
-              Abgeschlossen <span className="text-zinc-500">({history.length})</span>
+              {t("dl_completed_section")} <span className="text-zinc-500">({history.length})</span>
             </h2>
             <div className="h-px flex-1 bg-white/10" />
             {history.length > 0 && (
@@ -224,13 +229,13 @@ export function DownloadsPage({ onOpenGame }: Props) {
                 onClick={clearHistory}
                 className="rounded bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
               >
-                Alle löschen
+                {t("dl_clear_all")}
               </button>
             )}
           </div>
 
           {history.length === 0 ? (
-            <p className="text-sm text-zinc-500">Noch keine abgeschlossenen Downloads.</p>
+            <p className="text-sm text-zinc-500">{t("dl_no_completed")}</p>
           ) : (
             <div className="flex flex-col gap-1">
               {history.map((item) => (
@@ -243,8 +248,8 @@ export function DownloadsPage({ onOpenGame }: Props) {
                     <div className="truncate text-sm font-medium text-zinc-100">{item.name}</div>
                     <div className="mt-1 text-xs text-zinc-500">
                       {item.status === "completed" && item.total > 0
-                        ? `${formatSize(item.total)} / ${formatSize(item.total)} heruntergeladen`
-                        : item.error ?? "Fehlgeschlagen"}
+                        ? `${formatSize(item.total)} / ${formatSize(item.total)} ${t("dl_downloaded_suffix")}`
+                        : item.error ?? t("dl_failed")}
                     </div>
                   </div>
                   {item.status === "completed" ? (
@@ -252,11 +257,11 @@ export function DownloadsPage({ onOpenGame }: Props) {
                       onClick={() => onOpenGame(item.id)}
                       className="flex items-center gap-1.5 rounded bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500"
                     >
-                      <PlayIcon /> Spielen
+                      <PlayIcon /> {t("dl_play")}
                     </button>
                   ) : (
                     <span className="rounded-full bg-red-900/60 px-3 py-1 text-xs font-semibold text-red-300">
-                      {statusLabel(item)}
+                      {statusLabel(item, t)}
                     </span>
                   )}
                 </div>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useLibraryStore } from "../store";
+import { useT } from "../translations";
 import type { Game } from "../types";
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export function EditGameDialog({ game }: Props) {
+  const t = useT();
   const closeEditDialog = useLibraryStore((s) => s.closeEditDialog);
   const editGame = useLibraryStore((s) => s.editGame);
 
@@ -21,7 +23,7 @@ export function EditGameDialog({ game }: Props) {
     const path = await open({
       multiple: false,
       directory: false,
-      title: "Spiel-Executable auswählen",
+      title: t("dialog_pick_exe_title"),
     });
     if (typeof path === "string") {
       setExePath(path);
@@ -32,8 +34,8 @@ export function EditGameDialog({ game }: Props) {
     const path = await open({
       multiple: false,
       directory: false,
-      title: "Cover-Bild auswählen",
-      filters: [{ name: "Bilder", extensions: ["png", "jpg", "jpeg", "webp"] }],
+      title: t("dialog_choose_cover"),
+      filters: [{ name: t("dialog_images"), extensions: ["png", "jpg", "jpeg", "webp"] }],
     });
     if (typeof path === "string") {
       setCoverPath(path);
@@ -62,10 +64,10 @@ export function EditGameDialog({ game }: Props) {
         onSubmit={handleSubmit}
         className="flex w-[28rem] flex-col gap-4 rounded-lg bg-zinc-900 p-6 shadow-xl"
       >
-        <h2 className="text-lg font-bold text-zinc-100">Spiel bearbeiten</h2>
+        <h2 className="text-lg font-bold text-zinc-100">{t("dialog_edit_game_title")}</h2>
 
         <label className="flex flex-col gap-1 text-sm text-zinc-300">
-          Name
+          {t("dialog_name")}
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -75,7 +77,7 @@ export function EditGameDialog({ game }: Props) {
         </label>
 
         <label className="flex flex-col gap-1 text-sm text-zinc-300">
-          Executable (.exe)
+          {t("dialog_executable")}
           <div className="flex gap-2">
             <input
               value={exePath}
@@ -88,13 +90,13 @@ export function EditGameDialog({ game }: Props) {
               onClick={pickExe}
               className="rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-700"
             >
-              Durchsuchen
+              {t("dialog_browse")}
             </button>
           </div>
         </label>
 
         <label className="flex flex-col gap-1 text-sm text-zinc-300">
-          Cover-Bild (optional)
+          {t("dialog_cover_optional")}
           <div className="flex gap-2">
             <input
               value={coverPath}
@@ -106,13 +108,13 @@ export function EditGameDialog({ game }: Props) {
               onClick={pickCover}
               className="rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-700"
             >
-              Durchsuchen
+              {t("dialog_browse")}
             </button>
           </div>
         </label>
 
         <label className="flex flex-col gap-1 text-sm text-zinc-300">
-          Beschreibung (optional)
+          {t("dialog_description_optional")}
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -127,14 +129,14 @@ export function EditGameDialog({ game }: Props) {
             onClick={closeEditDialog}
             className="rounded px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800"
           >
-            Abbrechen
+            {t("dialog_cancel")}
           </button>
           <button
             type="submit"
             disabled={submitting}
             className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
           >
-            Speichern
+            {t("dialog_save")}
           </button>
         </div>
       </form>

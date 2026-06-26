@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { API_BASE } from "../authStore";
+import { useT } from "../translations";
 
 interface Props {
   displayName: string;
+  avatarUrl: string | null;
   isAdmin?: boolean;
   onOpenProfile: () => void;
   onOpenFriends: () => void;
@@ -11,8 +14,14 @@ interface Props {
   onLogout: () => void;
 }
 
+function resolveUrl(url: string | null): string | null {
+  if (!url) return null;
+  return url.startsWith("http") ? url : `${API_BASE}${url}`;
+}
+
 export function UserMenu({
   displayName,
+  avatarUrl,
   isAdmin,
   onOpenProfile,
   onOpenFriends,
@@ -21,6 +30,7 @@ export function UserMenu({
   onOpenWishlist,
   onLogout,
 }: Props) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -39,9 +49,14 @@ export function UserMenu({
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="text-sm text-[#9aa7b3] hover:text-zinc-200 hover:underline"
+        title={displayName}
+        className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-zinc-700 text-xs font-bold text-zinc-200 ring-1 ring-white/10 hover:ring-sky-400/50"
       >
-        {displayName}
+        {resolveUrl(avatarUrl) ? (
+          <img src={resolveUrl(avatarUrl)!} alt="" className="h-full w-full object-cover" />
+        ) : (
+          displayName.slice(0, 1).toUpperCase()
+        )}
       </button>
 
       {open && (
@@ -53,7 +68,7 @@ export function UserMenu({
             }}
             className="block w-full px-3 py-2 text-left text-zinc-200 hover:bg-zinc-800"
           >
-            Profil
+            {t("menu_profile")}
           </button>
           <button
             onClick={() => {
@@ -62,7 +77,7 @@ export function UserMenu({
             }}
             className="block w-full px-3 py-2 text-left text-zinc-200 hover:bg-zinc-800"
           >
-            Freunde
+            {t("menu_friends")}
           </button>
           <button
             onClick={() => {
@@ -71,7 +86,7 @@ export function UserMenu({
             }}
             className="block w-full px-3 py-2 text-left text-zinc-200 hover:bg-zinc-800"
           >
-            Einstellungen
+            {t("menu_settings")}
           </button>
           <button
             onClick={() => {
@@ -80,7 +95,7 @@ export function UserMenu({
             }}
             className="block w-full px-3 py-2 text-left text-zinc-200 hover:bg-zinc-800"
           >
-            ♥ Wunschliste
+            {t("menu_wishlist")}
           </button>
           {isAdmin && onOpenModeration && (
             <button
@@ -90,7 +105,7 @@ export function UserMenu({
               }}
               className="block w-full border-t border-zinc-800 px-3 py-2 text-left text-amber-300 hover:bg-zinc-800"
             >
-              Moderation
+              {t("menu_moderation")}
             </button>
           )}
           <button
@@ -100,7 +115,7 @@ export function UserMenu({
             }}
             className="block w-full border-t border-zinc-800 px-3 py-2 text-left text-red-400 hover:bg-zinc-800"
           >
-            Abmelden
+            {t("menu_logout")}
           </button>
         </div>
       )}

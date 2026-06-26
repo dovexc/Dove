@@ -4,10 +4,12 @@ import { useCatalogStore } from "../../catalogStore";
 import { GameDetailPage } from "../store/GameDetailPage";
 import { Stars } from "../store/Stars";
 import { useAuthStore } from "../../authStore";
+import { useT } from "../../translations";
+import type { TranslationKey } from "../../translations";
 import type { CatalogGame } from "../../types";
 
-function formatPrice(priceCents: number): string {
-  return priceCents === 0 ? "Kostenlos" : `${(priceCents / 100).toFixed(2)} €`;
+function formatPrice(priceCents: number, t: (key: TranslationKey) => string): string {
+  return priceCents === 0 ? t("price_free") : `${(priceCents / 100).toFixed(2)} €`;
 }
 
 interface Props {
@@ -17,6 +19,7 @@ interface Props {
 }
 
 export function PublicWishlistView({ ownerName, games, onBack }: Props) {
+  const t = useT();
   const library = useCatalogStore((s) => s.library);
   const purchaseGame = useCatalogStore((s) => s.purchaseGame);
   const purchasingId = useCatalogStore((s) => s.purchasingId);
@@ -31,22 +34,23 @@ export function PublicWishlistView({ ownerName, games, onBack }: Props) {
         <div className="mb-6 flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-zinc-100">
-              Wunschliste von {ownerName}
+              {t("pwl_title")} {ownerName}
             </h1>
             <p className="text-sm text-zinc-500">
-              {games.length} {games.length === 1 ? "Spiel" : "Spiele"} gemerkt
+              {games.length} {games.length === 1 ? t("pwl_game_singular") : t("pwl_game_plural")}{" "}
+              {t("pwl_saved_suffix")}
             </p>
           </div>
           <button
             onClick={onBack}
             className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
           >
-            ← Zurück zum Profil
+            {t("pwl_back")}
           </button>
         </div>
 
         {games.length === 0 ? (
-          <p className="text-sm text-zinc-500">Noch keine Spiele gemerkt.</p>
+          <p className="text-sm text-zinc-500">{t("pwl_no_games")}</p>
         ) : (
           <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
             {games.map((game) => (
@@ -82,7 +86,7 @@ export function PublicWishlistView({ ownerName, games, onBack }: Props) {
                   )}
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-bold text-zinc-100">
-                      {formatPrice(game.price_cents)}
+                      {formatPrice(game.price_cents, t)}
                     </span>
                     {!ownedIds.has(game.id) && (
                       <button
@@ -93,7 +97,7 @@ export function PublicWishlistView({ ownerName, games, onBack }: Props) {
                         disabled={purchasingId === game.id}
                         className="rounded bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
                       >
-                        {purchasingId === game.id ? "..." : "Kaufen"}
+                        {purchasingId === game.id ? "..." : t("store_buy")}
                       </button>
                     )}
                   </div>

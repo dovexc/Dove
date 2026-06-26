@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useLibraryStore } from "../store";
 import { useCatalogStore } from "../catalogStore";
+import { useT } from "../translations";
 import type { Game } from "../types";
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export function RemoveFromAccountDialog({ game }: Props) {
+  const t = useT();
   const closeRemoveAccountDialog = useLibraryStore((s) => s.closeRemoveAccountDialog);
   const deleteGame = useLibraryStore((s) => s.deleteGame);
   const revokeOwnership = useCatalogStore((s) => s.revokeOwnership);
@@ -28,12 +30,9 @@ export function RemoveFromAccountDialog({ game }: Props) {
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black/60">
       <div className="flex w-[26rem] flex-col gap-4 rounded-lg bg-zinc-900 p-6 shadow-xl">
-        <h2 className="text-lg font-bold text-zinc-100">Komplett vom Account löschen</h2>
+        <h2 className="text-lg font-bold text-zinc-100">{t("racc_title")}</h2>
         <p className="text-sm text-zinc-300">
-          <span className="font-semibold">{game.name}</span> wird unwiderruflich aus
-          deinem Account entfernt. Du verlierst den Besitz im Store und müsstest es
-          erneut kaufen, um wieder Zugriff zu haben. Lokale Dateien werden ebenfalls
-          gelöscht.
+          <span className="font-semibold">{game.name}</span> {t("racc_body")}
         </p>
 
         <div className="mt-2 flex justify-end gap-3">
@@ -42,7 +41,7 @@ export function RemoveFromAccountDialog({ game }: Props) {
             onClick={closeRemoveAccountDialog}
             className="rounded px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800"
           >
-            Abbrechen
+            {t("dialog_cancel")}
           </button>
           <button
             type="button"
@@ -50,7 +49,7 @@ export function RemoveFromAccountDialog({ game }: Props) {
             disabled={submitting}
             className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
           >
-            Endgültig löschen
+            {t("racc_confirm")}
           </button>
         </div>
       </div>

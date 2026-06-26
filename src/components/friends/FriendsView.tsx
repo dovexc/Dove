@@ -3,6 +3,8 @@ import { useFriendsStore } from "../../friendsStore";
 import { API_BASE } from "../../authStore";
 import { PublicProfileView, type FriendStatus } from "../profile/PublicProfileView";
 import { DirectMessageView } from "./DirectMessageView";
+import { useT } from "../../translations";
+import type { TranslationKey } from "../../translations";
 import type { UserSummary } from "../../types";
 
 function resolveUrl(url: string | null): string | null {
@@ -23,12 +25,21 @@ function avatarGradient(id: number): string {
   return AVATAR_GRADIENTS[id % AVATAR_GRADIENTS.length];
 }
 
-const STATUS_STYLE: Record<string, { text: string; label: string }> = {
-  friends: { text: "#7fe39a", label: "Befreundet" },
-  pending_outgoing: { text: "#7b8794", label: "Anfrage gesendet" },
-  pending_incoming: { text: "#9fe3ff", label: "Anfrage erhalten" },
-  none: { text: "#7b8794", label: "" },
-};
+function statusStyle(
+  status: string,
+  t: (key: TranslationKey) => string
+): { text: string; label: string } {
+  switch (status) {
+    case "friends":
+      return { text: "#7fe39a", label: t("fr_status_friends") };
+    case "pending_outgoing":
+      return { text: "#7b8794", label: t("fr_status_pending_outgoing") };
+    case "pending_incoming":
+      return { text: "#9fe3ff", label: t("fr_status_pending_incoming") };
+    default:
+      return { text: "#7b8794", label: "" };
+  }
+}
 
 interface Props {
   onClose: () => void;
@@ -83,11 +94,12 @@ function FriendCard({
   busy?: boolean;
   showOnlineStatus?: boolean;
 }) {
+  const t = useT();
   const statusInfo = showOnlineStatus
     ? user.online
-      ? { text: "#7fe39a", label: "Online" }
-      : { text: "#7b8794", label: "Offline" }
-    : STATUS_STYLE[status];
+      ? { text: "#7fe39a", label: t("fr_online") }
+      : { text: "#7b8794", label: t("fr_offline") }
+    : statusStyle(status, t);
   return (
     <div
       onClick={onOpen}
@@ -99,7 +111,7 @@ function FriendCard({
         <div className="truncate text-base font-bold text-zinc-100">{user.display_name}</div>
         {showOnlineStatus && user.online && user.playing_title ? (
           <div className="mt-0.5 truncate text-[13px] font-semibold" style={{ color: "#66c0f4" }}>
-            Spielt: {user.playing_title}
+            {t("fr_playing")}: {user.playing_title}
           </div>
         ) : (
           statusInfo.label && (
@@ -115,10 +127,10 @@ function FriendCard({
             e.stopPropagation();
             onChat();
           }}
-          title="Chat öffnen"
+          title={t("fr_chat")}
           className="shrink-0 rounded-[7px] border border-white/10 bg-white/5 px-3.5 py-2 text-[13px] font-bold text-zinc-300 hover:bg-white/10 hover:text-white"
         >
-          💬 Chat
+          {t("fr_chat_label")}
         </button>
       )}
       {actionLabel && onAction && (
@@ -138,6 +150,7 @@ function FriendCard({
 }
 
 export function FriendsView({ onClose }: Props) {
+  const t = useT();
   const [tab, setTab] = useState<Tab>("freunde");
   const [chatFriend, setChatFriend] = useState<UserSummary | null>(null);
 
@@ -200,9 +213,9 @@ export function FriendsView({ onClose }: Props) {
   const viewedStatus = viewedProfile ? friendStatusOf(viewedProfile.id) : "none";
 
   const tabs: [Tab, string][] = [
-    ["freunde", `Freunde (${friends.length})`],
-    ["suche", "Suche"],
-    ["anfragen", `Anfragen (${requests.incoming.length})`],
+    ["freunde", `${t("fr_tab_friends")} (${friends.length})`],
+    ["suche", t("fr_tab_search")],
+    ["anfragen", `${t("fr_tab_requests")} (${requests.incoming.length})`],
   ];
 
   return (
@@ -217,18 +230,18 @@ export function FriendsView({ onClose }: Props) {
         <div className="mb-6 flex items-start justify-between">
           <div>
             <div className="mb-2 text-[13px] font-bold uppercase tracking-[4px] text-[#5b8db8]">
-              Freunde
+              {t("fr_friends_label")}
             </div>
             <div className="flex items-center gap-3.5">
               <h1 className="m-0 text-[32px] font-black tracking-tight text-white">
-                Deine Freunde
+                {t("fr_your_friends")}
               </h1>
               <span className="flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1.5 text-[13px] font-semibold text-emerald-300">
                 <span
                   className="h-2 w-2 rounded-full bg-emerald-400"
                   style={{ boxShadow: "0 0 8px #5fd17a" }}
                 />
-                {friends.length} Freunde
+                {friends.length} {t("fr_friends_label")}
               </span>
             </div>
           </div>
@@ -236,7 +249,7 @@ export function FriendsView({ onClose }: Props) {
             onClick={onClose}
             className="rounded-md border border-white/10 bg-white/5 px-5 py-2.5 text-sm font-semibold text-zinc-200 hover:bg-white/10 hover:text-white"
           >
-            Schließen
+            {t("fr_close")}
           </button>
         </div>
 
@@ -270,20 +283,18 @@ export function FriendsView({ onClose }: Props) {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   autoFocus
-                  placeholder="Nutzer durchsuchen..."
+                  placeholder={t("fr_search_placeholder")}
                   className="flex-1 bg-transparent text-[15px] text-[#dbe7f2] outline-none placeholder:text-[#5b6b7a]"
                 />
               </div>
             </div>
 
             {!query.trim() ? (
-              <p className="text-sm text-zinc-500">
-                Tippe einen Namen ein, um Nutzer zu finden.
-              </p>
+              <p className="text-sm text-zinc-500">{t("fr_search_hint")}</p>
             ) : searching ? (
-              <p className="text-sm text-zinc-500">Suche läuft...</p>
+              <p className="text-sm text-zinc-500">{t("fr_searching")}</p>
             ) : results.length === 0 ? (
-              <p className="text-sm text-zinc-500">Keine Nutzer gefunden.</p>
+              <p className="text-sm text-zinc-500">{t("fr_no_users_found")}</p>
             ) : (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {results.map((user) => {
@@ -294,7 +305,7 @@ export function FriendsView({ onClose }: Props) {
                       user={user}
                       status={status}
                       onOpen={() => viewProfile(user.id)}
-                      actionLabel={status === "none" ? "Hinzufügen" : undefined}
+                      actionLabel={status === "none" ? t("fr_add") : undefined}
                       onAction={status === "none" ? () => sendFriendRequest(user.id) : undefined}
                       busy={pendingActionId === user.id}
                     />
@@ -308,9 +319,9 @@ export function FriendsView({ onClose }: Props) {
         {tab === "freunde" && (
           <div className="flex flex-col gap-4">
             {loadingFriends ? (
-              <p className="text-sm text-zinc-500">Lädt...</p>
+              <p className="text-sm text-zinc-500">{t("fr_loading")}</p>
             ) : friends.length === 0 ? (
-              <p className="text-sm text-zinc-500">Noch keine Freunde hinzugefügt.</p>
+              <p className="text-sm text-zinc-500">{t("fr_no_friends")}</p>
             ) : (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {sortedFriends.map((user) => (
@@ -332,10 +343,10 @@ export function FriendsView({ onClose }: Props) {
           <div className="flex flex-col gap-8">
             <div>
               <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-                Eingehend
+                {t("fr_incoming")}
               </h3>
               {requests.incoming.length === 0 ? (
-                <p className="text-sm text-zinc-500">Keine eingehenden Anfragen.</p>
+                <p className="text-sm text-zinc-500">{t("fr_no_incoming")}</p>
               ) : (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {requests.incoming.map((user) => (
@@ -353,14 +364,14 @@ export function FriendsView({ onClose }: Props) {
                         disabled={pendingActionId === user.id}
                         className="shrink-0 rounded-[7px] bg-emerald-600 px-3.5 py-2 text-[13px] font-bold text-white hover:bg-emerald-500 disabled:opacity-50"
                       >
-                        Annehmen
+                        {t("fr_accept")}
                       </button>
                       <button
                         onClick={() => removeFriend(user.id)}
                         disabled={pendingActionId === user.id}
                         className="shrink-0 rounded-[7px] border border-white/10 bg-white/5 px-3.5 py-2 text-[13px] font-bold text-zinc-300 hover:bg-white/10 disabled:opacity-50"
                       >
-                        Ablehnen
+                        {t("fr_decline")}
                       </button>
                     </div>
                   ))}
@@ -370,10 +381,10 @@ export function FriendsView({ onClose }: Props) {
 
             <div>
               <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-                Ausgehend
+                {t("fr_outgoing")}
               </h3>
               {requests.outgoing.length === 0 ? (
-                <p className="text-sm text-zinc-500">Keine ausgehenden Anfragen.</p>
+                <p className="text-sm text-zinc-500">{t("fr_no_outgoing")}</p>
               ) : (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {requests.outgoing.map((user) => (
@@ -382,7 +393,7 @@ export function FriendsView({ onClose }: Props) {
                       user={user}
                       status="pending_outgoing"
                       onOpen={() => viewProfile(user.id)}
-                      actionLabel="Zurückziehen"
+                      actionLabel={t("fr_withdraw")}
                       onAction={() => removeFriend(user.id)}
                       busy={pendingActionId === user.id}
                     />

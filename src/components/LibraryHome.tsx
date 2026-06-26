@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { convertFileSrc, formatPlaytime, formatSize } from "../utils";
 import { useLibraryStore } from "../store";
+import { useT } from "../translations";
 import type { Game } from "../types";
 
 type SortKey = "name" | "size" | "playtime";
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export function LibraryHome({ games, onSelect, onPlay }: Props) {
+  const t = useT();
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const openContextMenu = useLibraryStore((s) => s.openContextMenu);
@@ -45,7 +47,7 @@ export function LibraryHome({ games, onSelect, onPlay }: Props) {
       {recentGames.length > 0 && (
         <section>
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-            Zuletzt gespielt
+            {t("lib_recently_played")}
           </h2>
           <div className="flex gap-3 overflow-x-auto pb-2">
             {recentGames.map((game) => (
@@ -68,7 +70,7 @@ export function LibraryHome({ games, onSelect, onPlay }: Props) {
                     />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center text-xs text-zinc-500">
-                      Kein Cover
+                      {t("game_no_cover")}
                     </div>
                   )}
                 </div>
@@ -84,13 +86,13 @@ export function LibraryHome({ games, onSelect, onPlay }: Props) {
       <section className="flex min-h-0 flex-1 flex-col">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
-            Alle Spiele
+            {t("lib_all_games")}
           </h2>
           <div className="flex gap-2">
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Titel durchsuchen..."
+              placeholder={t("lib_search_placeholder")}
               className="rounded bg-zinc-800 px-3 py-1.5 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
             />
             <select
@@ -98,15 +100,15 @@ export function LibraryHome({ games, onSelect, onPlay }: Props) {
               onChange={(e) => setSortKey(e.target.value as SortKey)}
               className="rounded bg-zinc-800 px-3 py-1.5 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
             >
-              <option value="name">Titel</option>
-              <option value="size">Größe auf der Festplatte</option>
-              <option value="playtime">Spielzeit</option>
+              <option value="name">{t("lib_sort_title")}</option>
+              <option value="size">{t("lib_sort_size")}</option>
+              <option value="playtime">{t("lib_sort_playtime")}</option>
             </select>
           </div>
         </div>
 
         {filteredGames.length === 0 ? (
-          <p className="text-sm text-zinc-500">Keine Spiele gefunden.</p>
+          <p className="text-sm text-zinc-500">{t("lib_no_games_found")}</p>
         ) : (
           <div className="flex flex-col divide-y divide-zinc-800 overflow-y-auto">
             {filteredGames.map((game) => (

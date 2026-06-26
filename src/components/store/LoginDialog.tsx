@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { useAuthStore } from "../../authStore";
+import { useT } from "../../translations";
 
 interface Props {
   onClose: () => void;
 }
 
 export function LoginDialog({ onClose }: Props) {
+  const t = useT();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -43,7 +45,7 @@ export function LoginDialog({ onClose }: Props) {
         className="flex w-[24rem] flex-col gap-4 rounded-lg bg-zinc-900 p-6 shadow-xl"
       >
         <h2 className="text-lg font-bold text-zinc-100">
-          {mode === "login" ? "Anmelden" : "Konto erstellen"}
+          {mode === "login" ? t("login_title") : t("login_create_account_title")}
         </h2>
 
         {error && (
@@ -53,7 +55,7 @@ export function LoginDialog({ onClose }: Props) {
         )}
 
         <label className="flex flex-col gap-1 text-sm text-zinc-300">
-          E-Mail
+          {t("login_email")}
           <input
             type="email"
             value={email}
@@ -64,7 +66,7 @@ export function LoginDialog({ onClose }: Props) {
         </label>
 
         <label className="flex flex-col gap-1 text-sm text-zinc-300">
-          Passwort
+          {t("login_password")}
           <input
             type="password"
             value={password}
@@ -77,7 +79,7 @@ export function LoginDialog({ onClose }: Props) {
 
         {mode === "register" && (
           <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            Anzeigename
+            {t("login_display_name")}
             <input
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
@@ -95,9 +97,7 @@ export function LoginDialog({ onClose }: Props) {
           }}
           className="text-left text-xs text-sky-400 hover:underline"
         >
-          {mode === "login"
-            ? "Noch kein Konto? Jetzt registrieren"
-            : "Schon ein Konto? Stattdessen anmelden"}
+          {mode === "login" ? t("login_to_register") : t("login_to_login")}
         </button>
 
         <div className="mt-2 flex justify-end gap-3">
@@ -106,14 +106,14 @@ export function LoginDialog({ onClose }: Props) {
             onClick={onClose}
             className="rounded px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800"
           >
-            Abbrechen
+            {t("dialog_cancel")}
           </button>
           <button
             type="submit"
             disabled={loading}
             className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
           >
-            {mode === "login" ? "Anmelden" : "Registrieren"}
+            {mode === "login" ? t("login_title") : t("login_register")}
           </button>
         </div>
       </form>

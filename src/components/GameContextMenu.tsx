@@ -2,10 +2,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { useLibraryStore } from "../store";
+import { useT } from "../translations";
 
 const VIEWPORT_MARGIN = 8;
 
 export function GameContextMenu() {
+  const t = useT();
   const contextMenu = useLibraryStore((s) => s.contextMenu);
   const closeContextMenu = useLibraryStore((s) => s.closeContextMenu);
   const openDeleteDialog = useLibraryStore((s) => s.openDeleteDialog);
@@ -58,8 +60,8 @@ export function GameContextMenu() {
     const path = await open({
       multiple: false,
       directory: false,
-      title: "Cover-Bild auswählen",
-      filters: [{ name: "Bilder", extensions: ["png", "jpg", "jpeg", "webp"] }],
+      title: t("dialog_choose_cover"),
+      filters: [{ name: t("dialog_images"), extensions: ["png", "jpg", "jpeg", "webp"] }],
     });
     if (typeof path === "string") {
       await editGame(game.id, {
@@ -105,26 +107,26 @@ export function GameContextMenu() {
         onClick={handleChangeImage}
         className="block w-full px-3 py-2 text-left text-zinc-200 hover:bg-zinc-800"
       >
-        Bild ändern
+        {t("ctx_change_image")}
       </button>
       <button
         onClick={handleBrowseFiles}
         className="block w-full px-3 py-2 text-left text-zinc-200 hover:bg-zinc-800"
       >
-        Lokale Dateien durchsuchen
+        {t("ctx_browse_files")}
       </button>
       <button
         onClick={handleDelete}
         className="block w-full px-3 py-2 text-left text-red-400 hover:bg-zinc-800"
       >
-        {game.catalog_game_id != null ? "Deinstallieren" : "Löschen"}
+        {game.catalog_game_id != null ? t("ctx_uninstall") : t("ctx_delete")}
       </button>
       {game.catalog_game_id != null && (
         <button
           onClick={handleRemoveFromAccount}
           className="block w-full px-3 py-2 text-left text-red-400 hover:bg-zinc-800"
         >
-          Komplett vom Account löschen
+          {t("ctx_remove_from_account")}
         </button>
       )}
     </div>

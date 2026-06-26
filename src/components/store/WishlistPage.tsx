@@ -3,9 +3,11 @@ import { useAuthStore } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
 import { GameDetailPage } from "./GameDetailPage";
 import { Stars } from "./Stars";
+import { useT } from "../../translations";
+import type { TranslationKey } from "../../translations";
 
-function formatPrice(priceCents: number): string {
-  return priceCents === 0 ? "Kostenlos" : `${(priceCents / 100).toFixed(2)} €`;
+function formatPrice(priceCents: number, t: (key: TranslationKey) => string): string {
+  return priceCents === 0 ? t("price_free") : `${(priceCents / 100).toFixed(2)} €`;
 }
 
 interface Props {
@@ -13,6 +15,7 @@ interface Props {
 }
 
 export function WishlistPage({ onClose }: Props) {
+  const t = useT();
   const wishlist = useCatalogStore((s) => s.wishlist);
   const library = useCatalogStore((s) => s.library);
   const fetchWishlist = useCatalogStore((s) => s.fetchWishlist);
@@ -40,23 +43,22 @@ export function WishlistPage({ onClose }: Props) {
       <div className="mx-auto max-w-5xl px-6 py-8">
         <div className="mb-6 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-zinc-100">Wunschliste</h1>
+            <h1 className="text-2xl font-bold text-zinc-100">{t("wl_title")}</h1>
             <p className="text-sm text-zinc-500">
-              {wishlist.length} {wishlist.length === 1 ? "Spiel" : "Spiele"} gemerkt
+              {wishlist.length} {wishlist.length === 1 ? t("pwl_game_singular") : t("pwl_game_plural")}{" "}
+              {t("pwl_saved_suffix")}
             </p>
           </div>
           <button
             onClick={onClose}
             className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
           >
-            Schließen
+            {t("close")}
           </button>
         </div>
 
         {wishlist.length === 0 ? (
-          <p className="text-sm text-zinc-500">
-            Noch keine Spiele gemerkt. Klicke im Store auf das Herz-Symbol, um Spiele hier zu sammeln.
-          </p>
+          <p className="text-sm text-zinc-500">{t("wl_empty")}</p>
         ) : (
           <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
             {wishlist.map((game) => (
@@ -84,7 +86,7 @@ export function WishlistPage({ onClose }: Props) {
                       e.stopPropagation();
                       removeFromWishlist(game.id);
                     }}
-                    title="Von der Wunschliste entfernen"
+                    title={t("wl_remove_title")}
                     className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full bg-pink-600/80 text-sm text-white hover:bg-pink-600"
                   >
                     ♥
@@ -102,7 +104,7 @@ export function WishlistPage({ onClose }: Props) {
                   )}
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-bold text-zinc-100">
-                      {formatPrice(game.price_cents)}
+                      {formatPrice(game.price_cents, t)}
                     </span>
                     <button
                       onClick={(e) => {
@@ -112,7 +114,7 @@ export function WishlistPage({ onClose }: Props) {
                       disabled={purchasingId === game.id}
                       className="rounded bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
                     >
-                      {purchasingId === game.id ? "..." : "Kaufen"}
+                      {purchasingId === game.id ? "..." : t("store_buy")}
                     </button>
                   </div>
                 </div>

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useLibraryStore } from "../store";
+import { useT } from "../translations";
 import type { Game } from "../types";
 
 interface Props {
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export function DeleteGameDialog({ game }: Props) {
+  const t = useT();
   const closeDeleteDialog = useLibraryStore((s) => s.closeDeleteDialog);
   const deleteGame = useLibraryStore((s) => s.deleteGame);
   const uninstallGame = useLibraryStore((s) => s.uninstallGame);
@@ -32,12 +34,9 @@ export function DeleteGameDialog({ game }: Props) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-black/60">
         <div className="flex w-[26rem] flex-col gap-4 rounded-lg bg-zinc-900 p-6 shadow-xl">
-          <h2 className="text-lg font-bold text-zinc-100">Spiel deinstallieren</h2>
+          <h2 className="text-lg font-bold text-zinc-100">{t("del_uninstall_title")}</h2>
           <p className="text-sm text-zinc-300">
-            <span className="font-semibold">{game.name}</span> wird deinstalliert
-            und die lokalen Dateien werden gelöscht. Du bleibst im Besitz des
-            Spiels und kannst es jederzeit über deine Bibliothek erneut
-            herunterladen.
+            <span className="font-semibold">{game.name}</span> {t("del_uninstall_body")}
           </p>
 
           <div className="mt-2 flex justify-end gap-3">
@@ -46,7 +45,7 @@ export function DeleteGameDialog({ game }: Props) {
               onClick={closeDeleteDialog}
               className="rounded px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800"
             >
-              Abbrechen
+              {t("dialog_cancel")}
             </button>
             <button
               type="button"
@@ -54,7 +53,7 @@ export function DeleteGameDialog({ game }: Props) {
               disabled={submitting}
               className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
             >
-              Deinstallieren
+              {t("del_uninstall_confirm")}
             </button>
           </div>
         </div>
@@ -65,10 +64,10 @@ export function DeleteGameDialog({ game }: Props) {
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black/60">
       <div className="flex w-[26rem] flex-col gap-4 rounded-lg bg-zinc-900 p-6 shadow-xl">
-        <h2 className="text-lg font-bold text-zinc-100">Spiel entfernen</h2>
+        <h2 className="text-lg font-bold text-zinc-100">{t("del_remove_title")}</h2>
         <p className="text-sm text-zinc-300">
-          Soll <span className="font-semibold">{game.name}</span> wirklich aus
-          der Bibliothek entfernt werden?
+          {t("del_remove_body")} <span className="font-semibold">{game.name}</span>{" "}
+          {t("del_remove_body_suffix")}
         </p>
 
         <label className="flex items-start gap-2 rounded bg-zinc-800/60 p-3 text-sm text-zinc-300">
@@ -79,11 +78,10 @@ export function DeleteGameDialog({ game }: Props) {
             className="mt-0.5"
           />
           <span>
-            Spieldateien zusätzlich von der Festplatte löschen
+            {t("del_also_delete_files")}
             <br />
             <span className="text-xs text-red-400">
-              Löscht den gesamten Ordner der Executable unwiderruflich:{" "}
-              {game.exe_path}
+              {t("del_delete_files_warning")} {game.exe_path}
             </span>
           </span>
         </label>
@@ -94,7 +92,7 @@ export function DeleteGameDialog({ game }: Props) {
             onClick={closeDeleteDialog}
             className="rounded px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800"
           >
-            Abbrechen
+            {t("dialog_cancel")}
           </button>
           <button
             type="button"
@@ -102,7 +100,7 @@ export function DeleteGameDialog({ game }: Props) {
             disabled={submitting}
             className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
           >
-            {deleteFiles ? "Entfernen & Dateien löschen" : "Entfernen"}
+            {deleteFiles ? t("del_remove_and_delete") : t("del_remove")}
           </button>
         </div>
       </div>

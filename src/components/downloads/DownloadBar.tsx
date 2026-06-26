@@ -1,11 +1,13 @@
 import { useDownloadStore } from "../../downloadStore";
 import { formatSpeed } from "../../utils";
+import { useT } from "../../translations";
 
 interface Props {
   onOpen: () => void;
 }
 
 export function DownloadBar({ onOpen }: Props) {
+  const t = useT();
   const queue = useDownloadStore((s) => s.queue);
 
   const current = queue.find(
@@ -22,7 +24,7 @@ export function DownloadBar({ onOpen }: Props) {
       onClick={onOpen}
       className="flex w-full items-center gap-4 border-t border-zinc-800 bg-zinc-900 px-6 py-2 text-left hover:bg-zinc-800"
     >
-      <span className="text-sm font-semibold text-zinc-200">Downloads</span>
+      <span className="text-sm font-semibold text-zinc-200">{t("nav_downloads")}</span>
 
       {current ? (
         <>
@@ -39,17 +41,17 @@ export function DownloadBar({ onOpen }: Props) {
           </div>
           <span className="shrink-0 text-xs text-zinc-500">
             {current.status === "extracting"
-              ? "Entpacke..."
+              ? t("dl_extracting_short")
               : `${percent ?? 0}% · ${formatSpeed(current.speedBps)}`}
           </span>
         </>
       ) : (
-        <span className="text-sm text-zinc-500">Bereit</span>
+        <span className="text-sm text-zinc-500">{t("dl_ready")}</span>
       )}
 
       {queuedCount > 0 && (
         <span className="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
-          +{queuedCount} in Warteschlange
+          +{queuedCount} {t("dl_in_queue_suffix")}
         </span>
       )}
     </button>

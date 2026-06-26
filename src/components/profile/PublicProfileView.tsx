@@ -2,6 +2,7 @@ import { useState } from "react";
 import { API_BASE } from "../../authStore";
 import type { PublicProfile } from "../../types";
 import { PublicWishlistView } from "./PublicWishlistView";
+import { useT } from "../../translations";
 
 export type FriendStatus = "none" | "friends" | "pending_outgoing" | "pending_incoming";
 
@@ -31,6 +32,7 @@ export function PublicProfileView({
   onRemoveFriend,
   onOpenChat,
 }: Props) {
+  const t = useT();
   const backgroundUrl = resolveUrl(profile.background_url);
   const avatarUrl = resolveUrl(profile.avatar_url);
   const [showWishlist, setShowWishlist] = useState(false);
@@ -44,7 +46,7 @@ export function PublicProfileView({
           disabled={friendActionBusy}
           className="rounded-md border border-white/10 bg-white/5 px-3.5 py-1.5 text-[13px] font-bold text-zinc-300 hover:bg-white/10 disabled:opacity-50"
         >
-          Freund entfernen
+          {t("pp_remove_friend")}
         </button>
       );
     }
@@ -55,14 +57,14 @@ export function PublicProfileView({
           disabled={friendActionBusy}
           className="rounded-md bg-emerald-600 px-3.5 py-1.5 text-[13px] font-bold text-white hover:bg-emerald-500 disabled:opacity-50"
         >
-          Anfrage annehmen
+          {t("pp_accept_request")}
         </button>
       );
     }
     if (friendStatus === "pending_outgoing") {
       return (
         <span className="rounded-md border border-white/10 bg-white/5 px-3.5 py-1.5 text-[13px] font-bold text-zinc-400">
-          Anfrage gesendet
+          {t("pp_request_sent")}
         </span>
       );
     }
@@ -72,7 +74,7 @@ export function PublicProfileView({
         disabled={friendActionBusy}
         className="rounded-md border border-sky-400/30 bg-sky-500/10 px-3.5 py-1.5 text-[13px] font-bold text-sky-300 hover:bg-sky-500/20 hover:text-white disabled:opacity-50"
       >
-        Als Freund hinzufügen
+        {t("pp_add_friend")}
       </button>
     );
   }
@@ -92,7 +94,7 @@ export function PublicProfileView({
           onClick={onClose}
           className="absolute right-8 top-4 rounded-md bg-black/40 px-3.5 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-black/60"
         >
-          Schließen
+          {t("close")}
         </button>
       </div>
 
@@ -134,14 +136,14 @@ export function PublicProfileView({
                 onClick={onOpenChat}
                 className="rounded-md border border-white/10 bg-white/5 px-3.5 py-1.5 text-[13px] font-bold text-zinc-300 hover:bg-white/10"
               >
-                💬 Chat
+                {t("fr_chat_label")}
               </button>
             )}
             <button
               onClick={() => setShowWishlist(true)}
               className="rounded-md border border-white/10 bg-white/5 px-3.5 py-1.5 text-[13px] font-bold text-zinc-300 hover:bg-white/10"
             >
-              ♥ Wunschliste
+              {t("menu_wishlist")}
             </button>
             {renderFriendButton()}
           </div>
@@ -150,19 +152,19 @@ export function PublicProfileView({
         <div className="mt-[30px] flex flex-col gap-[30px]">
           <div>
             <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
-              Über mich
+              {t("profile_about")}
             </div>
             <div className="rounded-[11px] border border-white/[0.06] bg-gradient-to-b from-[#141d27] to-[#111923] px-[22px] py-[22px] text-[15px] text-[#c7d5e0]">
-              {profile.bio || "Keine Beschreibung vorhanden."}
+              {profile.bio || t("pp_no_bio")}
             </div>
           </div>
 
           <div>
             <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
-              Screenshots
+              {t("profile_screenshots")}
             </div>
             {profile.screenshots.length === 0 ? (
-              <p className="text-sm text-zinc-500">Noch keine Screenshots vorhanden.</p>
+              <p className="text-sm text-zinc-500">{t("pp_no_screenshots")}</p>
             ) : (
               <div className="grid grid-cols-3 gap-3">
                 {profile.screenshots.map((s) => (

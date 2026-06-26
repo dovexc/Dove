@@ -5,6 +5,8 @@ import { formatSize } from "../../utils";
 import type { CatalogGame } from "../../types";
 import { GameDetailPage } from "./GameDetailPage";
 import { Stars } from "./Stars";
+import { useT } from "../../translations";
+import type { TranslationKey } from "../../translations";
 
 const COVER_GRADIENTS = [
   "linear-gradient(135deg,#2b5876,#4e4376)",
@@ -21,8 +23,8 @@ function coverGradient(id: number): string {
   return COVER_GRADIENTS[id % COVER_GRADIENTS.length];
 }
 
-function formatPrice(priceCents: number): string {
-  return priceCents === 0 ? "Kostenlos" : `${(priceCents / 100).toFixed(2)} €`;
+function formatPrice(priceCents: number, t: (key: TranslationKey) => string): string {
+  return priceCents === 0 ? t("price_free") : `${(priceCents / 100).toFixed(2)} €`;
 }
 
 function parseTags(tags: string | null): string[] {
@@ -42,6 +44,7 @@ function TagInput({
   onChange: (tags: string[]) => void;
   suggestions: string[];
 }) {
+  const t = useT();
   const [draft, setDraft] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
 
@@ -98,7 +101,7 @@ function TagInput({
               removeTag(tags[tags.length - 1]);
             }
           }}
-          placeholder={tags.length === 0 ? "Beliebige Tags eingeben, Enter zum Hinzufügen" : ""}
+          placeholder={tags.length === 0 ? t("store_tag_input_placeholder") : ""}
           className="min-w-[120px] flex-1 bg-transparent px-1 py-1 text-zinc-100 outline-none placeholder:text-zinc-500"
         />
       </div>
@@ -124,6 +127,7 @@ function TagInput({
 }
 
 export function StoreView() {
+  const t = useT();
   const games = useCatalogStore((s) => s.games);
   const library = useCatalogStore((s) => s.library);
   const wishlist = useCatalogStore((s) => s.wishlist);
@@ -164,7 +168,7 @@ export function StoreView() {
   const [savePathHint, setSavePathHint] = useState("");
 
   const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("Alle");
+  const [category, setCategory] = useState(t("store_category_all"));
   const [tagSearch, setTagSearch] = useState("");
   const [featuredIndex, setFeaturedIndex] = useState(0);
 
@@ -176,16 +180,16 @@ export function StoreView() {
     for (const game of games) {
       for (const tag of parseTags(game.tags)) set.add(tag);
     }
-    return ["Alle", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
-  }, [games]);
+    return [t("store_category_all"), ...Array.from(set).sort((a, b) => a.localeCompare(b))];
+  }, [games, t]);
 
   const visibleCategories = useMemo(() => {
     const query = tagSearch.trim().toLowerCase();
     if (!query) return categories;
     return categories.filter(
-      (c) => c === "Alle" || c === category || c.toLowerCase().includes(query)
+      (c) => c === t("store_category_all") || c === category || c.toLowerCase().includes(query)
     );
-  }, [categories, tagSearch, category]);
+  }, [categories, tagSearch, category, t]);
 
   const filteredGames = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -194,11 +198,11 @@ export function StoreView() {
         !query ||
         game.title.toLowerCase().includes(query) ||
         parseTags(game.tags).some((tag) => tag.toLowerCase().includes(query));
-      const matchesCategory = category === "Alle" || parseTags(game.tags).includes(category);
+      const matchesCategory = category === t("store_category_all") || parseTags(game.tags).includes(category);
       const matchesWishlist = !wishlistOnly || wishlistIds.has(game.id);
       return matchesQuery && matchesCategory && matchesWishlist;
     });
-  }, [games, search, category, wishlistOnly, wishlistIds]);
+  }, [games, search, category, wishlistOnly, wishlistIds, t]);
 
   const featuredGames = useMemo(
     () => games.filter((g) => g.status === "approved").slice(0, 3),
@@ -285,12 +289,12 @@ export function StoreView() {
             size === "lg" ? "px-4 py-2 text-sm" : "px-3 py-1 text-xs"
           }`}
         >
-          Im Besitz
+          {t("store_owned")}
         </span>
       );
     }
     if (!token) {
-      return <span className="text-xs text-zinc-500">Anmelden zum Kaufen</span>;
+      return <span className="text-xs text-zinc-500">{t("store_login_to_buy")}</span>;
     }
     return (
       <button
@@ -303,7 +307,7 @@ export function StoreView() {
           size === "lg" ? "px-5 py-2.5 text-sm" : "px-3 py-1 text-xs"
         }`}
       >
-        {purchasingId === game.id ? "..." : "Kaufen"}
+        {purchasingId === game.id ? "..." : t("store_buy")}
       </button>
     );
   }
@@ -318,7 +322,7 @@ export function StoreView() {
           if (wished) removeFromWishlist(game.id);
           else addToWishlist(game.id);
         }}
-        title={wished ? "Von der Wunschliste entfernen" : "Zur Wunschliste hinzufügen"}
+        title={wished ? t("wishlist_remove_title") : t("wishlist_add_title")}
         className={`flex h-7 w-7 items-center justify-center rounded-full text-sm ${
           wished
             ? "bg-pink-600/80 text-white"
@@ -340,22 +344,20 @@ export function StoreView() {
     >
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
-          Store-Katalog
+          {t("store_catalog")}
         </h2>
         {token && (
           <button
             onClick={() => setShowPublishForm((v) => !v)}
             className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
           >
-            {showPublishForm ? "Abbrechen" : "Spiel veröffentlichen"}
+            {showPublishForm ? t("store_publish_cancel") : t("store_publish")}
           </button>
         )}
       </div>
 
       {!token && (
-        <p className="text-sm text-zinc-500">
-          Melde dich an, um eigene Spiele im Katalog zu veröffentlichen.
-        </p>
+        <p className="text-sm text-zinc-500">{t("store_login_hint")}</p>
       )}
 
       {showPublishForm && (
@@ -364,7 +366,7 @@ export function StoreView() {
           className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
         >
           <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            Titel
+            {t("evt_title_label")}
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -373,7 +375,7 @@ export function StoreView() {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            Beschreibung
+            {t("evt_description")}
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -383,48 +385,48 @@ export function StoreView() {
           </label>
           <div className="grid grid-cols-2 gap-3">
             <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              Minimale Systemanforderungen
+              {t("store_min_specs_label")}
               <textarea
                 value={minSpecs}
                 onChange={(e) => setMinSpecs(e.target.value)}
                 rows={4}
-                placeholder={"OS: ...\nCPU: ...\nRAM: ...\nGPU: ...\nSpeicher: ..."}
+                placeholder={t("store_specs_placeholder")}
                 className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
               />
             </label>
             <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              Empfohlene Systemanforderungen
+              {t("store_recommended_specs_label")}
               <textarea
                 value={recommendedSpecs}
                 onChange={(e) => setRecommendedSpecs(e.target.value)}
                 rows={4}
-                placeholder={"OS: ...\nCPU: ...\nRAM: ...\nGPU: ...\nSpeicher: ..."}
+                placeholder={t("store_specs_placeholder")}
                 className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
               />
             </label>
           </div>
           <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            Speicherort der Spielstände (für Cloud-Saves)
+            {t("store_save_path_label")}
             <input
               value={savePathHint}
               onChange={(e) => setSavePathHint(e.target.value)}
-              placeholder="z. B. %APPDATA%/MeinSpiel/saves"
+              placeholder={t("store_save_path_placeholder")}
               className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
             />
             <span className="text-xs text-zinc-500">
-              Wird Spielern angezeigt, damit sie wissen, welchen Ordner sie für Cloud-Saves hoch- bzw. runterladen sollen.
+              {t("store_save_path_hint")}
             </span>
           </label>
           <TagInput
             tags={newTags}
             onChange={setNewTags}
-            suggestions={categories.filter((c) => c !== "Alle")}
+            suggestions={categories.filter((c) => c !== t("store_category_all"))}
           />
           <button
             type="submit"
             className="self-end rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
           >
-            Veröffentlichen
+            {t("evt_publish")}
           </button>
         </form>
       )}
@@ -439,18 +441,16 @@ export function StoreView() {
       )}
 
       {loading ? (
-        <p className="text-sm text-zinc-500">Katalog wird geladen...</p>
+        <p className="text-sm text-zinc-500">{t("store_loading")}</p>
       ) : games.length === 0 ? (
-        <p className="text-sm text-zinc-500">
-          Noch keine Spiele im Katalog veröffentlicht.
-        </p>
+        <p className="text-sm text-zinc-500">{t("store_no_games")}</p>
       ) : (
         <>
           {hero && (
             <section className="flex flex-col gap-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-extrabold tracking-tight text-zinc-100">
-                  Empfohlen &amp; Featured
+                  {t("store_featured")}
                 </h2>
                 {featuredGames.length > 1 && (
                   <div className="flex gap-2">
@@ -508,11 +508,11 @@ export function StoreView() {
                 <div className="flex w-[340px] flex-none flex-col bg-gradient-to-b from-[#1a2735] to-[#141d28] p-6">
                   <div className="mb-1 text-xl font-extrabold text-white">{hero.title}</div>
                   <p className="mb-auto mt-2 line-clamp-6 text-sm text-zinc-400">
-                    {hero.description || "Keine Beschreibung vorhanden."}
+                    {hero.description || t("gdp_no_description")}
                   </p>
                   <div className="mt-4 flex items-center justify-between gap-3">
                     <span className="text-base font-bold text-sky-400">
-                      {formatPrice(hero.price_cents)}
+                      {formatPrice(hero.price_cents, t)}
                     </span>
                     <div className="flex items-center gap-2">
                       {renderWishlistButton(hero, ownedIds.has(hero.id))}
@@ -543,9 +543,9 @@ export function StoreView() {
           <section className="mt-4 flex flex-col gap-5">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-extrabold tracking-tight text-zinc-100">
-                Im Katalog stöbern
+                {t("store_browse")}
               </h2>
-              <span className="text-sm text-zinc-500">{filteredGames.length} Spiele</span>
+              <span className="text-sm text-zinc-500">{filteredGames.length} {t("store_games_count_suffix")}</span>
             </div>
 
             <div className="flex flex-wrap gap-3">
@@ -554,7 +554,7 @@ export function StoreView() {
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Spiele durchsuchen..."
+                  placeholder={t("store_search_placeholder")}
                   className="flex-1 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
                 />
               </div>
@@ -580,7 +580,7 @@ export function StoreView() {
                   <input
                     value={tagSearch}
                     onChange={(e) => setTagSearch(e.target.value)}
-                    placeholder="Mehr Tags..."
+                    placeholder={t("store_tag_search_placeholder")}
                     className="w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
                   />
                 </div>
@@ -593,16 +593,15 @@ export function StoreView() {
                         : "border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10"
                     }`}
                   >
-                    ♥ Wunschliste{wishlist.length > 0 ? ` (${wishlist.length})` : ""}
+                    {t("store_wishlist_filter")}
+                    {wishlist.length > 0 ? ` (${wishlist.length})` : ""}
                   </button>
                 )}
               </div>
             </div>
 
             {filteredGames.length === 0 ? (
-              <p className="text-sm text-zinc-500">
-                Keine Spiele gefunden, die zu deiner Suche passen.
-              </p>
+              <p className="text-sm text-zinc-500">{t("store_no_results")}</p>
             ) : (
               <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
                 {filteredGames.map((game) => {
@@ -661,7 +660,7 @@ export function StoreView() {
                                 : "bg-red-900/60 text-red-300"
                             }`}
                           >
-                            {game.status === "pending" ? "In Prüfung" : "Abgelehnt"}
+                            {game.status === "pending" ? t("store_in_review") : t("store_rejected")}
                           </span>
                         )}
                         {game.review_count > 0 && (
@@ -672,12 +671,12 @@ export function StoreView() {
                         )}
                         {game.file_size_bytes != null && (
                           <span className="text-xs text-zinc-500">
-                            Download: {formatSize(game.file_size_bytes)} · v{game.version}
+                            {t("gdp_download")}: {formatSize(game.file_size_bytes)} · v{game.version}
                           </span>
                         )}
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-bold text-zinc-100">
-                            {formatPrice(game.price_cents)}
+                            {formatPrice(game.price_cents, t)}
                           </span>
                           {game.status === "approved" && renderPurchaseControl(game, owned, "sm")}
                         </div>
@@ -691,10 +690,10 @@ export function StoreView() {
                             className="rounded bg-zinc-800 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
                           >
                             {uploadingId === game.id
-                              ? "Lädt hoch..."
+                              ? t("store_uploading")
                               : game.file_url
-                                ? "Neue Version hochladen"
-                                : "Datei hochladen (.zip)"}
+                                ? t("store_upload_new_version")
+                                : t("store_upload_file")}
                           </button>
                         )}
                       </div>
@@ -728,11 +727,11 @@ export function StoreView() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="flex w-[24rem] flex-col gap-4 rounded-lg bg-zinc-900 p-6 shadow-xl">
             <h2 className="text-lg font-bold text-zinc-100">
-              Versionsnummer für {versionDialogGame.title}
+              {t("store_version_dialog_title").replace("{title}", versionDialogGame.title)}
             </h2>
             {storageUsage && (
               <div className="text-xs text-zinc-500">
-                Speicherplatz belegt: {formatSize(storageUsage.used_bytes)} /{" "}
+                {t("store_storage_used_label")} {formatSize(storageUsage.used_bytes)} /{" "}
                 {formatSize(storageUsage.quota_bytes)}
                 <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
                   <div
@@ -748,7 +747,7 @@ export function StoreView() {
               </div>
             )}
             <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              Version
+              {t("gdp_version")}
               <input
                 value={versionDraft}
                 onChange={(e) => setVersionDraft(e.target.value)}
@@ -765,7 +764,7 @@ export function StoreView() {
                 onClick={() => setVersionDialogGame(null)}
                 className="rounded px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800"
               >
-                Abbrechen
+                {t("dialog_cancel")}
               </button>
               <button
                 type="button"
@@ -773,7 +772,7 @@ export function StoreView() {
                 disabled={!versionDraft.trim()}
                 className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
               >
-                Weiter & Datei auswählen
+                {t("store_continue_pick_file")}
               </button>
             </div>
           </div>

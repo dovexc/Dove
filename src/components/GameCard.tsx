@@ -1,6 +1,7 @@
 import { convertFileSrc } from "../utils";
 import { useLibraryStore } from "../store";
 import { useDownloadStore } from "../downloadStore";
+import { useT } from "../translations";
 import type { Game } from "../types";
 
 interface Props {
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export function GameCard({ game, isSelected, onSelect, onPlay }: Props) {
+  const t = useT();
   const openContextMenu = useLibraryStore((s) => s.openContextMenu);
   const enqueue = useDownloadStore((s) => s.enqueue);
   const resumeDownload = useDownloadStore((s) => s.resumeDownload);
@@ -60,7 +62,7 @@ export function GameCard({ game, isSelected, onSelect, onPlay }: Props) {
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-zinc-500 text-sm">
-            Kein Cover
+            {t("game_no_cover")}
           </div>
         )}
       </div>
@@ -94,20 +96,20 @@ export function GameCard({ game, isSelected, onSelect, onPlay }: Props) {
           }`}
         >
           {game.is_running
-            ? "Läuft"
+            ? t("game_running")
             : isActive
               ? queueItem?.status === "extracting"
-                ? "Entpacke..."
+                ? t("dl_extracting_short")
                 : progressPercent != null
                   ? `${progressPercent}%`
                   : "..."
               : isPaused
-                ? "Fortsetzen"
+                ? t("dl_resume")
                 : isQueued
-                  ? "Wartet..."
+                  ? t("game_waiting")
                   : pendingInstall
-                    ? "Installieren"
-                    : "Spielen"}
+                    ? t("game_install")
+                    : t("dl_play")}
         </span>
       </div>
     </button>

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { convertFileSrc, formatPlaytime, formatSize } from "../utils";
 import { useLibraryStore } from "../store";
 import { useDownloadStore } from "../downloadStore";
+import { useT } from "../translations";
 import type { Game } from "../types";
 
 interface Props {
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
+  const t = useT();
   const openContextMenu = useLibraryStore((s) => s.openContextMenu);
   const checkForUpdate = useLibraryStore((s) => s.checkForUpdate);
   const updateInfo = useLibraryStore((s) => s.updateAvailable[game.id]);
@@ -53,17 +55,17 @@ export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
             />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-zinc-500 text-sm">
-              Kein Cover
+              {t("game_no_cover")}
             </div>
           )}
         </div>
         <div className="flex flex-1 flex-col">
           <h1 className="text-2xl font-bold text-zinc-100">{game.name}</h1>
           <p className="mt-1 text-sm text-zinc-400">
-            Spielzeit: {formatPlaytime(game.total_playtime_seconds)}
+            {t("gd_playtime")}: {formatPlaytime(game.total_playtime_seconds)}
           </p>
           <p className="mt-4 flex-1 whitespace-pre-wrap text-sm text-zinc-300">
-            {game.description || "Keine Beschreibung vorhanden."}
+            {game.description || t("gd_no_description")}
           </p>
           <div className="mt-4 flex gap-3">
             {pendingInstall ? (
@@ -76,13 +78,13 @@ export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
               >
                 {isActive
                   ? queueItem?.status === "extracting"
-                    ? "Entpacke..."
-                    : "Lädt herunter..."
+                    ? t("dl_extracting_short")
+                    : t("dl_downloading")
                   : isQueued
-                    ? "In Warteschlange..."
+                    ? t("gd_in_queue")
                     : isPaused
-                      ? "Fortsetzen"
-                      : "Herunterladen & installieren"}
+                      ? t("dl_resume")
+                      : t("gd_download_install")}
               </button>
             ) : (
               <>
@@ -95,14 +97,14 @@ export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
                       : "bg-sky-600 text-white hover:bg-sky-500"
                   }`}
                 >
-                  {game.is_running ? "Läuft..." : "Spielen"}
+                  {game.is_running ? t("gd_running_ellipsis") : t("dl_play")}
                 </button>
                 {hasUpdate && (
                   <button
                     onClick={() => enqueue(game.id, game.name)}
                     className="rounded bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500"
                   >
-                    Update verfügbar
+                    {t("gd_update_available")}
                     {updateInfo!.files_to_update > 0 &&
                       ` (${formatSize(updateInfo!.bytes_to_download)})`}
                   </button>
@@ -113,13 +115,13 @@ export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
               onClick={onEdit}
               className="rounded px-4 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-sky-400"
             >
-              Bearbeiten
+              {t("gd_edit")}
             </button>
             <button
               onClick={onDelete}
               className="rounded px-4 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-red-400"
             >
-              Entfernen
+              {t("gd_remove")}
             </button>
           </div>
 
@@ -140,12 +142,12 @@ export function GameDetail({ game, onPlay, onEdit, onDelete }: Props) {
               </div>
               <p className="mt-1 text-xs text-zinc-500">
                 {isPaused
-                  ? `Pausiert (${progressPercent ?? 0}%)`
+                  ? `${t("gd_paused_percent")} (${progressPercent ?? 0}%)`
                   : queueItem?.status === "extracting"
-                    ? "Entpacke Dateien..."
+                    ? t("gd_extracting_files")
                     : queueItem?.total
                       ? `${formatSize(queueItem.downloaded)} / ${formatSize(queueItem.total)} (${progressPercent ?? 0}%)`
-                      : "Lädt herunter..."}
+                      : t("dl_downloading")}
               </p>
             </div>
           )}

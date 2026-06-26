@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import { useLibraryStore } from "../store";
 import { convertFileSrc } from "../utils";
+import { useT } from "../translations";
 
 export function SteamImportDialog() {
+  const t = useT();
   const closeSteamImport = useLibraryStore((s) => s.closeSteamImport);
   const importSteamGames = useLibraryStore((s) => s.importSteamGames);
   const steamGames = useLibraryStore((s) => s.steamGames);
@@ -63,12 +65,10 @@ export function SteamImportDialog() {
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black/60">
       <div className="flex max-h-[80vh] w-[32rem] flex-col gap-4 rounded-lg bg-zinc-900 p-6 shadow-xl">
-        <h2 className="text-lg font-bold text-zinc-100">
-          Steam-Bibliothek importieren
-        </h2>
+        <h2 className="text-lg font-bold text-zinc-100">{t("steam_title")}</h2>
 
         {steamScanLoading && (
-          <p className="text-sm text-zinc-400">Steam-Spiele werden gesucht...</p>
+          <p className="text-sm text-zinc-400">{t("steam_scanning")}</p>
         )}
 
         {steamScanError && (
@@ -76,9 +76,7 @@ export function SteamImportDialog() {
         )}
 
         {!steamScanLoading && !steamScanError && steamGames.length === 0 && (
-          <p className="text-sm text-zinc-400">
-            Es wurden keine installierten Steam-Spiele gefunden.
-          </p>
+          <p className="text-sm text-zinc-400">{t("steam_none_found")}</p>
         )}
 
         {selectableGames.length > 0 && (
@@ -88,7 +86,7 @@ export function SteamImportDialog() {
               checked={allSelected}
               onChange={toggleAll}
             />
-            <span>Alle auswählen</span>
+            <span>{t("steam_select_all")}</span>
           </label>
         )}
 
@@ -122,7 +120,7 @@ export function SteamImportDialog() {
                   </div>
                   <span className="flex-1 text-zinc-200">{game.name}</span>
                   {imported && (
-                    <span className="text-xs text-zinc-500">bereits importiert</span>
+                    <span className="text-xs text-zinc-500">{t("steam_already_imported")}</span>
                   )}
                 </label>
               );
@@ -136,7 +134,7 @@ export function SteamImportDialog() {
             onClick={closeSteamImport}
             className="rounded px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800"
           >
-            Schließen
+            {t("close")}
           </button>
           <button
             type="button"
@@ -145,8 +143,8 @@ export function SteamImportDialog() {
             className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
           >
             {selectedAppIds.size > 0
-              ? `${selectedAppIds.size} Spiel(e) importieren`
-              : "Importieren"}
+              ? t("steam_import_count").replace("{n}", String(selectedAppIds.size))
+              : t("steam_import_action")}
           </button>
         </div>
       </div>

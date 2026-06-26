@@ -3,10 +3,12 @@ import { useAuthStore } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
 import { useEventsStore } from "../../eventsStore";
 import { EventDetailPage } from "./EventDetailPage";
+import { useT } from "../../translations";
+import type { TranslationKey } from "../../translations";
 import type { GameEvent } from "../../types";
 
-function formatPrize(priceCents: number): string {
-  return priceCents === 0 ? "Kein Preisgeld" : `${(priceCents / 100).toFixed(2)} €`;
+function formatPrize(priceCents: number, t: (key: TranslationKey) => string): string {
+  return priceCents === 0 ? t("evt_no_prize") : `${(priceCents / 100).toFixed(2)} €`;
 }
 
 function totalPrize(event: GameEvent): number {
@@ -35,6 +37,7 @@ type SortMode = "deadline" | "prize" | "newest" | "game";
 type TypeFilter = "all" | "jam" | "tournament";
 
 export function EventsPage() {
+  const t = useT();
   const events = useEventsStore((s) => s.events);
   const loading = useEventsStore((s) => s.loading);
   const error = useEventsStore((s) => s.error);
@@ -163,21 +166,21 @@ export function EventsPage() {
     >
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
-          Game Jams &amp; Turniere
+          {t("evt_page_heading")}
         </h2>
         {token && (
           <button
             onClick={() => setShowHostForm((v) => !v)}
             className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
           >
-            {showHostForm ? "Abbrechen" : "Event hosten"}
+            {showHostForm ? t("dialog_cancel") : t("evt_host_event")}
           </button>
         )}
       </div>
 
       {!token && (
         <p className="text-sm text-zinc-500">
-          Melde dich an, um Events zu hosten oder beizutreten.
+          {t("evt_login_hint")}
         </p>
       )}
 
@@ -196,7 +199,7 @@ export function EventsPage() {
           className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
         >
           <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            Titel
+            {t("evt_title_label")}
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -205,23 +208,23 @@ export function EventsPage() {
             />
           </label>
           <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            Beschreibung
+            {t("evt_description")}
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              placeholder="Regeln, Thema, Format, ..."
+              placeholder={t("evt_rules_placeholder")}
               className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            Verknüpftes Spiel (optional, für Turniere)
+            {t("evt_linked_game_label")}
             <select
               value={catalogGameId}
               onChange={(e) => setCatalogGameId(e.target.value)}
               className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
             >
-              <option value="">Kein bestimmtes Spiel (Game Jam)</option>
+              <option value="">{t("evt_no_specific_game")}</option>
               {catalogGames
                 .filter((g) => g.status === "approved")
                 .map((g) => (
@@ -233,18 +236,18 @@ export function EventsPage() {
           </label>
           {!catalogGameId && (
             <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              Oder eigenes Spiel angeben (nicht im Game Launcher)
+              {t("evt_custom_game_label")}
               <input
                 value={customGameTitle}
                 onChange={(e) => setCustomGameTitle(e.target.value)}
-                placeholder="z. B. Fortnite, Valorant, ..."
+                placeholder={t("evt_custom_game_placeholder")}
                 className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
               />
             </label>
           )}
           <div className="grid grid-cols-3 gap-3">
             <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              Anmeldeschluss
+              {t("evt_registration_deadline")}
               <input
                 type="date"
                 value={registrationDeadline}
@@ -253,7 +256,7 @@ export function EventsPage() {
               />
             </label>
             <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              Start
+              {t("evt_start")}
               <input
                 type="date"
                 value={startsAt}
@@ -262,7 +265,7 @@ export function EventsPage() {
               />
             </label>
             <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              Ende
+              {t("evt_end")}
               <input
                 type="date"
                 value={endsAt}
@@ -272,7 +275,7 @@ export function EventsPage() {
             </label>
           </div>
           <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            {prizeMode === "split" ? "Preisgeld 1. Platz (€)" : "Preisgeld (€)"}
+            {prizeMode === "split" ? t("evt_prize_first_label") : t("evt_prize_label")}
             <input
               type="number"
               min="0"
@@ -285,7 +288,7 @@ export function EventsPage() {
           </label>
 
           <div className="flex flex-col gap-2 text-sm text-zinc-300">
-            Aufteilung des Preisgelds
+            {t("evt_prize_split_label")}
             <div className="flex gap-4">
               <label className="flex items-center gap-2">
                 <input
@@ -294,7 +297,7 @@ export function EventsPage() {
                   checked={prizeMode === "winner_takes_all"}
                   onChange={() => setPrizeMode("winner_takes_all")}
                 />
-                Winner takes it all
+                {t("evt_winner_takes_all_radio")}
               </label>
               <label className="flex items-center gap-2">
                 <input
@@ -303,7 +306,7 @@ export function EventsPage() {
                   checked={prizeMode === "split"}
                   onChange={() => setPrizeMode("split")}
                 />
-                Aufteilung auf Platz 1–3
+                {t("evt_split_1_3")}
               </label>
             </div>
           </div>
@@ -311,7 +314,7 @@ export function EventsPage() {
           {prizeMode === "split" && (
             <div className="grid grid-cols-2 gap-3">
               <label className="flex flex-col gap-1 text-sm text-zinc-300">
-                Preisgeld 2. Platz (€)
+                {t("evt_prize_second_label")}
                 <input
                   type="number"
                   min="0"
@@ -323,7 +326,7 @@ export function EventsPage() {
                 />
               </label>
               <label className="flex flex-col gap-1 text-sm text-zinc-300">
-                Preisgeld 3. Platz (€)
+                {t("evt_prize_third_label")}
                 <input
                   type="number"
                   min="0"
@@ -338,7 +341,7 @@ export function EventsPage() {
           )}
 
           <div className="flex flex-col gap-2 text-sm text-zinc-300">
-            Turnierformat
+            {t("evt_tournament_format_label")}
             <div className="flex gap-4">
               <label className="flex items-center gap-2">
                 <input
@@ -347,7 +350,7 @@ export function EventsPage() {
                   checked={format === "knockout"}
                   onChange={() => setFormat("knockout")}
                 />
-                Knockout-Turnier (Turnierbaum)
+                {t("evt_knockout_radio")}
               </label>
               <label className="flex items-center gap-2">
                 <input
@@ -356,31 +359,31 @@ export function EventsPage() {
                   checked={format === "all"}
                   onChange={() => setFormat("all")}
                 />
-                Offene Liste (alle anzeigen)
+                {t("evt_open_list_radio")}
               </label>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              Turniergröße (max. Teilnehmer/Teams)
+              {t("evt_max_entries_label")}
               <input
                 type="number"
                 min="1"
                 value={maxEntries}
                 onChange={(e) => setMaxEntries(e.target.value)}
-                placeholder="Unbegrenzt"
+                placeholder={t("evt_unlimited_placeholder")}
                 className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
               />
             </label>
             <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              Teamgröße (Personen pro Team)
+              {t("evt_team_size_label")}
               <input
                 type="number"
                 min="1"
                 value={teamSize}
                 onChange={(e) => setTeamSize(e.target.value)}
-                placeholder="1 = Einzelspieler"
+                placeholder={t("evt_solo_placeholder")}
                 className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
               />
             </label>
@@ -392,14 +395,14 @@ export function EventsPage() {
               checked={isPrivate}
               onChange={(e) => setIsPrivate(e.target.checked)}
             />
-            Privates Turnier (nur mit Code betretbar)
+            {t("evt_private_checkbox")}
           </label>
 
           <button
             type="submit"
             className="self-end rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
           >
-            Veröffentlichen
+            {t("evt_publish")}
           </button>
         </form>
       )}
@@ -407,7 +410,7 @@ export function EventsPage() {
       {createdJoinCode && (
         <div className="flex items-center justify-between rounded bg-emerald-900/30 px-4 py-3 text-sm text-emerald-300">
           <span>
-            Turnier erstellt! Beitritts-Code: <span className="font-mono text-base font-bold">{createdJoinCode}</span> — teile ihn mit den Teilnehmern.
+            {t("evt_created_join_code_prefix")} <span className="font-mono text-base font-bold">{createdJoinCode}</span> {t("evt_created_join_code_suffix")}
           </span>
           <button onClick={() => setCreatedJoinCode(null)} className="font-bold">
             ✕
@@ -428,29 +431,29 @@ export function EventsPage() {
           <input
             value={joinCodeInput}
             onChange={(e) => setJoinCodeInput(e.target.value)}
-            placeholder="Privates Turnier per Code beitreten"
+            placeholder={t("evt_join_by_code_placeholder")}
             className="w-64 rounded border border-white/10 bg-[#10171f] px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
           />
           <button
             type="submit"
             className="rounded bg-white/5 px-4 py-2 text-sm font-semibold text-zinc-300 hover:bg-white/10"
           >
-            Suchen
+            {t("evt_search_action")}
           </button>
         </form>
       )}
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2 text-sm text-zinc-400">
-          Art:
+          {t("evt_type_label")}
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value as TypeFilter)}
             className="rounded bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700"
           >
-            <option value="all">Alle</option>
-            <option value="jam">Game Jams</option>
-            <option value="tournament">Turniere</option>
+            <option value="all">{t("evt_type_all")}</option>
+            <option value="jam">{t("evt_type_jams")}</option>
+            <option value="tournament">{t("evt_type_tournaments")}</option>
           </select>
         </div>
         <div className="flex h-[42px] items-center gap-2 rounded-lg border border-white/10 bg-[#10171f] px-3">
@@ -458,7 +461,7 @@ export function EventsPage() {
           <input
             value={gameSearch}
             onChange={(e) => setGameSearch(e.target.value)}
-            placeholder="Turnier nach Spiel suchen"
+            placeholder={t("evt_search_by_game_placeholder")}
             className="w-44 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
           />
         </div>
@@ -470,7 +473,7 @@ export function EventsPage() {
               : "border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10"
           }`}
         >
-          Nur offene Anmeldung
+          {t("evt_only_open_registration")}
         </button>
         <button
           onClick={() => setOnlyWithPrize((v) => !v)}
@@ -480,7 +483,7 @@ export function EventsPage() {
               : "border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10"
           }`}
         >
-          Nur mit Preisgeld
+          {t("evt_only_with_prize")}
         </button>
         <div className="flex h-[42px] items-center gap-2 rounded-lg border border-white/10 bg-[#10171f] px-3">
           <span className="text-zinc-500">€</span>
@@ -489,29 +492,29 @@ export function EventsPage() {
             min="0"
             value={minPrizeEuros}
             onChange={(e) => setMinPrizeEuros(e.target.value)}
-            placeholder="Mind. Preisgeld"
+            placeholder={t("evt_min_prize_placeholder")}
             className="w-32 bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
           />
         </div>
         <div className="flex items-center gap-2 text-sm text-zinc-400">
-          Sortieren:
+          {t("evt_sort_label")}
           <select
             value={sortMode}
             onChange={(e) => setSortMode(e.target.value as SortMode)}
             className="rounded bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700"
           >
-            <option value="deadline">Anmeldeschluss</option>
-            <option value="prize">Preisgeld</option>
-            <option value="newest">Neueste</option>
-            <option value="game">Spiel</option>
+            <option value="deadline">{t("evt_registration_deadline")}</option>
+            <option value="prize">{t("evt_sort_prize")}</option>
+            <option value="newest">{t("evt_sort_newest")}</option>
+            <option value="game">{t("evt_sort_game")}</option>
           </select>
         </div>
       </div>
 
       {loading ? (
-        <p className="text-sm text-zinc-500">Events werden geladen...</p>
+        <p className="text-sm text-zinc-500">{t("evt_loading")}</p>
       ) : filteredEvents.length === 0 ? (
-        <p className="text-sm text-zinc-500">Keine Events gefunden.</p>
+        <p className="text-sm text-zinc-500">{t("evt_none_found")}</p>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filteredEvents.map((event) => {
@@ -529,12 +532,12 @@ export function EventsPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <h3 className="text-base font-bold text-zinc-100">{event.title}</h3>
-                    <p className="text-xs text-zinc-500">von {event.host_display_name}</p>
+                    <p className="text-xs text-zinc-500">{t("evt_hosted_by").replace("{name}", event.host_display_name)}</p>
                   </div>
                   {totalPrize(event) > 0 && (
                     <span className="shrink-0 rounded bg-amber-900/50 px-2 py-1 text-xs font-bold text-amber-300">
-                      {formatPrize(totalPrize(event))}
-                      {event.prize_mode === "split" && " (aufgeteilt)"}
+                      {formatPrize(totalPrize(event), t)}
+                      {event.prize_mode === "split" && t("evt_split_suffix")}
                     </span>
                   )}
                 </div>
@@ -542,25 +545,25 @@ export function EventsPage() {
                 <div className="flex flex-wrap gap-1.5">
                   {event.is_private && (
                     <span className="self-start rounded bg-amber-900/40 px-2 py-1 text-[11px] font-semibold text-amber-300">
-                      🔒 Privat
+                      {t("evt_private")}
                     </span>
                   )}
                   {(event.catalog_game_title || event.custom_game_title) && (
                     <span className="self-start rounded bg-sky-900/50 px-2 py-1 text-[11px] font-semibold text-sky-300">
-                      Turnier: {event.catalog_game_title || event.custom_game_title}
+                      {t("evt_tournament_prefix").replace("{name}", event.catalog_game_title || event.custom_game_title || "")}
                     </span>
                   )}
                   <span className="self-start rounded bg-white/5 px-2 py-1 text-[11px] font-semibold text-zinc-400">
-                    {event.format === "knockout" ? "Knockout" : "Offene Liste"}
+                    {event.format === "knockout" ? t("evt_card_knockout") : t("evt_format_open")}
                   </span>
                   {event.team_size > 1 && (
                     <span className="self-start rounded bg-white/5 px-2 py-1 text-[11px] font-semibold text-zinc-400">
-                      Team: {event.team_size} Personen
+                      {t("evt_team_persons").replace("{n}", String(event.team_size))}
                     </span>
                   )}
                   {event.max_entries && (
                     <span className="self-start rounded bg-white/5 px-2 py-1 text-[11px] font-semibold text-zinc-400">
-                      Max. {event.max_entries} {event.team_size > 1 ? "Teams" : "Teilnehmer"}
+                      {(event.team_size > 1 ? t("evt_max_teams") : t("evt_max_participants")).replace("{n}", String(event.max_entries))}
                     </span>
                   )}
                 </div>
@@ -572,12 +575,12 @@ export function EventsPage() {
                 <div className="flex flex-col gap-1 text-xs text-zinc-500">
                   {deadline && (
                     <span className={open ? "" : "text-red-400"}>
-                      Anmeldeschluss: {deadline} {!open && "(geschlossen)"}
+                      {t("evt_registration_deadline")}: {deadline} {!open && t("evt_closed_suffix")}
                     </span>
                   )}
-                  {starts && <span>Start: {starts}</span>}
-                  {ends && <span>Ende: {ends}</span>}
-                  <span>{event.participant_count} Teilnehmer</span>
+                  {starts && <span>{t("evt_start")}: {starts}</span>}
+                  {ends && <span>{t("evt_end")}: {ends}</span>}
+                  <span>{event.participant_count} {t("evt_participant_count_suffix")}</span>
                 </div>
 
                 <div className="mt-auto flex gap-2">
@@ -597,10 +600,10 @@ export function EventsPage() {
                       {joiningId === event.id
                         ? "..."
                         : event.joined
-                          ? "Verlassen"
+                          ? t("evt_card_leave")
                           : open
-                            ? "Beitreten"
-                            : "Anmeldung geschlossen"}
+                            ? t("evt_join")
+                            : t("evt_registration_closed")}
                     </button>
                   )}
                   {token && !isHost && event.team_size > 1 && (
@@ -611,7 +614,7 @@ export function EventsPage() {
                       }}
                       className="flex-1 rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
                     >
-                      Team wählen
+                      {t("evt_team_choose")}
                     </button>
                   )}
                   {isHost && (
@@ -622,7 +625,7 @@ export function EventsPage() {
                       }}
                       className="flex-1 rounded bg-red-900/40 px-3 py-1.5 text-sm font-semibold text-red-300 hover:bg-red-900/60"
                     >
-                      Event löschen
+                      {t("evt_delete_event")}
                     </button>
                   )}
                 </div>

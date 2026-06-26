@@ -4,6 +4,8 @@ import { API_BASE } from "../../authStore";
 import { useFriendsStore } from "../../friendsStore";
 import { useLibraryStore } from "../../store";
 import { convertFileSrc, formatPlaytime } from "../../utils";
+import { useT } from "../../translations";
+import type { TranslationKey } from "../../translations";
 
 interface Props {
   onOpenFriends: () => void;
@@ -25,19 +27,21 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-function formatRelativeTime(value: string): string {
+function formatRelativeTime(value: string, t: (key: TranslationKey) => string): string {
   const diffMs = Date.now() - new Date(value).getTime();
   const days = Math.floor(diffMs / 86_400_000);
-  if (days <= 0) return "heute";
-  if (days === 1) return "vor 1 Tag";
-  if (days < 30) return `vor ${days} Tagen`;
+  if (days <= 0) return t("prof_today");
+  if (days === 1) return t("prof_one_day_ago");
+  if (days < 30) return t("prof_days_ago").replace("{n}", String(days));
   const months = Math.floor(days / 30);
-  if (months < 12) return months === 1 ? "vor 1 Monat" : `vor ${months} Monaten`;
+  if (months < 12)
+    return months === 1 ? t("prof_one_month_ago") : t("prof_months_ago").replace("{n}", String(months));
   const years = Math.floor(months / 12);
-  return years === 1 ? "vor 1 Jahr" : `vor ${years} Jahren`;
+  return years === 1 ? t("prof_one_year_ago") : t("prof_years_ago").replace("{n}", String(years));
 }
 
 export function ProfilePage({ onOpenFriends }: Props) {
+  const t = useT();
   const user = useAuthStore((s) => s.user);
   const screenshots = useAuthStore((s) => s.screenshots);
   const badges = useAuthStore((s) => s.badges);
@@ -125,9 +129,9 @@ export function ProfilePage({ onOpenFriends }: Props) {
   const avatarUrl = resolveUrl(user.avatar_url);
 
   const stats: { value: string; label: string; color: string }[] = [
-    { value: String(games.length), label: "Spiele", color: "#66c0f4" },
-    { value: String(friends.length), label: "Freunde", color: "#9fb2c2" },
-    { value: formatPlaytime(totalPlaytimeSeconds), label: "Spielzeit", color: "#a4d007" },
+    { value: String(games.length), label: t("stat_games"), color: "#66c0f4" },
+    { value: String(friends.length), label: t("stat_friends"), color: "#9fb2c2" },
+    { value: formatPlaytime(totalPlaytimeSeconds), label: t("stat_playtime"), color: "#a4d007" },
   ];
 
   return (
@@ -146,7 +150,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
             onClick={() => backgroundInputRef.current?.click()}
             className="absolute bottom-4 right-8 rounded-md bg-black/40 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-black/60"
           >
-            Hintergrund ändern
+            {t("profile_change_background")}
           </button>
         )}
         <input
@@ -180,7 +184,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
                 onClick={() => avatarInputRef.current?.click()}
                 className="absolute inset-0 flex items-center justify-center rounded-3xl bg-black/60 text-xs font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100"
               >
-                Ändern
+                {t("profile_change_avatar")}
               </button>
             )}
             <input
@@ -205,7 +209,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
                   onClick={saveName}
                   className="rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
                 >
-                  Speichern
+                  {t("dialog_save")}
                 </button>
                 <button
                   onClick={() => {
@@ -214,7 +218,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
                   }}
                   className="rounded px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-800"
                 >
-                  Abbrechen
+                  {t("dialog_cancel")}
                 </button>
               </div>
             ) : (
@@ -222,7 +226,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
                 <h1
                   onClick={() => editMode && setEditingName(true)}
                   className={`text-[38px] font-black tracking-tight text-white ${editMode ? "cursor-pointer hover:underline" : ""}`}
-                  title={editMode ? "Klicken, um den Namen zu ändern" : undefined}
+                  title={editMode ? t("profile_click_to_edit_name") : undefined}
                 >
                   {user.display_name}
                 </h1>
@@ -243,7 +247,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
                       : "border border-sky-400/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 hover:text-white"
                   }`}
                 >
-                  {editMode ? "Fertig" : "Bearbeiten"}
+                  {editMode ? t("profile_done") : t("profile_edit")}
                 </button>
               </div>
             )}
@@ -281,12 +285,11 @@ export function ProfilePage({ onOpenFriends }: Props) {
             {editMode && (
               <div>
                 <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
-                  Badge auswählen
+                  {t("profile_badge_picker")}
                 </div>
                 {badges.length === 0 ? (
                   <p className="text-sm text-zinc-500">
-                    Noch keine Badges verdient. Hoste z. B. ein Event mit 32 Teilnehmern oder
-                    gewinne dein erstes Turnier.
+                    {t("profile_no_badges_hint")}
                   </p>
                 ) : (
                   <div className="flex flex-wrap gap-2">
@@ -299,7 +302,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
                           : "border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10"
                       }`}
                     >
-                      Kein Badge
+                      {t("profile_no_badge")}
                     </button>
                     {badges.map((b) => (
                       <button
@@ -324,7 +327,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
 
             <div>
               <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
-                Über mich
+                {t("profile_about")}
               </div>
               {editingBio ? (
                 <div className="flex flex-col gap-2">
@@ -333,7 +336,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
                     onChange={(e) => setBio(e.target.value)}
                     rows={4}
                     autoFocus
-                    placeholder="Erzähl etwas über dich..."
+                    placeholder={t("profile_bio_placeholder")}
                     className="rounded-[11px] bg-[#141d27] px-4 py-3 text-[15px] text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
                   />
                   <div className="flex gap-2">
@@ -341,7 +344,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
                       onClick={saveBio}
                       className="rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
                     >
-                      Speichern
+                      {t("dialog_save")}
                     </button>
                     <button
                       onClick={() => {
@@ -350,7 +353,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
                       }}
                       className="rounded px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-800"
                     >
-                      Abbrechen
+                      {t("dialog_cancel")}
                     </button>
                   </div>
                 </div>
@@ -359,7 +362,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
                   onClick={() => setEditingBio(true)}
                   className="block w-full rounded-[11px] border border-dashed border-white/10 bg-gradient-to-b from-[#141d27] to-[#111923] px-[22px] py-[22px] text-left text-[15px] text-[#7b8794] transition-colors hover:border-sky-400/40 hover:bg-[#16212d]"
                 >
-                  {user.bio || "Klicke hier, um eine Beschreibung hinzuzufügen."}
+                  {user.bio || t("profile_about_placeholder")}
                 </button>
               )}
             </div>
@@ -367,14 +370,14 @@ export function ProfilePage({ onOpenFriends }: Props) {
             <div>
               <div className="mb-3 flex items-center justify-between">
                 <div className="text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
-                  Screenshots
+                  {t("profile_screenshots")}
                 </div>
                 <button
                   onClick={() => screenshotInputRef.current?.click()}
                   disabled={loading}
                   className="rounded-md border border-sky-400/30 bg-sky-500/10 px-3.5 py-1.5 text-[13px] font-bold text-sky-300 hover:bg-sky-500/20 hover:text-white disabled:opacity-50"
                 >
-                  + Screenshot hinzufügen
+                  {t("profile_add_screenshot")}
                 </button>
                 <input
                   ref={screenshotInputRef}
@@ -400,7 +403,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
                       onClick={() => deleteScreenshot(s.id)}
                       className="absolute right-1.5 top-1.5 rounded bg-black/60 px-2 py-1 text-xs font-semibold text-white opacity-0 transition-opacity hover:bg-red-900/80 group-hover:opacity-100"
                     >
-                      Entfernen
+                      {t("del_remove")}
                     </button>
                   </div>
                 ))}
@@ -420,25 +423,25 @@ export function ProfilePage({ onOpenFriends }: Props) {
                 onClick={onOpenFriends}
                 className="mb-3 flex w-full items-center justify-between text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8] hover:text-sky-300"
               >
-                Freunde ({friends.length})
+                {t("profile_friends")} ({friends.length})
                 <span aria-hidden className="text-base">
                   ›
                 </span>
               </button>
               {loadingFriends ? (
-                <p className="text-sm text-zinc-500">Lädt...</p>
+                <p className="text-sm text-zinc-500">{t("fr_loading")}</p>
               ) : friends.length === 0 ? (
                 <div className="rounded-[11px] border border-white/[0.06] bg-gradient-to-b from-[#141d27] to-[#111923] px-[22px] py-[34px] text-center">
                   <div className="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-[14px] bg-white/[0.04] text-2xl text-[#3e4a57]">
                     👥
                   </div>
-                  <div className="mb-4 text-sm text-[#7b8794]">Noch keine Freunde hinzugefügt.</div>
+                  <div className="mb-4 text-sm text-[#7b8794]">{t("profile_no_friends")}</div>
                   <button
                     onClick={onOpenFriends}
                     className="rounded-lg px-[22px] py-2.5 text-sm font-bold text-white shadow-lg"
                     style={{ background: "linear-gradient(180deg,#3aa0ff,#2475c7)" }}
                   >
-                    Freunde finden
+                    {t("profile_find_friends")}
                   </button>
                 </div>
               ) : (
@@ -478,7 +481,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
 
             <div>
               <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
-                Letzte Aktivität
+                {t("profile_last_activity")}
               </div>
               {lastPlayedGame ? (
                 <div className="flex items-center gap-3.5 rounded-[11px] border border-white/[0.06] bg-gradient-to-b from-[#141d27] to-[#111923] px-5 py-[18px]">
@@ -501,12 +504,12 @@ export function ProfilePage({ onOpenFriends }: Props) {
                       {lastPlayedGame.name}
                     </div>
                     <div className="mt-0.5 text-[13px] text-[#7b8794]">
-                      Zuletzt gespielt · {formatRelativeTime(lastPlayedGame.last_played_at)}
+                      {t("lib_recently_played")} · {formatRelativeTime(lastPlayedGame.last_played_at, t)}
                     </div>
                   </div>
                 </div>
               ) : (
-                <p className="text-sm text-zinc-500">Noch keine Aktivität vorhanden.</p>
+                <p className="text-sm text-zinc-500">{t("profile_no_activity")}</p>
               )}
             </div>
           </div>

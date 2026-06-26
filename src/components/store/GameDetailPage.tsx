@@ -4,9 +4,11 @@ import { useCatalogStore } from "../../catalogStore";
 import { formatSize } from "../../utils";
 import { RatingPicker, Stars } from "./Stars";
 import { RichNotes } from "./RichNotes";
+import { useT } from "../../translations";
+import type { TranslationKey } from "../../translations";
 
-function formatPrice(priceCents: number): string {
-  return priceCents === 0 ? "Kostenlos" : `${(priceCents / 100).toFixed(2)} €`;
+function formatPrice(priceCents: number, t: (key: TranslationKey) => string): string {
+  return priceCents === 0 ? t("price_free") : `${(priceCents / 100).toFixed(2)} €`;
 }
 
 function parseTags(tags: string | null): string[] {
@@ -34,6 +36,7 @@ interface Props {
 }
 
 export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: Props) {
+  const t = useT();
   const game = useCatalogStore((s) => s.detailGame);
   const screenshots = useCatalogStore((s) => s.detailScreenshots);
   const reviews = useCatalogStore((s) => s.detailReviews);
@@ -108,7 +111,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
           onClick={closeGameDetail}
           className="rounded bg-white/5 px-4 py-2 text-sm font-semibold text-zinc-300 hover:bg-white/10"
         >
-          ← Zurück zum Katalog
+          {t("gdp_back_to_catalog")}
         </button>
       </div>
 
@@ -163,7 +166,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
               onClick={() => screenshotInputRef.current?.click()}
               className="rounded bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
             >
-              + Bild zur Galerie hinzufügen
+              {t("gdp_add_gallery_image")}
             </button>
             <input
               ref={screenshotInputRef}
@@ -178,7 +181,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                 onClick={() => deleteGameScreenshot(game.id, s.id)}
                 className="text-xs text-red-400 hover:underline"
               >
-                Bild #{s.id} entfernen
+                {t("gdp_remove_image").replace("{n}", String(s.id))}
               </button>
             ))}
           </div>
@@ -188,33 +191,33 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
           <div className="flex flex-col gap-8">
             <section>
               <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-                Über dieses Spiel
+                {t("gdp_about_game")}
               </h2>
               <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
-                {game.description || "Keine Beschreibung vorhanden."}
+                {game.description || t("gdp_no_description")}
               </p>
             </section>
 
             {(game.min_specs || game.recommended_specs) && (
               <section>
                 <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-                  Systemanforderungen
+                  {t("gdp_system_requirements")}
                 </h2>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
                     <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">
-                      Minimal
+                      {t("gdp_minimal")}
                     </h3>
                     <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
-                      {game.min_specs || "Keine Angabe"}
+                      {game.min_specs || t("gdp_no_info")}
                     </p>
                   </div>
                   <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
                     <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">
-                      Empfohlen
+                      {t("gdp_recommended")}
                     </h3>
                     <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
-                      {game.recommended_specs || "Keine Angabe"}
+                      {game.recommended_specs || t("gdp_no_info")}
                     </p>
                   </div>
                 </div>
@@ -224,14 +227,14 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
             {owned && token && game.save_path_hint && (
               <section>
                 <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-                  Cloud-Save
+                  {t("gdp_cloud_save")}
                 </h2>
                 <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
                   <p className="text-sm text-zinc-400">
-                    Spielstände werden beim Starten und Beenden automatisch synchronisiert.
+                    {t("gdp_cloud_save_desc")}
                   </p>
                   <p className="mt-2 text-sm text-zinc-500">
-                    Ordner: <span className="font-mono text-zinc-400">{game.save_path_hint}</span>
+                    {t("gdp_folder")}: <span className="font-mono text-zinc-400">{game.save_path_hint}</span>
                   </p>
                 </div>
               </section>
@@ -240,7 +243,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
             <section>
               <div className="mb-3 flex items-center gap-3">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-400">
-                  Bewertungen
+                  {t("gdp_reviews")}
                 </h2>
                 {game.review_count > 0 ? (
                   <span className="flex items-center gap-2 text-sm text-zinc-400">
@@ -248,7 +251,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                     {(game.avg_rating ?? 0).toFixed(1)} ({game.review_count})
                   </span>
                 ) : (
-                  <span className="text-sm text-zinc-500">Noch keine Bewertungen</span>
+                  <span className="text-sm text-zinc-500">{t("gdp_no_reviews")}</span>
                 )}
               </div>
 
@@ -258,7 +261,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                   className="mb-5 flex flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-zinc-400">Deine Bewertung:</span>
+                    <span className="text-sm text-zinc-400">{t("gdp_your_rating")}</span>
                     <RatingPicker value={reviewRating} onChange={setReviewRating} />
                     <span className="text-sm text-zinc-500">{reviewRating.toFixed(1)}</span>
                   </div>
@@ -266,7 +269,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                     value={reviewBody}
                     onChange={(e) => setReviewBody(e.target.value)}
                     rows={2}
-                    placeholder="Was hältst du von diesem Spiel? (optional)"
+                    placeholder={t("gdp_review_placeholder")}
                     className="rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
                   />
                   <div className="flex justify-end gap-2">
@@ -276,23 +279,23 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                         onClick={() => deleteReview(game.id)}
                         className="rounded px-3 py-1.5 text-sm text-red-400 hover:bg-red-900/30"
                       >
-                        Bewertung löschen
+                        {t("gdp_delete_review")}
                       </button>
                     )}
                     <button
                       type="submit"
                       className="self-end rounded bg-sky-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
                     >
-                      {ownReview ? "Bewertung aktualisieren" : "Bewertung abgeben"}
+                      {ownReview ? t("gdp_update_review") : t("gdp_submit_review")}
                     </button>
                   </div>
                 </form>
               )}
 
               {detailLoading ? (
-                <p className="text-sm text-zinc-500">Bewertungen werden geladen...</p>
+                <p className="text-sm text-zinc-500">{t("gdp_loading_reviews")}</p>
               ) : reviews.length === 0 ? (
-                <p className="text-sm text-zinc-500">Sei der Erste, der dieses Spiel bewertet.</p>
+                <p className="text-sm text-zinc-500">{t("gdp_be_first_review")}</p>
               ) : (
                 <div className="flex flex-col gap-4">
                   {reviews.map((r) => (
@@ -311,7 +314,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                           onClick={startEditOwnReview}
                           className="mt-2 text-xs text-sky-400 hover:underline"
                         >
-                          Bearbeiten
+                          {t("gdp_edit")}
                         </button>
                       )}
                     </div>
@@ -322,7 +325,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
 
             <section>
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-                Patch-Notes
+                {t("gdp_patch_notes")}
               </h2>
 
               {isPublisher && (
@@ -331,7 +334,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                   className="mb-5 flex flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
                 >
                   <label className="flex flex-col gap-1 text-sm text-zinc-300">
-                    Version
+                    {t("gdp_version")}
                     <input
                       value={noteVersion}
                       onChange={(e) => setNoteVersion(e.target.value)}
@@ -343,34 +346,29 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                     value={noteText}
                     onChange={(e) => setNoteText(e.target.value)}
                     rows={5}
-                    placeholder={
-                      "Was hat sich in dieser Version geändert?\n\n" +
-                      "Einfaches HTML wird unterstützt, z. B.:\n" +
-                      "<h2>Überschrift</h2>\n<p>Text</p>\n<ul><li>Punkt 1</li></ul>\n<b>fett</b>, <i>kursiv</i>"
-                    }
+                    placeholder={t("gdp_changelog_placeholder")}
                     className="rounded bg-zinc-800 px-3 py-2 font-mono text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
                   />
                   <span className="text-xs text-zinc-500">
-                    Erlaubte Tags: h1–h3, p, br, ul/ol/li, b/strong, i/em, u, code, blockquote. Andere
-                    Tags (z. B. Links, Bilder, Skripte) werden entfernt.
+                    {t("gdp_allowed_tags")}
                   </span>
                   <button
                     type="submit"
                     className="self-end rounded bg-sky-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
                   >
-                    Patch-Notes speichern
+                    {t("gdp_save_patch_notes")}
                   </button>
                 </form>
               )}
 
               {changelog.length === 0 ? (
-                <p className="text-sm text-zinc-500">Noch keine Patch-Notes vorhanden.</p>
+                <p className="text-sm text-zinc-500">{t("gdp_no_patch_notes")}</p>
               ) : (
                 <div className="flex flex-col gap-4">
                   {changelog.map((note) => (
                     <div key={note.id} className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-bold text-zinc-200">Version {note.version}</span>
+                        <span className="text-sm font-bold text-zinc-200">{t("gdp_version")} {note.version}</span>
                         <span className="text-xs text-zinc-500">
                           {new Date(note.created_at).toLocaleDateString("de-DE")}
                         </span>
@@ -381,7 +379,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                           className="prose-patch-notes mt-2 text-sm text-zinc-400"
                         />
                       ) : (
-                        <p className="mt-2 text-sm text-zinc-500">Keine Details angegeben.</p>
+                        <p className="mt-2 text-sm text-zinc-500">{t("gdp_no_details")}</p>
                       )}
                       {isPublisher && (
                         <div className="mt-2 flex gap-3">
@@ -389,13 +387,13 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                             onClick={() => startEditVersionNote(note)}
                             className="text-xs text-sky-400 hover:underline"
                           >
-                            Bearbeiten
+                            {t("gdp_edit")}
                           </button>
                           <button
                             onClick={() => deleteVersionNote(game.id, note.id)}
                             className="text-xs text-red-400 hover:underline"
                           >
-                            Entfernen
+                            {t("gdp_remove")}
                           </button>
                         </div>
                       )}
@@ -407,10 +405,10 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
           </div>
 
           <aside className="flex flex-col gap-4 self-start rounded-lg border border-white/10 bg-[#10171f] p-5">
-            <span className="text-2xl font-bold text-sky-400">{formatPrice(game.price_cents)}</span>
+            <span className="text-2xl font-bold text-sky-400">{formatPrice(game.price_cents, t)}</span>
             {owned ? (
               <span className="rounded bg-emerald-900/60 px-4 py-2 text-center text-sm font-semibold text-emerald-300">
-                Im Besitz
+                {t("store_owned")}
               </span>
             ) : (
               <button
@@ -418,7 +416,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                 disabled={purchasing}
                 className="rounded bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
               >
-                {purchasing ? "..." : "Kaufen"}
+                {purchasing ? "..." : t("store_buy")}
               </button>
             )}
             {!owned && token && (
@@ -431,13 +429,13 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                 className="rounded border border-pink-500/40 px-4 py-2 text-sm font-semibold text-pink-300 hover:bg-pink-900/30"
               >
                 {wishlist.some((g) => g.id === game.id)
-                  ? "♥ Von Wunschliste entfernen"
-                  : "♡ Zur Wunschliste hinzufügen"}
+                  ? t("gdp_remove_from_wishlist")
+                  : t("gdp_add_to_wishlist")}
               </button>
             )}
             {game.file_size_bytes != null && (
               <div className="text-xs text-zinc-500">
-                Download: {formatSize(game.file_size_bytes)}
+                {t("gdp_download")}: {formatSize(game.file_size_bytes)}
                 <br />
                 Version: {game.version}
               </div>

@@ -5,12 +5,22 @@ import { useLibraryStore } from "../../store";
 import { formatSize } from "../../utils";
 import { ACCENT_PRESETS, applyAccent, getStoredAccent } from "../../theme";
 import type { AccentId } from "../../theme";
+import { useI18nStore } from "../../i18nStore";
+import { useT } from "../../translations";
 
 interface Props {
   onClose: () => void;
 }
 
+const LANGUAGES: { id: "de" | "en"; label: string }[] = [
+  { id: "de", label: "Deutsch" },
+  { id: "en", label: "English" },
+];
+
 export function SettingsView({ onClose }: Props) {
+  const t = useT();
+  const language = useI18nStore((s) => s.language);
+  const setLanguage = useI18nStore((s) => s.setLanguage);
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const changePassword = useAuthStore((s) => s.changePassword);
@@ -57,24 +67,24 @@ export function SettingsView({ onClose }: Props) {
     <div className="h-full overflow-y-auto bg-zinc-950">
       <div className="mx-auto max-w-2xl px-6 py-8">
         <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-zinc-100">Einstellungen</h1>
+          <h1 className="text-2xl font-bold text-zinc-100">{t("settings_title")}</h1>
           <button
             onClick={onClose}
             className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
           >
-            Schließen
+            {t("close")}
           </button>
         </div>
 
         {/* Konto */}
         <section className="mb-8">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Konto
+            {t("settings_account")}
           </h2>
           <div className="flex flex-col gap-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-zinc-500">E-Mail</p>
+                <p className="text-xs text-zinc-500">{t("settings_email")}</p>
                 <p className="text-sm text-zinc-200">{user?.email}</p>
               </div>
               <button
@@ -84,20 +94,20 @@ export function SettingsView({ onClose }: Props) {
                 }}
                 className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-red-900/60"
               >
-                Abmelden
+                {t("settings_logout")}
               </button>
             </div>
 
             <form onSubmit={handleChangePassword} className="flex flex-col gap-3 border-t border-zinc-800 pt-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                Passwort ändern
+                {t("settings_change_password")}
               </p>
               {authError && <p className="text-sm text-red-400">{authError}</p>}
               {passwordSuccess && (
-                <p className="text-sm text-emerald-400">Passwort erfolgreich geändert.</p>
+                <p className="text-sm text-emerald-400">{t("settings_password_changed")}</p>
               )}
               <label className="flex flex-col gap-1 text-sm text-zinc-300">
-                Aktuelles Passwort
+                {t("settings_current_password")}
                 <input
                   type="password"
                   value={currentPassword}
@@ -107,7 +117,7 @@ export function SettingsView({ onClose }: Props) {
                 />
               </label>
               <label className="flex flex-col gap-1 text-sm text-zinc-300">
-                Neues Passwort
+                {t("settings_new_password")}
                 <input
                   type="password"
                   value={newPassword}
@@ -122,7 +132,7 @@ export function SettingsView({ onClose }: Props) {
                 disabled={authLoading}
                 className="self-end rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
               >
-                Passwort ändern
+                {t("settings_change_password")}
               </button>
             </form>
           </div>
@@ -131,17 +141,13 @@ export function SettingsView({ onClose }: Props) {
         {/* Privatsphäre */}
         <section className="mb-8">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Privatsphäre
+            {t("settings_privacy")}
           </h2>
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <label className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-sm font-medium text-zinc-200">Mein Profil verstecken</p>
-                <p className="mt-0.5 text-xs text-zinc-500">
-                  Wenn aktiv, taucht dein Profil nicht mehr in der Nutzersuche auf und ist auch
-                  per Link nicht mehr abrufbar — außer für Nutzer, mit denen du bereits befreundet
-                  bist.
-                </p>
+                <p className="text-sm font-medium text-zinc-200">{t("settings_hide_profile")}</p>
+                <p className="mt-0.5 text-xs text-zinc-500">{t("settings_hide_profile_desc")}</p>
               </div>
               <input
                 type="checkbox"
@@ -156,31 +162,31 @@ export function SettingsView({ onClose }: Props) {
         {/* Anwendung */}
         <section className="mb-8">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Anwendung
+            {t("settings_app")}
           </h2>
           <div className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <div>
-              <p className="text-xs text-zinc-500">Installationsordner</p>
+              <p className="text-xs text-zinc-500">{t("settings_install_dir")}</p>
               <p className="break-all text-sm text-zinc-200">
-                {installDir ?? "Wird ermittelt..."}
+                {installDir ?? t("settings_determining")}
               </p>
             </div>
             <div className="border-t border-zinc-800 pt-3">
-              <p className="text-xs text-zinc-500">Speicherplatz durch Spiele belegt</p>
+              <p className="text-xs text-zinc-500">{t("settings_storage_used")}</p>
               <p className="text-sm text-zinc-200">
-                {formatSize(totalStorageBytes)} ({games.length} Spiele in der Bibliothek)
+                {formatSize(totalStorageBytes)} ({games.length} {t("settings_games_in_library")})
               </p>
             </div>
           </div>
         </section>
 
         {/* Design */}
-        <section>
+        <section className="mb-8">
           <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Design
+            {t("settings_design")}
           </h2>
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-            <p className="mb-3 text-xs text-zinc-500">Akzentfarbe</p>
+            <p className="mb-3 text-xs text-zinc-500">{t("settings_accent_color")}</p>
             <div className="flex gap-3">
               {ACCENT_PRESETS.map((preset) => (
                 <button
@@ -192,6 +198,30 @@ export function SettingsView({ onClose }: Props) {
                   }`}
                   style={{ background: preset.swatch }}
                 />
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* Sprache */}
+        <section>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+            {t("settings_language")}
+          </h2>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <div className="flex gap-2">
+              {LANGUAGES.map((l) => (
+                <button
+                  key={l.id}
+                  onClick={() => setLanguage(l.id)}
+                  className={`rounded px-3.5 py-1.5 text-sm font-semibold ${
+                    language === l.id
+                      ? "bg-sky-600 text-white"
+                      : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                  }`}
+                >
+                  {l.label}
+                </button>
               ))}
             </div>
           </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuthStore } from "../../authStore";
 import { useChatStore } from "../../chatStore";
+import { useT } from "../../translations";
 import type { UserSummary } from "../../types";
 
 const POLL_MS = 4000;
@@ -17,6 +18,7 @@ interface Props {
 }
 
 export function DirectMessageView({ friend, onClose }: Props) {
+  const t = useT();
   const messages = useChatStore((s) => s.directMessages);
   const sending = useChatStore((s) => s.sendingDirect);
   const error = useChatStore((s) => s.error);
@@ -60,7 +62,7 @@ export function DirectMessageView({ friend, onClose }: Props) {
             onClick={onClose}
             className="rounded bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
           >
-            Schließen
+            {t("close")}
           </button>
         </div>
 
@@ -75,7 +77,7 @@ export function DirectMessageView({ friend, onClose }: Props) {
 
         <div className="flex-1 overflow-y-auto px-4 py-3">
           {messages.length === 0 ? (
-            <p className="text-sm text-zinc-500">Noch keine Nachrichten. Schreib etwas!</p>
+            <p className="text-sm text-zinc-500">{t("chat_no_messages")}</p>
           ) : (
             <div className="flex flex-col gap-2">
               {messages.map((m) => {
@@ -108,7 +110,7 @@ export function DirectMessageView({ friend, onClose }: Props) {
           <input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="Nachricht schreiben..."
+            placeholder={t("chat_placeholder")}
             autoFocus
             className="flex-1 rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
           />
@@ -117,7 +119,7 @@ export function DirectMessageView({ friend, onClose }: Props) {
             disabled={sending || !draft.trim()}
             className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
           >
-            Senden
+            {t("chat_send")}
           </button>
         </form>
       </div>

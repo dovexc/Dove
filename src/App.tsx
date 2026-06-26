@@ -24,12 +24,14 @@ import { WishlistPage } from "./components/store/WishlistPage";
 import { EventsPage } from "./components/events/EventsPage";
 import { NotificationsBell } from "./components/NotificationsBell";
 import { useEventsStore } from "./eventsStore";
+import { useT } from "./translations";
 
 const SIDEBAR_WIDTH_KEY = "library_sidebar_width";
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 640;
 
 function App() {
+  const t = useT();
   const [activeTab, setActiveTab] = useState<
     | "library"
     | "store"
@@ -149,7 +151,7 @@ function App() {
                 activeTab === "library" ? "text-white" : "text-[#9aa7b3] hover:text-zinc-200"
               }`}
             >
-              Bibliothek
+              {t("nav_library")}
             </span>
             <span
               className="h-[3px] w-[22px] rounded-sm"
@@ -168,7 +170,7 @@ function App() {
                 activeTab === "store" ? "text-white" : "text-[#9aa7b3] hover:text-zinc-200"
               }`}
             >
-              Store
+              {t("nav_store")}
             </span>
             <span
               className="h-[3px] w-[22px] rounded-sm"
@@ -187,7 +189,7 @@ function App() {
                 activeTab === "events" ? "text-white" : "text-[#9aa7b3] hover:text-zinc-200"
               }`}
             >
-              Events
+              {t("nav_events")}
             </span>
             <span
               className="h-[3px] w-[22px] rounded-sm"
@@ -206,7 +208,7 @@ function App() {
                 activeTab === "downloads" ? "text-white" : "text-[#9aa7b3] hover:text-zinc-200"
               }`}
             >
-              Downloads
+              {t("nav_downloads")}
             </span>
             <span
               className="h-[3px] w-[22px] rounded-sm"
@@ -224,13 +226,13 @@ function App() {
                 onClick={openSteamImport}
                 className="rounded bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
               >
-                Steam importieren
+                {t("steam_import")}
               </button>
               <button
                 onClick={openAddDialog}
                 className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
               >
-                + Spiel hinzufügen
+                {t("add_game")}
               </button>
             </>
           )}
@@ -247,6 +249,7 @@ function App() {
           {authToken && authUser ? (
             <UserMenu
               displayName={authUser.display_name}
+              avatarUrl={authUser.avatar_url}
               isAdmin={authUser.is_admin}
               onOpenProfile={() => setActiveTab("profile")}
               onOpenFriends={() => setActiveTab("friends")}
@@ -265,7 +268,7 @@ function App() {
                   "linear-gradient(180deg,rgba(70,130,200,.25),rgba(40,80,140,.15))",
               }}
             >
-              Anmelden
+              {t("login")}
             </button>
           )}
         </div>
@@ -288,8 +291,7 @@ function App() {
           >
             {games.length === 0 ? (
               <p className="text-sm text-zinc-500">
-                Noch keine Spiele vorhanden. Füge ein Spiel hinzu, um zu
-                beginnen.
+                {t("lib_no_games_yet")}
               </p>
             ) : (
               <div className="grid grid-cols-2 gap-3">

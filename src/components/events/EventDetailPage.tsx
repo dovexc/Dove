@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { API_BASE, useAuthStore } from "../../authStore";
 import { useEventsStore } from "../../eventsStore";
 import { useChatStore } from "../../chatStore";
+import { useT } from "../../translations";
+import type { TranslationKey } from "../../translations";
 import type { EventMatch } from "../../types";
 
 const CHAT_POLL_MS = 4000;
@@ -12,8 +14,8 @@ function formatTime(value: string): string {
   return date.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
 }
 
-function formatPrize(priceCents: number): string {
-  return priceCents === 0 ? "Kein Preisgeld" : `${(priceCents / 100).toFixed(2)} €`;
+function formatPrize(priceCents: number, t: (key: TranslationKey) => string): string {
+  return priceCents === 0 ? t("evt_no_prize") : `${(priceCents / 100).toFixed(2)} €`;
 }
 
 function totalPrize(event: { prize_mode: string; prize_cents: number; prize_second_cents: number; prize_third_cents: number }): number {
@@ -40,6 +42,7 @@ function isRegistrationOpen(deadline: string | null): boolean {
 }
 
 export function EventDetailPage() {
+  const t = useT();
   const event = useEventsStore((s) => s.detailEvent);
   const participants = useEventsStore((s) => s.detailParticipants);
   const teams = useEventsStore((s) => s.detailTeams);
@@ -113,7 +116,7 @@ export function EventDetailPage() {
           onClick={closeEventDetail}
           className="rounded bg-white/5 px-4 py-2 text-sm font-semibold text-zinc-300 hover:bg-white/10"
         >
-          ← Zurück zu Events
+          {t("evt_back_to_events")}
         </button>
       </div>
 
@@ -121,11 +124,11 @@ export function EventDetailPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-3xl font-black tracking-tight text-white">{event.title}</h1>
-            <p className="mt-1 text-sm text-zinc-500">von {event.host_display_name}</p>
+            <p className="mt-1 text-sm text-zinc-500">{t("evt_hosted_by").replace("{name}", event.host_display_name)}</p>
           </div>
           {totalPrize(event) > 0 && (
             <span className="rounded bg-amber-900/50 px-3 py-2 text-sm font-bold text-amber-300">
-              {formatPrize(totalPrize(event))}
+              {formatPrize(totalPrize(event), t)}
             </span>
           )}
         </div>
@@ -133,67 +136,67 @@ export function EventDetailPage() {
         <div className="mt-3 flex flex-wrap gap-2">
           {(event.catalog_game_title || event.custom_game_title) && (
             <span className="inline-block rounded bg-sky-900/50 px-3 py-1.5 text-sm font-semibold text-sky-300">
-              Turnier: {event.catalog_game_title || event.custom_game_title}
+              {t("evt_tournament_prefix").replace("{name}", event.catalog_game_title || event.custom_game_title || "")}
             </span>
           )}
           <span className="inline-block rounded bg-white/5 px-3 py-1.5 text-sm font-semibold text-zinc-400">
-            {event.format === "knockout" ? "Knockout-Turnier" : "Offene Liste"}
+            {event.format === "knockout" ? t("evt_format_knockout") : t("evt_format_open")}
           </span>
           {hasTeams && (
             <span className="inline-block rounded bg-white/5 px-3 py-1.5 text-sm font-semibold text-zinc-400">
-              Team: {event.team_size} Personen
+              {t("evt_team_persons").replace("{n}", String(event.team_size))}
             </span>
           )}
           {event.max_entries && (
             <span className="inline-block rounded bg-white/5 px-3 py-1.5 text-sm font-semibold text-zinc-400">
-              Max. {event.max_entries} {hasTeams ? "Teams" : "Teilnehmer"}
+              {(hasTeams ? t("evt_max_teams") : t("evt_max_participants")).replace("{n}", String(event.max_entries))}
             </span>
           )}
           {event.is_private && (
             <span className="inline-block rounded bg-amber-900/40 px-3 py-1.5 text-sm font-semibold text-amber-300">
-              🔒 Privat
+              {t("evt_private")}
             </span>
           )}
         </div>
 
         {isHost && event.join_code && (
           <div className="mt-3 rounded-lg border border-amber-800/40 bg-amber-900/20 px-4 py-3 text-sm text-amber-300">
-            Beitritts-Code: <span className="font-mono text-base font-bold">{event.join_code}</span>{" "}
-            — teile ihn mit den Teilnehmern, sonst kann niemand beitreten.
+            {t("evt_join_code_label")} <span className="font-mono text-base font-bold">{event.join_code}</span>{" "}
+            {t("evt_join_code_hint")}
           </div>
         )}
 
         {totalPrize(event) > 0 && (
           <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 text-sm">
             <div className="mb-2 text-xs uppercase tracking-wide text-zinc-500">
-              Preisgeldverteilung
+              {t("evt_prize_distribution")}
             </div>
             {event.prize_mode === "split" ? (
               <div className="flex flex-col gap-1 text-zinc-200">
-                <span>🥇 1. Platz: {formatPrize(event.prize_cents)}</span>
-                <span>🥈 2. Platz: {formatPrize(event.prize_second_cents)}</span>
-                <span>🥉 3. Platz: {formatPrize(event.prize_third_cents)}</span>
+                <span>{t("evt_place_1").replace("{value}", formatPrize(event.prize_cents, t))}</span>
+                <span>{t("evt_place_2").replace("{value}", formatPrize(event.prize_second_cents, t))}</span>
+                <span>{t("evt_place_3").replace("{value}", formatPrize(event.prize_third_cents, t))}</span>
               </div>
             ) : (
-              <span className="text-zinc-200">Winner takes it all — der Gewinner erhält das gesamte Preisgeld.</span>
+              <span className="text-zinc-200">{t("evt_winner_takes_all_desc")}</span>
             )}
           </div>
         )}
 
         <div className="mt-6 grid grid-cols-3 gap-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 text-sm">
           <div>
-            <div className="text-xs uppercase tracking-wide text-zinc-500">Anmeldeschluss</div>
+            <div className="text-xs uppercase tracking-wide text-zinc-500">{t("evt_registration_deadline")}</div>
             <div className={open ? "text-zinc-200" : "text-red-400"}>
-              {deadline ?? "Keine Frist"} {deadline && !open && "(geschlossen)"}
+              {deadline ?? t("evt_no_deadline")} {deadline && !open && t("evt_closed_suffix")}
             </div>
           </div>
           <div>
-            <div className="text-xs uppercase tracking-wide text-zinc-500">Start</div>
-            <div className="text-zinc-200">{starts ?? "Noch offen"}</div>
+            <div className="text-xs uppercase tracking-wide text-zinc-500">{t("evt_start")}</div>
+            <div className="text-zinc-200">{starts ?? t("evt_still_open")}</div>
           </div>
           <div>
-            <div className="text-xs uppercase tracking-wide text-zinc-500">Ende</div>
-            <div className="text-zinc-200">{ends ?? "Noch offen"}</div>
+            <div className="text-xs uppercase tracking-wide text-zinc-500">{t("evt_end")}</div>
+            <div className="text-zinc-200">{ends ?? t("evt_still_open")}</div>
           </div>
         </div>
 
@@ -211,10 +214,10 @@ export function EventDetailPage() {
               {joiningId === event.id
                 ? "..."
                 : event.joined
-                  ? "Teilnahme zurückziehen"
+                  ? t("evt_leave")
                   : open
-                    ? "Beitreten"
-                    : "Anmeldung geschlossen"}
+                    ? t("evt_join")
+                    : t("evt_registration_closed")}
             </button>
           )}
           {token && !isHost && hasTeams && event.joined && (
@@ -223,7 +226,7 @@ export function EventDetailPage() {
               disabled={joiningId === event.id}
               className="mt-4 rounded bg-zinc-800 px-5 py-2.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
             >
-              {joiningId === event.id ? "..." : "Team verlassen"}
+              {joiningId === event.id ? "..." : t("evt_leave_team")}
             </button>
           )}
           {isHost && (
@@ -234,25 +237,26 @@ export function EventDetailPage() {
               }}
               className="mt-4 rounded bg-red-900/40 px-5 py-2.5 text-sm font-semibold text-red-300 hover:bg-red-900/60"
             >
-              Event löschen
+              {t("evt_delete_event")}
             </button>
           )}
         </div>
 
         <section className="mt-8">
           <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-            Beschreibung
+            {t("evt_description")}
           </h2>
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
-            {event.description || "Keine Beschreibung vorhanden."}
+            {event.description || t("evt_no_description")}
           </p>
         </section>
 
         {hasTeams ? (
           <section className="mt-8">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-              Teams ({teams.length}
-              {event.max_entries ? ` / ${event.max_entries}` : ""})
+              {t("evt_teams_heading")
+                .replace("{n}", String(teams.length))
+                .replace("{max}", event.max_entries ? ` / ${event.max_entries}` : "")}
             </h2>
 
             {token && !event.joined && open && (
@@ -268,7 +272,7 @@ export function EventDetailPage() {
                 <input
                   value={newTeamName}
                   onChange={(e) => setNewTeamName(e.target.value)}
-                  placeholder="Neues Team gründen..."
+                  placeholder={t("evt_new_team_placeholder")}
                   className="flex-1 rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
                 />
                 <button
@@ -276,15 +280,15 @@ export function EventDetailPage() {
                   disabled={teamActionPending}
                   className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
                 >
-                  Team erstellen
+                  {t("evt_create_team")}
                 </button>
               </form>
             )}
 
             {detailLoading ? (
-              <p className="text-sm text-zinc-500">Teams werden geladen...</p>
+              <p className="text-sm text-zinc-500">{t("evt_teams_loading")}</p>
             ) : teams.length === 0 ? (
-              <p className="text-sm text-zinc-500">Noch keine Teams.</p>
+              <p className="text-sm text-zinc-500">{t("evt_no_teams")}</p>
             ) : (
               <div className="flex flex-col gap-3">
                 {teams.map((team) => {
@@ -306,7 +310,7 @@ export function EventDetailPage() {
                               disabled={teamActionPending}
                               className="rounded bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
                             >
-                              Beitreten
+                              {t("evt_join")}
                             </button>
                           )}
                         </div>
@@ -330,12 +334,12 @@ export function EventDetailPage() {
         ) : (
           <section className="mt-8">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-              Teilnehmer ({event.participant_count})
+              {t("evt_participants_heading").replace("{n}", String(event.participant_count))}
             </h2>
             {detailLoading ? (
-              <p className="text-sm text-zinc-500">Teilnehmer werden geladen...</p>
+              <p className="text-sm text-zinc-500">{t("evt_participants_loading")}</p>
             ) : participants.length === 0 ? (
-              <p className="text-sm text-zinc-500">Noch keine Teilnehmer.</p>
+              <p className="text-sm text-zinc-500">{t("evt_no_participants")}</p>
             ) : (
               <div className="flex flex-col gap-2">
                 {participants.map((p) => {
@@ -354,7 +358,7 @@ export function EventDetailPage() {
                       </div>
                       <span className="text-sm font-semibold text-zinc-200">{p.display_name}</span>
                       {p.online && (
-                        <span className="ml-auto h-2 w-2 rounded-full bg-emerald-400" title="Online" />
+                        <span className="ml-auto h-2 w-2 rounded-full bg-emerald-400" title={t("fr_online")} />
                       )}
                     </div>
                   );
@@ -367,33 +371,35 @@ export function EventDetailPage() {
         {event.format === "knockout" && (
           <section className="mt-8">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-              Turnierbaum
+              {t("evt_bracket_heading")}
             </h2>
 
             {!bracket || bracket.matches.length === 0 ? (
               isHost ? (
                 <div className="flex flex-col gap-2">
                   <p className="text-sm text-zinc-500">
-                    Das Turnier wurde noch nicht gestartet. Sobald alle Teilnehmer
-                    {hasTeams ? "/Teams" : ""} angemeldet sind, kannst du den Turnierbaum generieren.
+                    {t("evt_bracket_not_started_host").replace(
+                      "{teamsSuffix}",
+                      hasTeams ? t("evt_teams_suffix") : ""
+                    )}
                   </p>
                   <button
                     onClick={() => startTournament(event.id)}
                     disabled={teamActionPending}
                     className="self-start rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
                   >
-                    Turnier starten
+                    {t("evt_start_tournament")}
                   </button>
                 </div>
               ) : (
-                <p className="text-sm text-zinc-500">Das Turnier wurde noch nicht gestartet.</p>
+                <p className="text-sm text-zinc-500">{t("evt_bracket_not_started")}</p>
               )
             ) : (
               <div className="flex gap-4 overflow-x-auto pb-2">
                 {rounds.map((round) => (
                   <div key={round} className="flex min-w-[220px] flex-col gap-3">
                     <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                      {round === rounds[rounds.length - 1] ? "Finale" : `Runde ${round}`}
+                      {round === rounds[rounds.length - 1] ? t("evt_final") : t("evt_round").replace("{n}", String(round))}
                     </div>
                     {matchesByRound.get(round)!.map((m) => {
                       const nameA = entryName(m.entry_a_id);
@@ -417,14 +423,14 @@ export function EventDetailPage() {
                                   : "text-zinc-300"
                               }`}
                             >
-                              <span>{side.name ?? "TBD"}</span>
+                              <span>{side.name ?? t("evt_tbd")}</span>
                               {canDecide && side.id !== null && (
                                 <button
                                   onClick={() => setMatchWinner(event.id, m.id, side.id!)}
                                   disabled={teamActionPending}
                                   className="rounded bg-sky-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
                                 >
-                                  Sieger
+                                  {t("evt_winner")}
                                 </button>
                               )}
                             </div>
@@ -442,13 +448,13 @@ export function EventDetailPage() {
         {canChat && (
           <section className="mt-8">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
-              Event-Chat
+              {t("evt_chat_heading")}
             </h2>
             <div className="flex h-[360px] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/60">
               <div className="flex-1 overflow-y-auto px-4 py-3">
                 {eventMessages.length === 0 ? (
                   <p className="text-sm text-zinc-500">
-                    Noch keine Nachrichten. Schreib die erste!
+                    {t("evt_no_messages")}
                   </p>
                 ) : (
                   <div className="flex flex-col gap-2">
@@ -494,7 +500,7 @@ export function EventDetailPage() {
                 <input
                   value={chatDraft}
                   onChange={(e) => setChatDraft(e.target.value)}
-                  placeholder="Nachricht an alle Teilnehmer..."
+                  placeholder={t("evt_message_placeholder")}
                   className="flex-1 rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
                 />
                 <button
@@ -502,7 +508,7 @@ export function EventDetailPage() {
                   disabled={sendingEvent || !chatDraft.trim()}
                   className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
                 >
-                  Senden
+                  {t("chat_send")}
                 </button>
               </form>
             </div>

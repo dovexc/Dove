@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useCatalogStore } from "../../catalogStore";
 import { API_BASE, getAuthHeader, useAuthStore } from "../../authStore";
+import { useT } from "../../translations";
+import type { TranslationKey } from "../../translations";
 import type { StoreUser } from "../../types";
 
 interface Props {
@@ -9,16 +11,17 @@ interface Props {
 
 type Tab = "spiele" | "nutzer";
 
-function formatPrice(priceCents: number): string {
-  return priceCents === 0 ? "Kostenlos" : `${(priceCents / 100).toFixed(2)} €`;
+function formatPrice(priceCents: number, t: (key: TranslationKey) => string): string {
+  return priceCents === 0 ? t("price_free") : `${(priceCents / 100).toFixed(2)} €`;
 }
 
-async function parseErrorMessage(response: Response): Promise<string> {
+async function parseErrorMessage(response: Response, t: (key: TranslationKey) => string): Promise<string> {
   const text = await response.text();
-  return text || `Fehler (${response.status})`;
+  return text || t("adm_error_status").replace("{n}", String(response.status));
 }
 
 function UsersTab() {
+  const t = useT();
   const currentUserId = useAuthStore((s) => s.user?.id);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<StoreUser[]>([]);
@@ -38,7 +41,7 @@ function UsersTab() {
         `${API_BASE}/api/admin/users?q=${encodeURIComponent(query)}`,
         { headers: getAuthHeader() }
       );
-      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      if (!response.ok) throw new Error(await parseErrorMessage(response, t));
       setResults(await response.json());
     } catch (e) {
       setError(String(e));
@@ -65,7 +68,7 @@ function UsersTab() {
         `${API_BASE}/api/users/${userId}/${makeAdmin ? "promote" : "demote"}`,
         { method: "POST", headers: getAuthHeader() }
       );
-      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      if (!response.ok) throw new Error(await parseErrorMessage(response, t));
       setResults((prev) =>
         prev.map((u) => (u.id === userId ? { ...u, is_admin: makeAdmin } : u))
       );
@@ -81,18 +84,18 @@ function UsersTab() {
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Nutzer per Name oder E-Mail suchen..."
+        placeholder={t("adm_search_placeholder")}
         className="rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
       />
 
       {error && <p className="text-sm text-red-400">{error}</p>}
 
       {searching ? (
-        <p className="text-sm text-zinc-500">Suche läuft...</p>
+        <p className="text-sm text-zinc-500">{t("fr_searching")}</p>
       ) : !query.trim() ? (
-        <p className="text-sm text-zinc-500">Tippe einen Namen oder eine E-Mail ein.</p>
+        <p className="text-sm text-zinc-500">{t("adm_type_hint")}</p>
       ) : results.length === 0 ? (
-        <p className="text-sm text-zinc-500">Keine Nutzer gefunden.</p>
+        <p className="text-sm text-zinc-500">{t("fr_no_users_found")}</p>
       ) : (
         <div className="flex flex-col gap-2">
           {results.map((user) => (
@@ -110,12 +113,12 @@ function UsersTab() {
                   disabled={pendingId === user.id || user.id === currentUserId}
                   title={
                     user.id === currentUserId
-                      ? "Du kannst dir nicht selbst die Rolle entziehen"
+                      ? t("adm_cant_demote_self")
                       : undefined
                   }
                   className="shrink-0 rounded border border-amber-400/30 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/20 disabled:opacity-50"
                 >
-                  Moderator — entziehen
+                  {t("adm_demote")}
                 </button>
               ) : (
                 <button
@@ -123,7 +126,7 @@ function UsersTab() {
                   disabled={pendingId === user.id}
                   className="shrink-0 rounded border border-sky-400/30 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-300 hover:bg-sky-500/20 disabled:opacity-50"
                 >
-                  Zum Moderator machen
+                  {t("adm_promote")}
                 </button>
               )}
             </div>
@@ -135,6 +138,7 @@ function UsersTab() {
 }
 
 export function AdminModerationView({ onClose }: Props) {
+  const t = useT();
   const [tab, setTab] = useState<Tab>("spiele");
 
   const pendingGames = useCatalogStore((s) => s.pendingGames);
@@ -154,24 +158,22 @@ export function AdminModerationView({ onClose }: Props) {
       <div className="mx-auto max-w-3xl px-6 py-8">
         <div className="mb-6 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-zinc-100">Moderation</h1>
-            <p className="text-sm text-zinc-500">
-              Neu veröffentlichte Spiele werden erst nach Freigabe im Store gelistet.
-            </p>
+            <h1 className="text-2xl font-bold text-zinc-100">{t("adm_title")}</h1>
+            <p className="text-sm text-zinc-500">{t("adm_subtitle")}</p>
           </div>
           <button
             onClick={onClose}
             className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
           >
-            Schließen
+            {t("close")}
           </button>
         </div>
 
         <div className="mb-6 flex gap-2 border-b border-zinc-800">
           {(
             [
-              ["spiele", `Ausstehende Spiele (${pendingGames.length})`],
-              ["nutzer", "Nutzerverwaltung"],
+              ["spiele", t("adm_tab_pending_games").replace("{n}", String(pendingGames.length))],
+              ["nutzer", t("adm_tab_user_management")],
             ] as [Tab, string][]
           ).map(([key, label]) => (
             <button
@@ -193,9 +195,9 @@ export function AdminModerationView({ onClose }: Props) {
             {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
 
             {loadingPendingGames ? (
-              <p className="text-sm text-zinc-500">Lädt...</p>
+              <p className="text-sm text-zinc-500">{t("fr_loading")}</p>
             ) : pendingGames.length === 0 ? (
-              <p className="text-sm text-zinc-500">Keine Spiele warten auf Freigabe.</p>
+              <p className="text-sm text-zinc-500">{t("adm_no_pending_games")}</p>
             ) : (
               <div className="flex flex-col gap-3">
                 {pendingGames.map((game) => (
@@ -207,7 +209,8 @@ export function AdminModerationView({ onClose }: Props) {
                       <div>
                         <div className="font-bold text-zinc-100">{game.title}</div>
                         <div className="text-xs text-zinc-500">
-                          Publisher #{game.publisher_user_id} · {formatPrice(game.price_cents)} ·{" "}
+                          {t("adm_publisher_prefix").replace("{n}", String(game.publisher_user_id))} ·{" "}
+                          {formatPrice(game.price_cents, t)} ·{" "}
                           {new Date(game.created_at).toLocaleString("de-DE")}
                         </div>
                       </div>
@@ -233,14 +236,14 @@ export function AdminModerationView({ onClose }: Props) {
                         disabled={moderatingId === game.id}
                         className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-red-300 hover:bg-red-900/40 disabled:opacity-50"
                       >
-                        Ablehnen
+                        {t("adm_reject")}
                       </button>
                       <button
                         onClick={() => approveGame(game.id)}
                         disabled={moderatingId === game.id}
                         className="rounded bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
                       >
-                        Freigeben
+                        {t("adm_approve")}
                       </button>
                     </div>
                   </div>
