@@ -40,6 +40,7 @@ function formatRelativeTime(value: string): string {
 export function ProfilePage({ onOpenFriends }: Props) {
   const user = useAuthStore((s) => s.user);
   const screenshots = useAuthStore((s) => s.screenshots);
+  const badges = useAuthStore((s) => s.badges);
   const loading = useAuthStore((s) => s.loading);
   const error = useAuthStore((s) => s.error);
   const updateProfile = useAuthStore((s) => s.updateProfile);
@@ -48,6 +49,8 @@ export function ProfilePage({ onOpenFriends }: Props) {
   const addScreenshot = useAuthStore((s) => s.addScreenshot);
   const deleteScreenshot = useAuthStore((s) => s.deleteScreenshot);
   const clearError = useAuthStore((s) => s.clearError);
+  const fetchBadges = useAuthStore((s) => s.fetchBadges);
+  const setEquippedBadge = useAuthStore((s) => s.setEquippedBadge);
 
   const friends = useFriendsStore((s) => s.friends);
   const loadingFriends = useFriendsStore((s) => s.loadingFriends);
@@ -57,7 +60,8 @@ export function ProfilePage({ onOpenFriends }: Props) {
 
   useEffect(() => {
     fetchFriends();
-  }, [fetchFriends]);
+    fetchBadges();
+  }, [fetchFriends, fetchBadges]);
 
   const [editMode, setEditMode] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -222,6 +226,15 @@ export function ProfilePage({ onOpenFriends }: Props) {
                 >
                   {user.display_name}
                 </h1>
+                {user.equipped_badge && (
+                  <span
+                    title={user.equipped_badge.description}
+                    className="flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 text-[13px] font-bold text-amber-300"
+                  >
+                    <span>{user.equipped_badge.icon}</span>
+                    {user.equipped_badge.label}
+                  </span>
+                )}
                 <button
                   onClick={() => setEditMode((v) => !v)}
                   className={`rounded-md px-3.5 py-1.5 text-[13px] font-bold ${
@@ -265,6 +278,50 @@ export function ProfilePage({ onOpenFriends }: Props) {
 
         <div className="mt-[30px] grid grid-cols-1 gap-6 lg:grid-cols-[1.6fr_1fr]">
           <div className="flex flex-col gap-[30px]">
+            {editMode && (
+              <div>
+                <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+                  Badge auswählen
+                </div>
+                {badges.length === 0 ? (
+                  <p className="text-sm text-zinc-500">
+                    Noch keine Badges verdient. Hoste z. B. ein Event mit 32 Teilnehmern oder
+                    gewinne dein erstes Turnier.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => setEquippedBadge(null)}
+                      disabled={loading}
+                      className={`rounded-full border px-3.5 py-1.5 text-[13px] font-bold disabled:opacity-50 ${
+                        !user.equipped_badge
+                          ? "border-sky-400/50 bg-sky-500/15 text-sky-300"
+                          : "border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10"
+                      }`}
+                    >
+                      Kein Badge
+                    </button>
+                    {badges.map((b) => (
+                      <button
+                        key={b.key}
+                        onClick={() => setEquippedBadge(b.key)}
+                        disabled={loading}
+                        title={b.description}
+                        className={`flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-bold disabled:opacity-50 ${
+                          user.equipped_badge?.key === b.key
+                            ? "border-amber-400/50 bg-amber-500/15 text-amber-300"
+                            : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+                        }`}
+                      >
+                        <span>{b.icon}</span>
+                        {b.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div>
               <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
                 Über mich

@@ -7,12 +7,13 @@ use std::io::Read;
 use std::path::Path as FsPath;
 
 use crate::auth::{create_token, hash_password, user_id_from_headers, verify_password, AdminUser, AuthUser};
+use crate::badges::{find_badge, Badge};
 use crate::models::{
     AuthResponse, BracketEntry, CatalogGame, CloudSave, EventBracket, EventMatch, EventTeam,
     GameEvent, GameReview, GameScreenshot, GameVersionNote, ImageUpload, LoginRequest,
     NewCatalogGame, NewEventTeam, NewGameEvent, NewGameReview, NewGameVersionNote, Notification,
-    ProfileScreenshot, PublicProfile, RegisterRequest, SetMatchWinner, SetPlayingRequest,
-    UpdateProfileRequest, User,
+    ProfileScreenshot, PublicProfile, RegisterRequest, SetBadgeRequest, SetMatchWinner,
+    SetPlayingRequest, UpdateProfileRequest, User,
 };
 use crate::state::AppState;
 
@@ -23,6 +24,8 @@ fn internal_error<E: std::fmt::Display>(e: E) -> ApiError {
 }
 
 fn row_to_user(row: &rusqlite::Row) -> rusqlite::Result<User> {
+    let equipped_badge_key: Option<String> = row.get(9)?;
+    let equipped_badge_earned_at: Option<String> = row.get(10)?;
     Ok(User {
         id: row.get(0)?,
         email: row.get(1)?,
@@ -33,11 +36,14 @@ fn row_to_user(row: &rusqlite::Row) -> rusqlite::Result<User> {
         created_at: row.get(6)?,
         is_profile_hidden: row.get(7)?,
         is_admin: row.get(8)?,
+        equipped_badge: equipped_badge_key
+            .and_then(|k| Badge::from_key(&k, equipped_badge_earned_at.unwrap_or_default())),
     })
 }
 
 const USER_COLUMNS: &str = "id, email, display_name, avatar_url, background_url, bio, \
-    created_at, is_profile_hidden, is_admin";
+    created_at, is_profile_hidden, is_admin, users.equipped_badge, \
+    (SELECT earned_at FROM user_badges WHERE user_id = users.id AND badge_key = users.equipped_badge)";
 
 /// Grants moderator access on login/register if the email is listed in
 /// `DOVE_ADMIN_EMAILS` — this is a one-way bootstrap, not a live sync: it
@@ -203,6 +209,69 @@ pub async fn update_profile(
         )
         .map_err(internal_error)?;
     }
+
+    conn.query_row(
+        &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
+        params![user_id],
+        row_to_user,
+    )
+    .map(Json)
+    .map_err(internal_error)
+}
+
+/// All badges a user has earned — public, like a Discord profile's badge
+/// row. Used by the "Profil bearbeiten" picker (to choose among earned
+/// badges) and to show everyone which ones a user has.
+pub async fn list_user_badges(
+    State(state): State<AppState>,
+    Path(user_id): Path<i64>,
+) -> Result<Json<Vec<Badge>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    let mut stmt = conn
+        .prepare("SELECT badge_key, earned_at FROM user_badges WHERE user_id = ?1 ORDER BY earned_at ASC")
+        .map_err(internal_error)?;
+    let badges = stmt
+        .query_map(params![user_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(internal_error)?
+        .filter_map(|r| r.ok())
+        .filter_map(|(key, earned_at)| Badge::from_key(&key, earned_at))
+        .collect();
+    Ok(Json(badges))
+}
+
+/// Equips (or, with `badge_key: null`, unequips) a badge on the caller's
+/// profile. Only badges the user has actually earned can be equipped — the
+/// picker only offers earned ones, but this is re-checked server-side too.
+pub async fn set_equipped_badge(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Json(req): Json<SetBadgeRequest>,
+) -> Result<Json<User>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+
+    if let Some(badge_key) = &req.badge_key {
+        let owns: bool = conn
+            .query_row(
+                "SELECT 1 FROM user_badges WHERE user_id = ?1 AND badge_key = ?2",
+                params![user_id, badge_key],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if !owns {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Du hast dieses Badge noch nicht verdient".to_string(),
+            ));
+        }
+    }
+
+    conn.execute(
+        "UPDATE users SET equipped_badge = ?1 WHERE id = ?2",
+        params![req.badge_key, user_id],
+    )
+    .map_err(internal_error)?;
 
     conn.query_row(
         &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
@@ -408,6 +477,7 @@ pub async fn get_user_profile(
         created_at: user.created_at,
         screenshots,
         wishlist,
+        equipped_badge: user.equipped_badge,
     }))
 }
 
@@ -563,7 +633,24 @@ pub async fn accept_friend_request(
         None,
         Some(user_id),
     );
+    check_social_butterfly_badge(&conn, user_id);
+    check_social_butterfly_badge(&conn, target_id);
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Awards "social_butterfly" once a user reaches 10 accepted friendships.
+fn check_social_butterfly_badge(conn: &rusqlite::Connection, user_id: i64) {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM friendships \
+             WHERE status = 'accepted' AND (requester_id = ?1 OR recipient_id = ?1)",
+            params![user_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if count >= 10 {
+        award_badge(conn, user_id, "social_butterfly");
+    }
 }
 
 /// Removes a friendship or cancels/declines a pending request in either
@@ -850,6 +937,14 @@ pub async fn upsert_game_review(
         ));
     }
 
+    let had_any_review_before: bool = conn
+        .query_row(
+            "SELECT 1 FROM game_reviews WHERE user_id = ?1",
+            params![user_id],
+            |_| Ok(()),
+        )
+        .is_ok();
+
     conn.execute(
         "INSERT INTO game_reviews (catalog_game_id, user_id, rating, body) VALUES (?1, ?2, ?3, ?4) \
          ON CONFLICT(catalog_game_id, user_id) DO UPDATE SET \
@@ -857,6 +952,10 @@ pub async fn upsert_game_review(
         params![game_id, user_id, req.rating, req.body],
     )
     .map_err(internal_error)?;
+
+    if !had_any_review_before {
+        award_badge(&conn, user_id, "first_review");
+    }
 
     conn.query_row(
         &format!(
@@ -1052,6 +1151,29 @@ async fn set_game_status(
     if affected == 0 {
         return Err((StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()));
     }
+
+    if status == "approved" {
+        let publisher_id: Option<i64> = conn
+            .query_row(
+                "SELECT publisher_user_id FROM catalog_games WHERE id = ?1",
+                params![game_id],
+                |row| row.get(0),
+            )
+            .ok();
+        if let Some(publisher_id) = publisher_id {
+            let approved_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM catalog_games WHERE publisher_user_id = ?1 AND status = 'approved'",
+                    params![publisher_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            if approved_count == 1 {
+                award_badge(&conn, publisher_id, "first_publish");
+            }
+        }
+    }
+
     conn.query_row(
         &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
         params![game_id],
@@ -2115,6 +2237,7 @@ pub async fn join_event(
         params![event_id, user_id],
     )
     .map_err(internal_error)?;
+    check_host_beginner_badge(&conn, event_id);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -2317,6 +2440,7 @@ pub async fn join_event_team(
         params![event_id, user_id, team_id],
     )
     .map_err(internal_error)?;
+    check_host_beginner_badge(&conn, event_id);
 
     let joiner_name = user_display_name(&conn, user_id);
     let (team_name, event_title): (String, String) = conn
@@ -2711,6 +2835,15 @@ pub async fn set_match_winner(
         .map_err(internal_error)?;
     }
 
+    if !exists {
+        // No next-round match was created — this was the final, so the
+        // winner(s) take the tournament.
+        for member_id in entry_member_ids(&conn, team_size, req.winner_entry_id) {
+            award_badge(&conn, member_id, "tournament_winner_first");
+            record_tournament_win(&conn, member_id, event_id);
+        }
+    }
+
     let winner_id = req.winner_entry_id;
     let loser_id = if entry_a_id == Some(winner_id) { entry_b_id } else { entry_a_id };
     let winner_name = entry_display_name(&conn, team_size, winner_id);
@@ -2771,6 +2904,83 @@ fn user_display_name(conn: &rusqlite::Connection, user_id: i64) -> String {
         |row| row.get(0),
     )
     .unwrap_or_else(|_| "Jemand".to_string())
+}
+
+/// Records that `user_id` earned `badge_key`, if they haven't already
+/// (`UNIQUE(user_id, badge_key)` makes the insert idempotent), and notifies
+/// them — but only on the insert that actually happened, not on repeat
+/// calls for a badge they already hold (e.g. `check_host_beginner_badge`
+/// runs on every join, long after the badge was first earned). Best-effort:
+/// a failed award shouldn't roll back the join/match-result that triggered
+/// it, same philosophy as `create_notification`.
+fn award_badge(conn: &rusqlite::Connection, user_id: i64, badge_key: &str) {
+    let inserted = conn
+        .execute(
+            "INSERT OR IGNORE INTO user_badges (user_id, badge_key) VALUES (?1, ?2)",
+            params![user_id, badge_key],
+        )
+        .unwrap_or(0)
+        > 0;
+    if inserted {
+        if let Some(def) = find_badge(badge_key) {
+            create_notification(
+                conn,
+                user_id,
+                "badge_earned",
+                &format!("{} Du hast das Badge \"{}\" verdient!", def.icon, def.label),
+                None,
+                None,
+            );
+        }
+    }
+}
+
+/// Awards the host "host_beginner"/"host_pro" badges once an event they're
+/// hosting reaches 32/64 registered participants (counted per-user, so it
+/// applies the same way to team and solo events).
+fn check_host_beginner_badge(conn: &rusqlite::Connection, event_id: i64) {
+    let host_id: Option<i64> = conn
+        .query_row(
+            "SELECT host_user_id FROM events WHERE id = ?1",
+            params![event_id],
+            |row| row.get(0),
+        )
+        .ok();
+    let Some(host_id) = host_id else { return };
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM event_participants WHERE event_id = ?1",
+            params![event_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if count >= 32 {
+        award_badge(conn, host_id, "host_beginner");
+    }
+    if count >= 64 {
+        award_badge(conn, host_id, "host_pro");
+    }
+}
+
+/// Records a tournament win and awards "tournament_champion" once a player
+/// (or, for team events, every member) has won 5 distinct tournaments.
+/// Separate from `tournament_winner_first` so the count survives even
+/// though that badge itself only gets awarded once.
+fn record_tournament_win(conn: &rusqlite::Connection, user_id: i64, event_id: i64) {
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO tournament_wins (user_id, event_id) VALUES (?1, ?2)",
+        params![user_id, event_id],
+    );
+    let wins: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tournament_wins WHERE user_id = ?1",
+            params![user_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if wins >= 5 {
+        award_badge(conn, user_id, "tournament_champion");
+    }
 }
 
 /// Inserts a notification for `user_id`. Failures are logged, not
@@ -2880,4 +3090,197 @@ pub async fn mark_all_notifications_read(
     )
     .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn row_to_direct_message(row: &rusqlite::Row) -> rusqlite::Result<crate::models::DirectMessage> {
+    Ok(crate::models::DirectMessage {
+        id: row.get(0)?,
+        sender_id: row.get(1)?,
+        sender_display_name: row.get(2)?,
+        recipient_id: row.get(3)?,
+        body: row.get(4)?,
+        created_at: row.get(5)?,
+    })
+}
+
+const DIRECT_MESSAGE_COLUMNS: &str = "direct_messages.id, direct_messages.sender_id, \
+    users.display_name, direct_messages.recipient_id, direct_messages.body, direct_messages.created_at";
+
+/// Full DM history between the caller and `friend_id`, oldest first. Only
+/// accepted friends can message each other — mirrors the friend-request
+/// flow rather than introducing a separate "can DM" permission.
+pub async fn list_direct_messages(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(friend_id): Path<i64>,
+) -> Result<Json<Vec<crate::models::DirectMessage>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    if !are_friends(&conn, user_id, friend_id) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Ihr müsst befreundet sein, um euch Nachrichten zu schreiben".to_string(),
+        ));
+    }
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {DIRECT_MESSAGE_COLUMNS} FROM direct_messages \
+             JOIN users ON users.id = direct_messages.sender_id \
+             WHERE (direct_messages.sender_id = ?1 AND direct_messages.recipient_id = ?2) \
+                OR (direct_messages.sender_id = ?2 AND direct_messages.recipient_id = ?1) \
+             ORDER BY direct_messages.created_at ASC"
+        ))
+        .map_err(internal_error)?;
+    let messages = stmt
+        .query_map(params![user_id, friend_id], row_to_direct_message)
+        .map_err(internal_error)?
+        .filter_map(|m| m.ok())
+        .collect();
+    Ok(Json(messages))
+}
+
+pub async fn send_direct_message(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(friend_id): Path<i64>,
+    Json(req): Json<crate::models::NewDirectMessage>,
+) -> Result<Json<crate::models::DirectMessage>, ApiError> {
+    let body = req.body.trim().to_string();
+    if body.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Nachricht darf nicht leer sein".to_string()));
+    }
+    if body.len() > 2000 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Nachricht ist zu lang (max. 2000 Zeichen)".to_string(),
+        ));
+    }
+
+    let conn = state.db.lock().map_err(internal_error)?;
+    if !are_friends(&conn, user_id, friend_id) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Ihr müsst befreundet sein, um euch Nachrichten zu schreiben".to_string(),
+        ));
+    }
+    conn.execute(
+        "INSERT INTO direct_messages (sender_id, recipient_id, body) VALUES (?1, ?2, ?3)",
+        params![user_id, friend_id, body],
+    )
+    .map_err(internal_error)?;
+    let id = conn.last_insert_rowid();
+
+    conn.query_row(
+        &format!(
+            "SELECT {DIRECT_MESSAGE_COLUMNS} FROM direct_messages \
+             JOIN users ON users.id = direct_messages.sender_id \
+             WHERE direct_messages.id = ?1"
+        ),
+        params![id],
+        row_to_direct_message,
+    )
+    .map(Json)
+    .map_err(internal_error)
+}
+
+fn row_to_event_message(row: &rusqlite::Row) -> rusqlite::Result<crate::models::EventMessage> {
+    Ok(crate::models::EventMessage {
+        id: row.get(0)?,
+        event_id: row.get(1)?,
+        sender_id: row.get(2)?,
+        sender_display_name: row.get(3)?,
+        body: row.get(4)?,
+        created_at: row.get(5)?,
+    })
+}
+
+const EVENT_MESSAGE_COLUMNS: &str = "event_messages.id, event_messages.event_id, \
+    event_messages.sender_id, users.display_name, event_messages.body, event_messages.created_at";
+
+/// True if `user_id` hosts `event_id` or is a registered participant —
+/// the gate for reading/posting in that event's chat.
+fn is_event_member(conn: &rusqlite::Connection, event_id: i64, user_id: i64) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM events WHERE id = ?1 AND host_user_id = ?2",
+        params![event_id, user_id],
+        |_| Ok(()),
+    )
+    .is_ok()
+        || conn
+            .query_row(
+                "SELECT 1 FROM event_participants WHERE event_id = ?1 AND user_id = ?2",
+                params![event_id, user_id],
+                |_| Ok(()),
+            )
+            .is_ok()
+}
+
+pub async fn list_event_messages(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(event_id): Path<i64>,
+) -> Result<Json<Vec<crate::models::EventMessage>>, ApiError> {
+    let conn = state.db.lock().map_err(internal_error)?;
+    if !is_event_member(&conn, event_id, user_id) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur Teilnehmer und der Host sehen den Event-Chat".to_string(),
+        ));
+    }
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {EVENT_MESSAGE_COLUMNS} FROM event_messages \
+             JOIN users ON users.id = event_messages.sender_id \
+             WHERE event_messages.event_id = ?1 ORDER BY event_messages.created_at ASC"
+        ))
+        .map_err(internal_error)?;
+    let messages = stmt
+        .query_map(params![event_id], row_to_event_message)
+        .map_err(internal_error)?
+        .filter_map(|m| m.ok())
+        .collect();
+    Ok(Json(messages))
+}
+
+pub async fn send_event_message(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(event_id): Path<i64>,
+    Json(req): Json<crate::models::NewEventMessage>,
+) -> Result<Json<crate::models::EventMessage>, ApiError> {
+    let body = req.body.trim().to_string();
+    if body.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Nachricht darf nicht leer sein".to_string()));
+    }
+    if body.len() > 2000 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Nachricht ist zu lang (max. 2000 Zeichen)".to_string(),
+        ));
+    }
+
+    let conn = state.db.lock().map_err(internal_error)?;
+    if !is_event_member(&conn, event_id, user_id) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur Teilnehmer und der Host können im Event-Chat schreiben".to_string(),
+        ));
+    }
+    conn.execute(
+        "INSERT INTO event_messages (event_id, sender_id, body) VALUES (?1, ?2, ?3)",
+        params![event_id, user_id, body],
+    )
+    .map_err(internal_error)?;
+    let id = conn.last_insert_rowid();
+
+    conn.query_row(
+        &format!(
+            "SELECT {EVENT_MESSAGE_COLUMNS} FROM event_messages \
+             JOIN users ON users.id = event_messages.sender_id \
+             WHERE event_messages.id = ?1"
+        ),
+        params![id],
+        row_to_event_message,
+    )
+    .map(Json)
+    .map_err(internal_error)
 }

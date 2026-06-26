@@ -240,6 +240,8 @@ function App() {
                 setActiveTab("events");
                 openEventDetail(eventId);
               }}
+              onOpenFriends={() => setActiveTab("friends")}
+              onOpenProfile={() => setActiveTab("profile")}
             />
           ) : null}
           {authToken && authUser ? (

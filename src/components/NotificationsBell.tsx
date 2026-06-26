@@ -3,6 +3,8 @@ import { useNotificationsStore } from "../notificationsStore";
 
 interface Props {
   onOpenEvent: (eventId: number) => void;
+  onOpenFriends: () => void;
+  onOpenProfile: () => void;
 }
 
 const POLL_MS = 20000;
@@ -18,7 +20,7 @@ function formatRelativeTime(value: string): string {
   return `vor ${days} Tagen`;
 }
 
-export function NotificationsBell({ onOpenEvent }: Props) {
+export function NotificationsBell({ onOpenEvent, onOpenFriends, onOpenProfile }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -88,6 +90,12 @@ export function NotificationsBell({ onOpenEvent }: Props) {
                     if (n.event_id) {
                       setOpen(false);
                       onOpenEvent(n.event_id);
+                    } else if (n.kind.startsWith("friend")) {
+                      setOpen(false);
+                      onOpenFriends();
+                    } else if (n.kind === "badge_earned") {
+                      setOpen(false);
+                      onOpenProfile();
                     }
                   }}
                   className={`block w-full border-b border-zinc-800/60 px-3 py-2.5 text-left text-sm last:border-b-0 hover:bg-zinc-800 ${

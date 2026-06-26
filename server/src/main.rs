@@ -1,4 +1,5 @@
 mod auth;
+mod badges;
 mod db;
 mod handlers;
 #[cfg(test)]
@@ -191,6 +192,8 @@ async fn main() {
     let app = Router::new()
         .merge(auth_routes)
         .route("/api/me", get(handlers::me).patch(handlers::update_profile))
+        .route("/api/me/badge", axum::routing::patch(handlers::set_equipped_badge))
+        .route("/api/users/:id/badges", get(handlers::list_user_badges))
         .route("/api/me/password", post(handlers::change_password))
         .route("/api/me/avatar", post(handlers::upload_avatar))
         .route("/api/me/background", post(handlers::upload_background))
@@ -266,6 +269,14 @@ async fn main() {
         .route(
             "/api/events/:id/matches/:match_id/winner",
             post(handlers::set_match_winner),
+        )
+        .route(
+            "/api/events/:id/messages",
+            get(handlers::list_event_messages).post(handlers::send_event_message),
+        )
+        .route(
+            "/api/me/messages/:friend_id",
+            get(handlers::list_direct_messages).post(handlers::send_direct_message),
         )
         .route(
             "/api/me/friend-requests",

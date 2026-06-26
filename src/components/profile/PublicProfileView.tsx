@@ -13,6 +13,7 @@ interface Props {
   onSendFriendRequest?: () => void;
   onAcceptFriendRequest?: () => void;
   onRemoveFriend?: () => void;
+  onOpenChat?: () => void;
 }
 
 function resolveUrl(url: string | null): string | null {
@@ -28,6 +29,7 @@ export function PublicProfileView({
   onSendFriendRequest,
   onAcceptFriendRequest,
   onRemoveFriend,
+  onOpenChat,
 }: Props) {
   const backgroundUrl = resolveUrl(profile.background_url);
   const avatarUrl = resolveUrl(profile.avatar_url);
@@ -110,12 +112,31 @@ export function PublicProfileView({
           </div>
 
           <div className="flex-1 pb-2">
-            <h1 className="text-[38px] font-black tracking-tight text-white">
-              {profile.display_name}
-            </h1>
+            <div className="flex flex-wrap items-center gap-3.5">
+              <h1 className="text-[38px] font-black tracking-tight text-white">
+                {profile.display_name}
+              </h1>
+              {profile.equipped_badge && (
+                <span
+                  title={profile.equipped_badge.description}
+                  className="flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 text-[13px] font-bold text-amber-300"
+                >
+                  <span>{profile.equipped_badge.icon}</span>
+                  {profile.equipped_badge.label}
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="flex gap-2 pb-2">
+            {friendStatus === "friends" && onOpenChat && (
+              <button
+                onClick={onOpenChat}
+                className="rounded-md border border-white/10 bg-white/5 px-3.5 py-1.5 text-[13px] font-bold text-zinc-300 hover:bg-white/10"
+              >
+                💬 Chat
+              </button>
+            )}
             <button
               onClick={() => setShowWishlist(true)}
               className="rounded-md border border-white/10 bg-white/5 px-3.5 py-1.5 text-[13px] font-bold text-zinc-300 hover:bg-white/10"

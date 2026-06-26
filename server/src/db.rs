@@ -163,6 +163,38 @@ fn init_schema(conn: &Connection, default_quota_bytes: i64) {
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS user_badges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            badge_key TEXT NOT NULL,
+            earned_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(user_id, badge_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS tournament_wins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            event_id INTEGER NOT NULL REFERENCES events(id),
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(user_id, event_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS direct_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id INTEGER NOT NULL REFERENCES users(id),
+            recipient_id INTEGER NOT NULL REFERENCES users(id),
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS event_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL REFERENCES events(id),
+            sender_id INTEGER NOT NULL REFERENCES users(id),
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS cloud_saves (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL REFERENCES users(id),
@@ -307,4 +339,5 @@ fn init_schema(conn: &Connection, default_quota_bytes: i64) {
         [],
     );
     let _ = conn.execute("ALTER TABLE events ADD COLUMN join_code TEXT", []);
+    let _ = conn.execute("ALTER TABLE users ADD COLUMN equipped_badge TEXT", []);
 }

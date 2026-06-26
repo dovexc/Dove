@@ -1,7 +1,16 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { API_BASE, useAuthStore } from "../../authStore";
 import { useEventsStore } from "../../eventsStore";
+import { useChatStore } from "../../chatStore";
 import type { EventMatch } from "../../types";
+
+const CHAT_POLL_MS = 4000;
+
+function formatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+}
 
 function formatPrize(priceCents: number): string {
   return priceCents === 0 ? "Kein Preisgeld" : `${(priceCents / 100).toFixed(2)} €`;
@@ -49,11 +58,36 @@ export function EventDetailPage() {
   const token = useAuthStore((s) => s.token);
   const authUser = useAuthStore((s) => s.user);
 
+  const eventMessages = useChatStore((s) => s.eventMessages);
+  const sendingEvent = useChatStore((s) => s.sendingEvent);
+  const openEventChat = useChatStore((s) => s.openEventChat);
+  const closeEventChat = useChatStore((s) => s.closeEventChat);
+  const refreshEventMessages = useChatStore((s) => s.refreshEventMessages);
+  const sendEventMessage = useChatStore((s) => s.sendEventMessage);
+
   const [newTeamName, setNewTeamName] = useState("");
+  const [chatDraft, setChatDraft] = useState("");
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  const isHost = authUser?.id === event?.host_user_id;
+  const canChat = Boolean(token && event && (isHost || event.joined));
+
+  useEffect(() => {
+    if (!event || !canChat) return;
+    openEventChat(event.id);
+    const interval = setInterval(refreshEventMessages, CHAT_POLL_MS);
+    return () => {
+      clearInterval(interval);
+      closeEventChat();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event?.id, canChat]);
+
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [eventMessages.length]);
 
   if (!event) return null;
-
-  const isHost = authUser?.id === event.host_user_id;
   const open = isRegistrationOpen(event.registration_deadline);
   const deadline = formatDate(event.registration_deadline);
   const starts = formatDate(event.starts_at);
@@ -402,6 +436,76 @@ export function EventDetailPage() {
                 ))}
               </div>
             )}
+          </section>
+        )}
+
+        {canChat && (
+          <section className="mt-8">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
+              Event-Chat
+            </h2>
+            <div className="flex h-[360px] flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/60">
+              <div className="flex-1 overflow-y-auto px-4 py-3">
+                {eventMessages.length === 0 ? (
+                  <p className="text-sm text-zinc-500">
+                    Noch keine Nachrichten. Schreib die erste!
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {eventMessages.map((m) => {
+                      const mine = m.sender_id === authUser?.id;
+                      return (
+                        <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                          <div
+                            className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${
+                              mine ? "bg-sky-600 text-white" : "bg-zinc-800 text-zinc-100"
+                            }`}
+                          >
+                            {!mine && (
+                              <span className="mb-0.5 block text-xs font-semibold text-sky-300">
+                                {m.sender_display_name}
+                              </span>
+                            )}
+                            <p className="whitespace-pre-wrap">{m.body}</p>
+                            <span
+                              className={`mt-1 block text-[10px] ${
+                                mine ? "text-sky-200/70" : "text-zinc-500"
+                              }`}
+                            >
+                              {formatTime(m.created_at)}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div ref={chatBottomRef} />
+                  </div>
+                )}
+              </div>
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!chatDraft.trim()) return;
+                  await sendEventMessage(chatDraft);
+                  setChatDraft("");
+                }}
+                className="flex gap-2 border-t border-zinc-800 p-3"
+              >
+                <input
+                  value={chatDraft}
+                  onChange={(e) => setChatDraft(e.target.value)}
+                  placeholder="Nachricht an alle Teilnehmer..."
+                  className="flex-1 rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                />
+                <button
+                  type="submit"
+                  disabled={sendingEvent || !chatDraft.trim()}
+                  className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+                >
+                  Senden
+                </button>
+              </form>
+            </div>
           </section>
         )}
       </div>

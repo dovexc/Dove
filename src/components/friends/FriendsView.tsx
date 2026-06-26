@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useFriendsStore } from "../../friendsStore";
 import { API_BASE } from "../../authStore";
 import { PublicProfileView, type FriendStatus } from "../profile/PublicProfileView";
+import { DirectMessageView } from "./DirectMessageView";
 import type { UserSummary } from "../../types";
 
 function resolveUrl(url: string | null): string | null {
@@ -69,6 +70,7 @@ function FriendCard({
   actionLabel,
   onAction,
   onOpen,
+  onChat,
   busy,
   showOnlineStatus,
 }: {
@@ -77,6 +79,7 @@ function FriendCard({
   actionLabel?: string;
   onAction?: () => void;
   onOpen: () => void;
+  onChat?: () => void;
   busy?: boolean;
   showOnlineStatus?: boolean;
 }) {
@@ -106,6 +109,18 @@ function FriendCard({
           )
         )}
       </div>
+      {onChat && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onChat();
+          }}
+          title="Chat öffnen"
+          className="shrink-0 rounded-[7px] border border-white/10 bg-white/5 px-3.5 py-2 text-[13px] font-bold text-zinc-300 hover:bg-white/10 hover:text-white"
+        >
+          💬 Chat
+        </button>
+      )}
       {actionLabel && onAction && (
         <button
           onClick={(e) => {
@@ -124,6 +139,7 @@ function FriendCard({
 
 export function FriendsView({ onClose }: Props) {
   const [tab, setTab] = useState<Tab>("freunde");
+  const [chatFriend, setChatFriend] = useState<UserSummary | null>(null);
 
   const query = useFriendsStore((s) => s.query);
   const setQuery = useFriendsStore((s) => s.setQuery);
@@ -304,6 +320,7 @@ export function FriendsView({ onClose }: Props) {
                     status="friends"
                     showOnlineStatus
                     onOpen={() => viewProfile(user.id)}
+                    onChat={() => setChatFriend(user)}
                   />
                 ))}
               </div>
@@ -386,7 +403,20 @@ export function FriendsView({ onClose }: Props) {
           onSendFriendRequest={() => sendFriendRequest(viewedProfile.id)}
           onAcceptFriendRequest={() => acceptFriendRequest(viewedProfile.id)}
           onRemoveFriend={() => removeFriend(viewedProfile.id)}
+          onOpenChat={() =>
+            setChatFriend({
+              id: viewedProfile.id,
+              display_name: viewedProfile.display_name,
+              avatar_url: viewedProfile.avatar_url,
+              online: false,
+              playing_title: null,
+            })
+          }
         />
+      )}
+
+      {chatFriend && (
+        <DirectMessageView friend={chatFriend} onClose={() => setChatFriend(null)} />
       )}
     </div>
   );

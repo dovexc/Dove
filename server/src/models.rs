@@ -1,3 +1,4 @@
+use crate::badges::Badge;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -11,6 +12,7 @@ pub struct User {
     pub created_at: String,
     pub is_profile_hidden: bool,
     pub is_admin: bool,
+    pub equipped_badge: Option<Badge>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -23,6 +25,12 @@ pub struct PublicProfile {
     pub created_at: String,
     pub screenshots: Vec<ProfileScreenshot>,
     pub wishlist: Vec<CatalogGame>,
+    pub equipped_badge: Option<Badge>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetBadgeRequest {
+    pub badge_key: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -315,4 +323,34 @@ pub struct Notification {
     pub actor_user_id: Option<i64>,
     pub is_read: bool,
     pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct DirectMessage {
+    pub id: i64,
+    pub sender_id: i64,
+    pub sender_display_name: String,
+    pub recipient_id: i64,
+    pub body: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewDirectMessage {
+    pub body: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct EventMessage {
+    pub id: i64,
+    pub event_id: i64,
+    pub sender_id: i64,
+    pub sender_display_name: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewEventMessage {
+    pub body: String,
 }

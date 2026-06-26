@@ -47,6 +47,14 @@ export interface SteamGame {
   size_on_disk_bytes: number;
 }
 
+export interface Badge {
+  key: string;
+  label: string;
+  description: string;
+  icon: string;
+  earned_at: string;
+}
+
 export interface StoreUser {
   id: number;
   email: string;
@@ -57,6 +65,7 @@ export interface StoreUser {
   created_at: string;
   is_profile_hidden: boolean;
   is_admin: boolean;
+  equipped_badge: Badge | null;
 }
 
 export interface ProfileScreenshot {
@@ -75,6 +84,7 @@ export interface PublicProfile {
   created_at: string;
   screenshots: ProfileScreenshot[];
   wishlist: CatalogGame[];
+  equipped_badge: Badge | null;
 }
 
 export interface UserSummary {
@@ -230,4 +240,22 @@ export interface EventBracket {
 export interface StorageUsage {
   used_bytes: number;
   quota_bytes: number;
+}
+
+export interface DirectMessage {
+  id: number;
+  sender_id: number;
+  sender_display_name: string;
+  recipient_id: number;
+  body: string;
+  created_at: string;
+}
+
+export interface EventMessage {
+  id: number;
+  event_id: number;
+  sender_id: number;
+  sender_display_name: string;
+  body: string;
+  created_at: string;
 }

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { ProfileScreenshot, StoreUser } from "./types";
+import type { Badge, ProfileScreenshot, StoreUser } from "./types";
 
 const API_BASE = "http://127.0.0.1:4000";
 const TOKEN_STORAGE_KEY = "dove_store_token";
@@ -9,6 +9,7 @@ interface AuthState {
   token: string | null;
   user: StoreUser | null;
   screenshots: ProfileScreenshot[];
+  badges: Badge[];
   error: string | null;
   loading: boolean;
   register: (email: string, password: string, displayName: string) => Promise<void>;
@@ -27,6 +28,8 @@ interface AuthState {
   addScreenshot: (dataUrl: string) => Promise<void>;
   deleteScreenshot: (id: number) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
+  fetchBadges: () => Promise<void>;
+  setEquippedBadge: (badgeKey: string | null) => Promise<void>;
 }
 
 async function parseErrorMessage(response: Response): Promise<string> {
@@ -38,6 +41,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   token: localStorage.getItem(TOKEN_STORAGE_KEY),
   user: null,
   screenshots: [],
+  badges: [],
   error: null,
   loading: false,
 
@@ -54,6 +58,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
       set({ token: data.token, user: data.user, loading: false });
       get().fetchScreenshots();
+      get().fetchBadges();
     } catch (e) {
       set({ error: String(e), loading: false });
     }
@@ -72,6 +77,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
       set({ token: data.token, user: data.user, loading: false });
       get().fetchScreenshots();
+      get().fetchBadges();
     } catch (e) {
       set({ error: String(e), loading: false });
     }
@@ -79,7 +85,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: () => {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
-    set({ token: null, user: null, screenshots: [] });
+    set({ token: null, user: null, screenshots: [], badges: [] });
   },
 
   hydrateUser: async () => {
@@ -99,6 +105,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const user = await response.json();
       set({ user });
       get().fetchScreenshots();
+      get().fetchBadges();
     } catch {
       // Network/server error (e.g. backend not up yet) — keep the token and
       // retry on the next hydrate rather than logging the user out for an
@@ -248,6 +255,40 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch (e) {
       set({ error: String(e), loading: false });
       return false;
+    }
+  },
+
+  fetchBadges: async () => {
+    const user = get().user;
+    if (!user) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/users/${user.id}/badges`);
+      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      const badges: Badge[] = await response.json();
+      set({ badges });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  setEquippedBadge: async (badgeKey) => {
+    const token = get().token;
+    if (!token) return;
+    set({ loading: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/me/badge`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ badge_key: badgeKey }),
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      const user = await response.json();
+      set({ user, loading: false });
+    } catch (e) {
+      set({ error: String(e), loading: false });
     }
   },
 }));
