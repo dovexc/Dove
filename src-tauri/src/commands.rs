@@ -876,6 +876,7 @@ struct RemoteManifestFile {
 #[derive(serde::Deserialize)]
 struct RemoteManifest {
     version: String,
+    file_url: String,
     files: Vec<RemoteManifestFile>,
 }
 
@@ -1093,8 +1094,8 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
     for file in &files_to_fetch {
         let dest_path = install_dir.join(&file.relative_path);
         let url = format!(
-            "{STORE_API_BASE}/uploads/games/{catalog_game_id}/{}/{}",
-            manifest.version,
+            "{}{}",
+            manifest.file_url,
             encode_relative_path(&file.relative_path)
         );
 

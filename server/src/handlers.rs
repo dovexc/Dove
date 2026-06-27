@@ -5,7 +5,6 @@ use base64::Engine;
 use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Row};
 use std::io::Read;
-use std::path::Path as FsPath;
 
 use crate::auth::{create_token, hash_password, user_id_from_headers, verify_password, AdminUser, AuthUser};
 use crate::badges::{find_badge, Badge};
@@ -17,8 +16,9 @@ use crate::models::{
     SetPlayingRequest, UpdateProfileRequest, User,
 };
 use crate::state::AppState;
+use crate::storage::Storage;
 
-type ApiError = (StatusCode, String);
+pub type ApiError = (StatusCode, String);
 
 fn internal_error<E: std::fmt::Display>(e: E) -> ApiError {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
@@ -90,9 +90,9 @@ async fn are_friends(pool: &PgPool, a: i64, b: i64) -> bool {
     .unwrap_or(false)
 }
 
-/// Decodes a `data:<mime>;base64,<data>` URL and writes it to `data/uploads`,
-/// returning a server-relative URL clients can fetch it from.
-fn save_data_url_image(data_url: &str) -> Result<String, ApiError> {
+/// Decodes a `data:<mime>;base64,<data>` URL and uploads it to R2, returning
+/// the public URL clients can fetch it from.
+async fn save_data_url_image(storage: &Storage, data_url: &str) -> Result<String, ApiError> {
     let bad_request = |msg: &str| (StatusCode::BAD_REQUEST, msg.to_string());
 
     let comma_idx = data_url
@@ -101,27 +101,22 @@ fn save_data_url_image(data_url: &str) -> Result<String, ApiError> {
     let header = &data_url[..comma_idx];
     let payload = &data_url[comma_idx + 1..];
 
-    let extension = if header.contains("image/png") {
-        "png"
+    let (extension, content_type) = if header.contains("image/png") {
+        ("png", "image/png")
     } else if header.contains("image/webp") {
-        "webp"
+        ("webp", "image/webp")
     } else if header.contains("image/gif") {
-        "gif"
+        ("gif", "image/gif")
     } else {
-        "jpg"
+        ("jpg", "image/jpeg")
     };
 
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(payload)
         .map_err(|_| bad_request("Bild konnte nicht dekodiert werden"))?;
 
-    let uploads_dir = FsPath::new("data/uploads");
-    std::fs::create_dir_all(uploads_dir).map_err(internal_error)?;
-
-    let filename = format!("{}.{extension}", uuid::Uuid::new_v4());
-    std::fs::write(uploads_dir.join(&filename), bytes).map_err(internal_error)?;
-
-    Ok(format!("/uploads/{filename}"))
+    let key = format!("images/{}.{extension}", uuid::Uuid::new_v4());
+    storage.put(&key, bytes, content_type).await
 }
 
 pub async fn register(
@@ -315,13 +310,21 @@ pub async fn upload_avatar(
     AuthUser(user_id): AuthUser,
     Json(req): Json<ImageUpload>,
 ) -> Result<Json<User>, ApiError> {
-    let url = save_data_url_image(&req.image)?;
+    let old_url: Option<String> = sqlx::query_scalar("SELECT avatar_url FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(internal_error)?;
+    let url = save_data_url_image(&state.storage, &req.image).await?;
     sqlx::query("UPDATE users SET avatar_url = $1 WHERE id = $2")
-        .bind(url)
+        .bind(&url)
         .bind(user_id)
         .execute(&state.db)
         .await
         .map_err(internal_error)?;
+    if let Some(old_key) = old_url.as_deref().and_then(|u| state.storage.key_from_url(u)) {
+        state.storage.delete(old_key).await;
+    }
 
     fetch_user(&state.db, user_id).await.map(Json).map_err(internal_error)
 }
@@ -331,13 +334,21 @@ pub async fn upload_background(
     AuthUser(user_id): AuthUser,
     Json(req): Json<ImageUpload>,
 ) -> Result<Json<User>, ApiError> {
-    let url = save_data_url_image(&req.image)?;
+    let old_url: Option<String> = sqlx::query_scalar("SELECT background_url FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(internal_error)?;
+    let url = save_data_url_image(&state.storage, &req.image).await?;
     sqlx::query("UPDATE users SET background_url = $1 WHERE id = $2")
-        .bind(url)
+        .bind(&url)
         .bind(user_id)
         .execute(&state.db)
         .await
         .map_err(internal_error)?;
+    if let Some(old_key) = old_url.as_deref().and_then(|u| state.storage.key_from_url(u)) {
+        state.storage.delete(old_key).await;
+    }
 
     fetch_user(&state.db, user_id).await.map(Json).map_err(internal_error)
 }
@@ -358,7 +369,7 @@ pub async fn add_screenshot(
     AuthUser(user_id): AuthUser,
     Json(req): Json<ImageUpload>,
 ) -> Result<Json<ProfileScreenshot>, ApiError> {
-    let url = save_data_url_image(&req.image)?;
+    let url = save_data_url_image(&state.storage, &req.image).await?;
     let row = sqlx::query(&format!(
         "INSERT INTO profile_screenshots (user_id, image_url) VALUES ($1, $2) RETURNING {SCREENSHOT_COLUMNS}"
     ))
@@ -375,6 +386,15 @@ pub async fn delete_screenshot(
     AuthUser(user_id): AuthUser,
     Path(screenshot_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
+    let image_url: Option<String> = sqlx::query_scalar(
+        "SELECT image_url FROM profile_screenshots WHERE id = $1 AND user_id = $2",
+    )
+    .bind(screenshot_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
     let result = sqlx::query("DELETE FROM profile_screenshots WHERE id = $1 AND user_id = $2")
         .bind(screenshot_id)
         .bind(user_id)
@@ -384,6 +404,9 @@ pub async fn delete_screenshot(
 
     if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "Screenshot nicht gefunden".to_string()));
+    }
+    if let Some(key) = image_url.as_deref().and_then(|u| state.storage.key_from_url(u)) {
+        state.storage.delete(key).await;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -781,7 +804,7 @@ pub async fn add_game_screenshot(
         ));
     }
 
-    let url = save_data_url_image(&req.image)?;
+    let url = save_data_url_image(&state.storage, &req.image).await?;
     let row = sqlx::query(&format!(
         "INSERT INTO game_screenshots (catalog_game_id, image_url) VALUES ($1, $2) RETURNING {GAME_SCREENSHOT_COLUMNS}"
     ))
@@ -810,6 +833,15 @@ pub async fn delete_game_screenshot(
         ));
     }
 
+    let image_url: Option<String> = sqlx::query_scalar(
+        "SELECT image_url FROM game_screenshots WHERE id = $1 AND catalog_game_id = $2",
+    )
+    .bind(screenshot_id)
+    .bind(game_id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
     let result = sqlx::query("DELETE FROM game_screenshots WHERE id = $1 AND catalog_game_id = $2")
         .bind(screenshot_id)
         .bind(game_id)
@@ -818,6 +850,9 @@ pub async fn delete_game_screenshot(
         .map_err(internal_error)?;
     if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "Bild nicht gefunden".to_string()));
+    }
+    if let Some(key) = image_url.as_deref().and_then(|u| state.storage.key_from_url(u)) {
+        state.storage.delete(key).await;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1264,19 +1299,6 @@ fn format_bytes(bytes: i64) -> String {
     }
 }
 
-/// Free space (in bytes) on the disk/volume that backs `path`, picking the
-/// mounted filesystem with the longest matching mount-point prefix.
-fn available_disk_bytes(path: &std::path::Path) -> Option<u64> {
-    use sysinfo::Disks;
-    let canonical = std::fs::canonicalize(path).ok()?;
-    let disks = Disks::new_with_refreshed_list();
-    disks
-        .iter()
-        .filter(|d| canonical.starts_with(d.mount_point()))
-        .max_by_key(|d| d.mount_point().as_os_str().len())
-        .map(|d| d.available_space())
-}
-
 pub async fn upload_game_file(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
@@ -1378,65 +1400,63 @@ pub async fn upload_game_file(
         }
     }
 
-    if let Some(available) = available_disk_bytes(FsPath::new("data")) {
-        if available < precomputed_total as u64 + state.min_free_disk_bytes {
-            return Err((
-                StatusCode::from_u16(507).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
-                "Nicht genug freier Speicherplatz auf dem Server für diesen Upload.".to_string(),
-            ));
+    // The manifest only ever tracks one (the current) version per game — a
+    // new upload fully replaces it, so the old rows tell us exactly which R2
+    // objects become orphaned once this upload succeeds.
+    let old_manifest: Vec<(String, String)> = sqlx::query_as(
+        "SELECT version, relative_path FROM game_file_manifest WHERE catalog_game_id = $1",
+    )
+    .bind(game_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    // Extracted entirely synchronously first — `ZipFile`/`ZipArchive` aren't
+    // `Send`, so none of this can be alive across an `.await` point (Axum
+    // handler futures must be `Send`). The R2 upload loop below only touches
+    // owned `Vec<u8>`s.
+    let extracted: Vec<(String, String, i64, Vec<u8>)> = {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&body))
+            .map_err(|_| bad_request("Ungültige ZIP-Datei"))?;
+        let mut extracted = Vec::new();
+        for i in 0..archive.len() {
+            let mut entry = archive
+                .by_index(i)
+                .map_err(|e| internal_error(format!("ZIP-Eintrag konnte nicht gelesen werden: {e}")))?;
+            if entry.is_dir() {
+                continue;
+            }
+
+            let relative_path = entry
+                .enclosed_name()
+                .ok_or_else(|| bad_request("Ungültiger Pfad in ZIP-Datei"))?
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            let mut contents = Vec::new();
+            entry.read_to_end(&mut contents).map_err(internal_error)?;
+
+            let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+            sha2::Digest::update(&mut hasher, &contents);
+            let sha256 = format!("{:x}", sha2::Digest::finalize(hasher));
+            let size_bytes = contents.len() as i64;
+
+            extracted.push((relative_path, sha256, size_bytes, contents));
         }
+        extracted
+    };
+
+    if extracted.is_empty() {
+        return Err(bad_request("ZIP-Datei enthält keine Dateien"));
     }
-
-    let games_dir = FsPath::new("data/uploads/games").join(game_id.to_string());
-    let version_dir = games_dir.join(&new_version);
-    // Overwrite cleanly if this exact version is re-uploaded.
-    let _ = std::fs::remove_dir_all(&version_dir);
-    std::fs::create_dir_all(&version_dir).map_err(internal_error)?;
-
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&body))
-        .map_err(|_| bad_request("Ungültige ZIP-Datei"))?;
 
     let mut manifest = Vec::new();
     let mut total_size: i64 = 0;
-
-    for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .map_err(|e| internal_error(format!("ZIP-Eintrag konnte nicht gelesen werden: {e}")))?;
-        if entry.is_dir() {
-            continue;
-        }
-
-        let relative_path = entry
-            .enclosed_name()
-            .ok_or_else(|| bad_request("Ungültiger Pfad in ZIP-Datei"))?
-            .to_string_lossy()
-            .replace('\\', "/");
-
-        let mut contents = Vec::new();
-        entry
-            .read_to_end(&mut contents)
-            .map_err(internal_error)?;
-
-        let dest_path = version_dir.join(&relative_path);
-        if let Some(parent) = dest_path.parent() {
-            std::fs::create_dir_all(parent).map_err(internal_error)?;
-        }
-
-        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
-        sha2::Digest::update(&mut hasher, &contents);
-        let sha256 = format!("{:x}", sha2::Digest::finalize(hasher));
-        let size_bytes = contents.len() as i64;
-
-        std::fs::write(&dest_path, &contents).map_err(internal_error)?;
-
+    for (relative_path, sha256, size_bytes, contents) in extracted {
+        let key = format!("games/{game_id}/{new_version}/{relative_path}");
+        state.storage.put(&key, contents, "application/octet-stream").await?;
         total_size += size_bytes;
         manifest.push((relative_path, sha256, size_bytes));
-    }
-
-    if manifest.is_empty() {
-        let _ = std::fs::remove_dir_all(&version_dir);
-        return Err(bad_request("ZIP-Datei enthält keine Dateien"));
     }
 
     sqlx::query("DELETE FROM game_file_manifest WHERE catalog_game_id = $1")
@@ -1458,7 +1478,7 @@ pub async fn upload_game_file(
         .map_err(internal_error)?;
     }
 
-    let file_url = format!("/uploads/games/{game_id}/{new_version}/");
+    let file_url = state.storage.public_url(&format!("games/{game_id}/{new_version}/"));
     sqlx::query("UPDATE catalog_games SET file_url = $1, file_size_bytes = $2, version = $3 WHERE id = $4")
         .bind(&file_url)
         .bind(total_size)
@@ -1468,10 +1488,19 @@ pub async fn upload_game_file(
         .await
         .map_err(internal_error)?;
 
-    // Remove the previous version's files now that the new version is
-    // safely stored, so replacing/updating a build doesn't leak disk space.
-    if game.version != new_version {
-        let _ = std::fs::remove_dir_all(games_dir.join(&game.version));
+    // Remove the previous version's objects now that the new version is
+    // safely stored, so replacing/updating a build doesn't leak storage.
+    // Re-uploading the *same* version with fewer files still needs this —
+    // only skip a key that the new manifest just rewrote in place.
+    let new_paths: std::collections::HashSet<&str> =
+        manifest.iter().map(|(path, _, _)| path.as_str()).collect();
+    for (old_version, relative_path) in old_manifest {
+        if old_version != new_version || !new_paths.contains(relative_path.as_str()) {
+            state
+                .storage
+                .delete(&format!("games/{game_id}/{old_version}/{relative_path}"))
+                .await;
+        }
     }
 
     fetch_game(&state.db, game_id).await.map(Json).map_err(internal_error)
@@ -1481,11 +1510,12 @@ pub async fn get_game_manifest(
     State(state): State<AppState>,
     Path(game_id): Path<i64>,
 ) -> Result<Json<crate::models::GameManifest>, ApiError> {
-    let version: String = sqlx::query_scalar("SELECT version FROM catalog_games WHERE id = $1")
-        .bind(game_id)
-        .fetch_one(&state.db)
-        .await
-        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+    let (version, file_url): (String, Option<String>) =
+        sqlx::query_as("SELECT version, file_url FROM catalog_games WHERE id = $1")
+            .bind(game_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
 
     let rows: Vec<(String, String, i64)> = sqlx::query_as(
         "SELECT relative_path, sha256, size_bytes FROM game_file_manifest WHERE catalog_game_id = $1",
@@ -1503,7 +1533,11 @@ pub async fn get_game_manifest(
         })
         .collect();
 
-    Ok(Json(crate::models::GameManifest { version, files }))
+    Ok(Json(crate::models::GameManifest {
+        version,
+        file_url: file_url.unwrap_or_default(),
+        files,
+    }))
 }
 
 pub async fn get_storage_usage(
@@ -1636,30 +1670,10 @@ pub async fn upload_cloud_save(
             ),
         ));
     }
-    let old_url: Option<String> = sqlx::query_scalar(
-        "SELECT file_url FROM cloud_saves WHERE user_id = $1 AND catalog_game_id = $2",
-    )
-    .bind(user_id)
-    .bind(game_id)
-    .fetch_optional(&state.db)
-    .await
-    .unwrap_or(None);
-
-    if let Some(available) = available_disk_bytes(FsPath::new("data")) {
-        if available < body.len() as u64 + state.min_free_disk_bytes {
-            return Err((
-                StatusCode::from_u16(507).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
-                "Nicht genug freier Speicherplatz auf dem Server für diesen Upload.".to_string(),
-            ));
-        }
-    }
-
-    let saves_dir = FsPath::new("data/uploads/saves");
-    std::fs::create_dir_all(saves_dir).map_err(internal_error)?;
-    let filename = format!("{}-{game_id}-{}.bin", user_id, uuid::Uuid::new_v4());
-    let file_path = saves_dir.join(&filename);
-    std::fs::write(&file_path, &body).map_err(internal_error)?;
-    let file_url = format!("/uploads/saves/{filename}");
+    // A deterministic key (one save per user+game) means re-uploading just
+    // overwrites the same R2 object — no old-blob bookkeeping needed.
+    let key = format!("saves/{user_id}/{game_id}.bin");
+    let file_url = state.storage.put(&key, body.to_vec(), "application/octet-stream").await?;
 
     sqlx::query(
         "INSERT INTO cloud_saves (user_id, catalog_game_id, file_url, size_bytes, updated_at) \
@@ -1674,16 +1688,6 @@ pub async fn upload_cloud_save(
     .execute(&state.db)
     .await
     .map_err(internal_error)?;
-
-    // Best-effort: remove the previous blob now that the new one is
-    // committed to the DB, so a crash between write and DB update never
-    // leaves the row pointing at a missing file.
-    if let Some(old_url) = old_url {
-        if old_url != file_url {
-            let old_path = FsPath::new("data").join(old_url.trim_start_matches('/'));
-            let _ = std::fs::remove_file(old_path);
-        }
-    }
 
     let row = sqlx::query(&format!(
         "SELECT {CLOUD_SAVE_COLUMNS} FROM cloud_saves WHERE user_id = $1 AND catalog_game_id = $2"
@@ -1701,16 +1705,18 @@ pub async fn download_cloud_save(
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
 ) -> Result<Vec<u8>, ApiError> {
-    let file_url: String = sqlx::query_scalar(
-        "SELECT file_url FROM cloud_saves WHERE user_id = $1 AND catalog_game_id = $2",
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM cloud_saves WHERE user_id = $1 AND catalog_game_id = $2)",
     )
     .bind(user_id)
     .bind(game_id)
     .fetch_one(&state.db)
     .await
-    .map_err(|_| (StatusCode::NOT_FOUND, "Kein Cloud-Save vorhanden".to_string()))?;
-    let path = FsPath::new("data").join(file_url.trim_start_matches('/'));
-    std::fs::read(path).map_err(internal_error)
+    .unwrap_or(false);
+    if !exists {
+        return Err((StatusCode::NOT_FOUND, "Kein Cloud-Save vorhanden".to_string()));
+    }
+    state.storage.get(&format!("saves/{user_id}/{game_id}.bin")).await
 }
 
 pub async fn delete_cloud_save(
@@ -1718,24 +1724,13 @@ pub async fn delete_cloud_save(
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let file_url: Option<String> = sqlx::query_scalar(
-        "SELECT file_url FROM cloud_saves WHERE user_id = $1 AND catalog_game_id = $2",
-    )
-    .bind(user_id)
-    .bind(game_id)
-    .fetch_optional(&state.db)
-    .await
-    .unwrap_or(None);
     sqlx::query("DELETE FROM cloud_saves WHERE user_id = $1 AND catalog_game_id = $2")
         .bind(user_id)
         .bind(game_id)
         .execute(&state.db)
         .await
         .map_err(internal_error)?;
-    if let Some(file_url) = file_url {
-        let path = FsPath::new("data").join(file_url.trim_start_matches('/'));
-        let _ = std::fs::remove_file(path);
-    }
+    state.storage.delete(&format!("saves/{user_id}/{game_id}.bin")).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

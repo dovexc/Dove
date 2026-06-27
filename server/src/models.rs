@@ -285,6 +285,9 @@ pub struct ManifestFile {
 #[derive(Debug, Serialize, Clone)]
 pub struct GameManifest {
     pub version: String,
+    /// Base URL to prepend to each file's `relative_path` to download it
+    /// (R2 public URL, trailing slash included).
+    pub file_url: String,
     pub files: Vec<ManifestFile>,
 }
 

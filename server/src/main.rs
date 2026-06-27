@@ -7,6 +7,7 @@ mod handler_tests;
 mod models;
 mod rate_limit;
 mod state;
+mod storage;
 
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
@@ -18,8 +19,8 @@ use state::AppState;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use storage::Storage;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::ServeDir;
 
 const AUTH_RATE_LIMIT_MAX_REQUESTS: usize = 10;
 const AUTH_RATE_LIMIT_WINDOW_SECS: u64 = 60;
@@ -27,7 +28,6 @@ const MAX_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_GAME_FILE_BYTES: usize = 5 * 1024 * 1024 * 1024;
 const MAX_CLOUD_SAVE_BYTES: usize = 100 * 1024 * 1024;
 const DEFAULT_QUOTA_BYTES: i64 = 5 * 1024 * 1024 * 1024; // 5 GiB per publisher
-const DEFAULT_MIN_FREE_DISK_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB safety margin
 
 fn env_i64(name: &str, default: i64) -> i64 {
     std::env::var(name)
@@ -116,9 +116,12 @@ async fn probe_clamd(address: &str) -> bool {
 
 #[tokio::main]
 async fn main() {
+    // Local dev convenience — production reads real env vars via the
+    // systemd unit's EnvironmentFile, so this is a no-op there (dotenvy
+    // never overrides a var that's already set).
+    let _ = dotenvy::dotenv();
+
     let default_quota_bytes = env_i64("DOVE_DEFAULT_QUOTA_BYTES", DEFAULT_QUOTA_BYTES);
-    let min_free_disk_bytes =
-        env_i64("DOVE_MIN_FREE_DISK_BYTES", DEFAULT_MIN_FREE_DISK_BYTES as i64).max(0) as u64;
 
     let clamd_candidate =
         std::env::var("DOVE_CLAMD_ADDRESS").unwrap_or_else(|_| "127.0.0.1:3310".to_string());
@@ -133,8 +136,6 @@ async fn main() {
         None
     };
 
-    std::fs::create_dir_all("data/uploads/games").expect("failed to create uploads dir");
-
     let admin_emails: Vec<String> = std::env::var("DOVE_ADMIN_EMAILS")
         .unwrap_or_default()
         .split(',')
@@ -145,11 +146,12 @@ async fn main() {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://dove:dove_dev_password@localhost:5432/dove".to_string());
     let pool = db::init(&database_url).await;
+    let storage = Arc::new(Storage::init().await);
     let state = AppState {
         db: pool,
+        storage,
         jwt_secret: load_or_generate_jwt_secret(std::path::Path::new("data")),
         default_quota_bytes,
-        min_free_disk_bytes,
         clamd_address,
         auth_rate_limiter: Arc::new(RateLimiter::new(
             AUTH_RATE_LIMIT_MAX_REQUESTS,
@@ -335,7 +337,6 @@ async fn main() {
         )
         .merge(upload_routes)
         .merge(cloud_save_routes)
-        .nest_service("/uploads", ServeDir::new("data/uploads"))
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .layer(cors)
         .with_state(state);

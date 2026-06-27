@@ -12,11 +12,14 @@ sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "macros", "mi
 jsonwebtoken = "9"
 argon2 = "0.5"
 rand_core = { version = "0.6", features = ["getrandom"] }
-tower-http = { version = "0.5", features = ["cors", "fs"] }
+tower-http = { version = "0.5", features = ["cors"] }
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 zip = "2"
 sha2 = "0.10"
-sysinfo = "0.32"
 clamav-client = { version = "2", features = ["tokio"] }
+aws-sdk-s3 = "1"
+aws-config = "1"
+aws-credential-types = "1"
+dotenvy = "0.15"
