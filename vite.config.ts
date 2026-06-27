@@ -25,8 +25,10 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching `src-tauri` and the separate Rust
+      // backend's build output — cargo rewriting files there while running
+      // can crash Vite's watcher (EBUSY) and take down the whole dev server.
+      ignored: ["**/src-tauri/**", "**/server/target/**"],
     },
   },
 }));

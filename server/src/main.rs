@@ -16,7 +16,7 @@ use rand_core::{OsRng, RngCore};
 use rate_limit::RateLimiter;
 use state::AppState;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
@@ -142,9 +142,11 @@ async fn main() {
         .filter(|e| !e.is_empty())
         .collect();
 
-    let conn = db::init(default_quota_bytes);
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://dove:dove_dev_password@localhost:5432/dove".to_string());
+    let pool = db::init(&database_url).await;
     let state = AppState {
-        db: Arc::new(Mutex::new(conn)),
+        db: pool,
         jwt_secret: load_or_generate_jwt_secret(std::path::Path::new("data")),
         default_quota_bytes,
         min_free_disk_bytes,

@@ -2,7 +2,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use base64::Engine;
-use rusqlite::params;
+use sqlx::postgres::PgRow;
+use sqlx::{PgPool, Row};
 use std::io::Read;
 use std::path::Path as FsPath;
 
@@ -23,52 +24,70 @@ fn internal_error<E: std::fmt::Display>(e: E) -> ApiError {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
 }
 
-fn row_to_user(row: &rusqlite::Row) -> rusqlite::Result<User> {
-    let equipped_badge_key: Option<String> = row.get(9)?;
-    let equipped_badge_earned_at: Option<String> = row.get(10)?;
+fn row_to_user(row: &PgRow) -> Result<User, sqlx::Error> {
+    let equipped_badge_key: Option<String> = row.try_get(9)?;
+    let equipped_badge_earned_at: Option<String> = row.try_get(10)?;
     Ok(User {
-        id: row.get(0)?,
-        email: row.get(1)?,
-        display_name: row.get(2)?,
-        avatar_url: row.get(3)?,
-        background_url: row.get(4)?,
-        bio: row.get(5)?,
-        created_at: row.get(6)?,
-        is_profile_hidden: row.get(7)?,
-        is_admin: row.get(8)?,
+        id: row.try_get(0)?,
+        email: row.try_get(1)?,
+        display_name: row.try_get(2)?,
+        avatar_url: row.try_get(3)?,
+        background_url: row.try_get(4)?,
+        bio: row.try_get(5)?,
+        created_at: row.try_get(6)?,
+        is_profile_hidden: row.try_get(7)?,
+        is_admin: row.try_get(8)?,
         equipped_badge: equipped_badge_key
             .and_then(|k| Badge::from_key(&k, equipped_badge_earned_at.unwrap_or_default())),
     })
 }
 
 const USER_COLUMNS: &str = "id, email, display_name, avatar_url, background_url, bio, \
-    created_at, is_profile_hidden, is_admin, users.equipped_badge, \
-    (SELECT earned_at FROM user_badges WHERE user_id = users.id AND badge_key = users.equipped_badge)";
+    created_at::TEXT, is_profile_hidden, is_admin, users.equipped_badge, \
+    (SELECT earned_at::TEXT FROM user_badges WHERE user_id = users.id AND badge_key = users.equipped_badge)";
+
+async fn fetch_user(pool: &PgPool, user_id: i64) -> Result<User, sqlx::Error> {
+    let row = sqlx::query(&format!("SELECT {USER_COLUMNS} FROM users WHERE id = $1"))
+        .bind(user_id)
+        .fetch_one(pool)
+        .await?;
+    row_to_user(&row)
+}
+
+async fn fetch_game(pool: &PgPool, game_id: i64) -> Result<CatalogGame, sqlx::Error> {
+    let row = sqlx::query(&format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = $1"))
+        .bind(game_id)
+        .fetch_one(pool)
+        .await?;
+    row_to_game(&row)
+}
 
 /// Grants moderator access on login/register if the email is listed in
 /// `DOVE_ADMIN_EMAILS` — this is a one-way bootstrap, not a live sync: it
 /// never revokes `is_admin`, so admins promoted in-app (via
 /// `promote_user`) keep the role even though their email isn't in the env
 /// list. Demotion only happens through `demote_user`.
-fn sync_admin_flag(conn: &rusqlite::Connection, user_id: i64, email: &str, state: &AppState) {
+async fn sync_admin_flag(pool: &PgPool, user_id: i64, email: &str, state: &AppState) {
     if state.admin_emails.contains(&email.to_lowercase()) {
-        let _ = conn.execute(
-            "UPDATE users SET is_admin = 1 WHERE id = ?1",
-            params![user_id],
-        );
+        let _ = sqlx::query("UPDATE users SET is_admin = TRUE WHERE id = $1")
+            .bind(user_id)
+            .execute(pool)
+            .await;
     }
 }
 
 /// True if `a` and `b` are accepted friends (order-independent).
-fn are_friends(conn: &rusqlite::Connection, a: i64, b: i64) -> bool {
-    conn.query_row(
-        "SELECT 1 FROM friendships \
+async fn are_friends(pool: &PgPool, a: i64, b: i64) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM friendships \
          WHERE status = 'accepted' \
-         AND ((requester_id = ?1 AND recipient_id = ?2) OR (requester_id = ?2 AND recipient_id = ?1))",
-        params![a, b],
-        |_| Ok(()),
+         AND ((requester_id = $1 AND recipient_id = $2) OR (requester_id = $2 AND recipient_id = $1)))",
     )
-    .is_ok()
+    .bind(a)
+    .bind(b)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false)
 }
 
 /// Decodes a `data:<mime>;base64,<data>` URL and writes it to `data/uploads`,
@@ -111,22 +130,19 @@ pub async fn register(
 ) -> Result<Json<AuthResponse>, ApiError> {
     let password_hash = hash_password(&req.password).map_err(internal_error)?;
 
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
-        "INSERT INTO users (email, password_hash, display_name, storage_quota_bytes) VALUES (?1, ?2, ?3, ?4)",
-        params![req.email, password_hash, req.display_name, state.default_quota_bytes],
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (email, password_hash, display_name, storage_quota_bytes) VALUES ($1, $2, $3, $4) RETURNING id",
     )
+    .bind(&req.email)
+    .bind(&password_hash)
+    .bind(&req.display_name)
+    .bind(state.default_quota_bytes)
+    .fetch_one(&state.db)
+    .await
     .map_err(|e| (StatusCode::CONFLICT, format!("E-Mail bereits registriert: {e}")))?;
 
-    let id = conn.last_insert_rowid();
-    sync_admin_flag(&conn, id, &req.email, &state);
-    let user = conn
-        .query_row(
-            &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
-            params![id],
-            row_to_user,
-        )
-        .map_err(internal_error)?;
+    sync_admin_flag(&state.db, id, &req.email, &state).await;
+    let user = fetch_user(&state.db, id).await.map_err(internal_error)?;
 
     let token = create_token(id, &state.jwt_secret).map_err(internal_error)?;
 
@@ -137,30 +153,22 @@ pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-
     let unauthorized = || (StatusCode::UNAUTHORIZED, "Ungültige Anmeldedaten".to_string());
 
-    let (id, password_hash): (i64, String) = conn
-        .query_row(
-            "SELECT id, password_hash FROM users WHERE email = ?1",
-            params![req.email],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
+    let row = sqlx::query("SELECT id, password_hash FROM users WHERE email = $1")
+        .bind(&req.email)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| unauthorized())?;
+    let id: i64 = row.try_get(0).map_err(internal_error)?;
+    let password_hash: String = row.try_get(1).map_err(internal_error)?;
 
     if !verify_password(&req.password, &password_hash) {
         return Err(unauthorized());
     }
 
-    sync_admin_flag(&conn, id, &req.email, &state);
-    let user = conn
-        .query_row(
-            &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
-            params![id],
-            row_to_user,
-        )
-        .map_err(internal_error)?;
+    sync_admin_flag(&state.db, id, &req.email, &state).await;
+    let user = fetch_user(&state.db, id).await.map_err(internal_error)?;
 
     let token = create_token(id, &state.jwt_secret).map_err(internal_error)?;
 
@@ -171,14 +179,10 @@ pub async fn me(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
 ) -> Result<Json<User>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.query_row(
-        &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
-        params![user_id],
-        row_to_user,
-    )
-    .map(Json)
-    .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))
+    fetch_user(&state.db, user_id)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))
 }
 
 pub async fn update_profile(
@@ -186,37 +190,32 @@ pub async fn update_profile(
     AuthUser(user_id): AuthUser,
     Json(req): Json<UpdateProfileRequest>,
 ) -> Result<Json<User>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-
     if let Some(display_name) = &req.display_name {
-        conn.execute(
-            "UPDATE users SET display_name = ?1 WHERE id = ?2",
-            params![display_name, user_id],
-        )
-        .map_err(internal_error)?;
+        sqlx::query("UPDATE users SET display_name = $1 WHERE id = $2")
+            .bind(display_name)
+            .bind(user_id)
+            .execute(&state.db)
+            .await
+            .map_err(internal_error)?;
     }
     if let Some(bio) = &req.bio {
-        conn.execute(
-            "UPDATE users SET bio = ?1 WHERE id = ?2",
-            params![bio, user_id],
-        )
-        .map_err(internal_error)?;
+        sqlx::query("UPDATE users SET bio = $1 WHERE id = $2")
+            .bind(bio)
+            .bind(user_id)
+            .execute(&state.db)
+            .await
+            .map_err(internal_error)?;
     }
     if let Some(is_profile_hidden) = req.is_profile_hidden {
-        conn.execute(
-            "UPDATE users SET is_profile_hidden = ?1 WHERE id = ?2",
-            params![is_profile_hidden, user_id],
-        )
-        .map_err(internal_error)?;
+        sqlx::query("UPDATE users SET is_profile_hidden = $1 WHERE id = $2")
+            .bind(is_profile_hidden)
+            .bind(user_id)
+            .execute(&state.db)
+            .await
+            .map_err(internal_error)?;
     }
 
-    conn.query_row(
-        &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
-        params![user_id],
-        row_to_user,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    fetch_user(&state.db, user_id).await.map(Json).map_err(internal_error)
 }
 
 /// All badges a user has earned — public, like a Discord profile's badge
@@ -226,16 +225,15 @@ pub async fn list_user_badges(
     State(state): State<AppState>,
     Path(user_id): Path<i64>,
 ) -> Result<Json<Vec<Badge>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let mut stmt = conn
-        .prepare("SELECT badge_key, earned_at FROM user_badges WHERE user_id = ?1 ORDER BY earned_at ASC")
-        .map_err(internal_error)?;
-    let badges = stmt
-        .query_map(params![user_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(internal_error)?
-        .filter_map(|r| r.ok())
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT badge_key, earned_at::TEXT FROM user_badges WHERE user_id = $1 ORDER BY earned_at ASC",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let badges = rows
+        .into_iter()
         .filter_map(|(key, earned_at)| Badge::from_key(&key, earned_at))
         .collect();
     Ok(Json(badges))
@@ -249,16 +247,15 @@ pub async fn set_equipped_badge(
     AuthUser(user_id): AuthUser,
     Json(req): Json<SetBadgeRequest>,
 ) -> Result<Json<User>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-
     if let Some(badge_key) = &req.badge_key {
-        let owns: bool = conn
-            .query_row(
-                "SELECT 1 FROM user_badges WHERE user_id = ?1 AND badge_key = ?2",
-                params![user_id, badge_key],
-                |_| Ok(true),
-            )
-            .unwrap_or(false);
+        let owns: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM user_badges WHERE user_id = $1 AND badge_key = $2)",
+        )
+        .bind(user_id)
+        .bind(badge_key)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(false);
         if !owns {
             return Err((
                 StatusCode::FORBIDDEN,
@@ -267,19 +264,14 @@ pub async fn set_equipped_badge(
         }
     }
 
-    conn.execute(
-        "UPDATE users SET equipped_badge = ?1 WHERE id = ?2",
-        params![req.badge_key, user_id],
-    )
-    .map_err(internal_error)?;
+    sqlx::query("UPDATE users SET equipped_badge = $1 WHERE id = $2")
+        .bind(&req.badge_key)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
 
-    conn.query_row(
-        &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
-        params![user_id],
-        row_to_user,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    fetch_user(&state.db, user_id).await.map(Json).map_err(internal_error)
 }
 
 pub async fn change_password(
@@ -294,13 +286,10 @@ pub async fn change_password(
         ));
     }
 
-    let conn = state.db.lock().map_err(internal_error)?;
-    let current_hash: String = conn
-        .query_row(
-            "SELECT password_hash FROM users WHERE id = ?1",
-            params![user_id],
-            |row| row.get(0),
-        )
+    let current_hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(internal_error)?;
 
     if !verify_password(&req.current_password, &current_hash) {
@@ -311,11 +300,12 @@ pub async fn change_password(
     }
 
     let new_hash = hash_password(&req.new_password).map_err(internal_error)?;
-    conn.execute(
-        "UPDATE users SET password_hash = ?1 WHERE id = ?2",
-        params![new_hash, user_id],
-    )
-    .map_err(internal_error)?;
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(new_hash)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -326,20 +316,14 @@ pub async fn upload_avatar(
     Json(req): Json<ImageUpload>,
 ) -> Result<Json<User>, ApiError> {
     let url = save_data_url_image(&req.image)?;
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
-        "UPDATE users SET avatar_url = ?1 WHERE id = ?2",
-        params![url, user_id],
-    )
-    .map_err(internal_error)?;
+    sqlx::query("UPDATE users SET avatar_url = $1 WHERE id = $2")
+        .bind(url)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
 
-    conn.query_row(
-        &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
-        params![user_id],
-        row_to_user,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    fetch_user(&state.db, user_id).await.map(Json).map_err(internal_error)
 }
 
 pub async fn upload_background(
@@ -348,32 +332,26 @@ pub async fn upload_background(
     Json(req): Json<ImageUpload>,
 ) -> Result<Json<User>, ApiError> {
     let url = save_data_url_image(&req.image)?;
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
-        "UPDATE users SET background_url = ?1 WHERE id = ?2",
-        params![url, user_id],
-    )
-    .map_err(internal_error)?;
+    sqlx::query("UPDATE users SET background_url = $1 WHERE id = $2")
+        .bind(url)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
 
-    conn.query_row(
-        &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
-        params![user_id],
-        row_to_user,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    fetch_user(&state.db, user_id).await.map(Json).map_err(internal_error)
 }
 
-fn row_to_screenshot(row: &rusqlite::Row) -> rusqlite::Result<ProfileScreenshot> {
+fn row_to_screenshot(row: &PgRow) -> Result<ProfileScreenshot, sqlx::Error> {
     Ok(ProfileScreenshot {
-        id: row.get(0)?,
-        user_id: row.get(1)?,
-        image_url: row.get(2)?,
-        created_at: row.get(3)?,
+        id: row.try_get(0)?,
+        user_id: row.try_get(1)?,
+        image_url: row.try_get(2)?,
+        created_at: row.try_get(3)?,
     })
 }
 
-const SCREENSHOT_COLUMNS: &str = "id, user_id, image_url, created_at";
+const SCREENSHOT_COLUMNS: &str = "id, user_id, image_url, created_at::TEXT";
 
 pub async fn add_screenshot(
     State(state): State<AppState>,
@@ -381,21 +359,15 @@ pub async fn add_screenshot(
     Json(req): Json<ImageUpload>,
 ) -> Result<Json<ProfileScreenshot>, ApiError> {
     let url = save_data_url_image(&req.image)?;
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
-        "INSERT INTO profile_screenshots (user_id, image_url) VALUES (?1, ?2)",
-        params![user_id, url],
-    )
+    let row = sqlx::query(&format!(
+        "INSERT INTO profile_screenshots (user_id, image_url) VALUES ($1, $2) RETURNING {SCREENSHOT_COLUMNS}"
+    ))
+    .bind(user_id)
+    .bind(url)
+    .fetch_one(&state.db)
+    .await
     .map_err(internal_error)?;
-
-    let id = conn.last_insert_rowid();
-    conn.query_row(
-        &format!("SELECT {SCREENSHOT_COLUMNS} FROM profile_screenshots WHERE id = ?1"),
-        params![id],
-        row_to_screenshot,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    row_to_screenshot(&row).map(Json).map_err(internal_error)
 }
 
 pub async fn delete_screenshot(
@@ -403,15 +375,14 @@ pub async fn delete_screenshot(
     AuthUser(user_id): AuthUser,
     Path(screenshot_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let affected = conn
-        .execute(
-            "DELETE FROM profile_screenshots WHERE id = ?1 AND user_id = ?2",
-            params![screenshot_id, user_id],
-        )
+    let result = sqlx::query("DELETE FROM profile_screenshots WHERE id = $1 AND user_id = $2")
+        .bind(screenshot_id)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
 
-    if affected == 0 {
+    if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "Screenshot nicht gefunden".to_string()));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -422,51 +393,40 @@ pub async fn get_user_profile(
     AuthUser(current_user_id): AuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<Json<PublicProfile>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
     let not_found = || (StatusCode::NOT_FOUND, "Profil nicht gefunden".to_string());
 
-    let user = conn
-        .query_row(
-            &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
-            params![user_id],
-            row_to_user,
-        )
-        .map_err(|_| not_found())?;
+    let user = fetch_user(&state.db, user_id).await.map_err(|_| not_found())?;
 
     if user.is_profile_hidden
         && user.id != current_user_id
-        && !are_friends(&conn, current_user_id, user_id)
+        && !are_friends(&state.db, current_user_id, user_id).await
     {
         return Err(not_found());
     }
 
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {SCREENSHOT_COLUMNS} FROM profile_screenshots WHERE user_id = ?1 ORDER BY created_at DESC"
-        ))
-        .map_err(internal_error)?;
-    let screenshots = stmt
-        .query_map(params![user_id], row_to_screenshot)
-        .map_err(internal_error)?
-        .filter_map(|s| s.ok())
-        .collect();
+    let screenshot_rows = sqlx::query(&format!(
+        "SELECT {SCREENSHOT_COLUMNS} FROM profile_screenshots WHERE user_id = $1 ORDER BY created_at DESC"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let screenshots = screenshot_rows.iter().filter_map(|r| row_to_screenshot(r).ok()).collect();
 
     // Only approved games — a pending/rejected game on someone's wishlist
     // isn't browsable by anyone else anyway, so showing it here would just
     // be a dead/confusing entry.
-    let mut wishlist_stmt = conn
-        .prepare(&format!(
-            "SELECT {GAME_COLUMNS} FROM catalog_games \
-             JOIN wishlist_items ON wishlist_items.catalog_game_id = catalog_games.id \
-             WHERE wishlist_items.user_id = ?1 AND catalog_games.status = 'approved' \
-             ORDER BY wishlist_items.created_at DESC"
-        ))
-        .map_err(internal_error)?;
-    let wishlist = wishlist_stmt
-        .query_map(params![user_id], row_to_game)
-        .map_err(internal_error)?
-        .filter_map(|g| g.ok())
-        .collect();
+    let wishlist_rows = sqlx::query(&format!(
+        "SELECT {GAME_COLUMNS} FROM catalog_games \
+         JOIN wishlist_items ON wishlist_items.catalog_game_id = catalog_games.id \
+         WHERE wishlist_items.user_id = $1 AND catalog_games.status = 'approved' \
+         ORDER BY wishlist_items.created_at DESC"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let wishlist = wishlist_rows.iter().filter_map(|r| row_to_game(r).ok()).collect();
 
     Ok(Json(PublicProfile {
         id: user.id,
@@ -499,31 +459,29 @@ pub async fn search_users(
         return Ok(Json(Vec::new()));
     }
 
-    let conn = state.db.lock().map_err(internal_error)?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
-             WHERE u.id != ?1 AND u.is_profile_hidden = 0 AND u.display_name LIKE ?2 \
-             ORDER BY u.display_name COLLATE NOCASE LIMIT 50"
-        ))
-        .map_err(internal_error)?;
     let pattern = format!("%{search}%");
-    let users = stmt
-        .query_map(params![current_user_id, pattern], row_to_user_summary)
-        .map_err(internal_error)?
-        .filter_map(|u| u.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
+         WHERE u.id != $1 AND NOT u.is_profile_hidden AND u.display_name ILIKE $2 \
+         ORDER BY lower(u.display_name) LIMIT 50"
+    ))
+    .bind(current_user_id)
+    .bind(pattern)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let users = rows.iter().filter_map(|r| row_to_user_summary(r).ok()).collect();
 
     Ok(Json(users))
 }
 
-fn row_to_user_summary(row: &rusqlite::Row) -> rusqlite::Result<crate::models::UserSummary> {
+fn row_to_user_summary(row: &PgRow) -> Result<crate::models::UserSummary, sqlx::Error> {
     Ok(crate::models::UserSummary {
-        id: row.get(0)?,
-        display_name: row.get(1)?,
-        avatar_url: row.get(2)?,
-        online: row.get(3)?,
-        playing_title: row.get(4)?,
+        id: row.try_get(0)?,
+        display_name: row.try_get(1)?,
+        avatar_url: row.try_get(2)?,
+        online: row.try_get(3)?,
+        playing_title: row.try_get(4)?,
     })
 }
 
@@ -537,8 +495,8 @@ fn row_to_user_summary(row: &rusqlite::Row) -> rusqlite::Result<crate::models::U
 /// friends staring at a stale "playing X" forever — it just fades out with
 /// the online status once activity stops.
 const USER_SUMMARY_COLUMNS: &str = "u.id, u.display_name, u.avatar_url, \
-    (u.last_seen_at IS NOT NULL AND (strftime('%s','now') - strftime('%s', u.last_seen_at)) < 90) AS online, \
-    CASE WHEN (u.last_seen_at IS NOT NULL AND (strftime('%s','now') - strftime('%s', u.last_seen_at)) < 90) \
+    (u.last_seen_at IS NOT NULL AND now() - u.last_seen_at < interval '90 seconds') AS online, \
+    CASE WHEN (u.last_seen_at IS NOT NULL AND now() - u.last_seen_at < interval '90 seconds') \
          THEN (SELECT title FROM catalog_games WHERE id = u.currently_playing_catalog_game_id) \
          ELSE NULL END AS playing_title";
 
@@ -558,48 +516,53 @@ pub async fn send_friend_request(
         ));
     }
 
-    let conn = state.db.lock().map_err(internal_error)?;
-
-    let reverse_pending: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM friendships WHERE requester_id = ?1 AND recipient_id = ?2 AND status = 'pending'",
-            params![target_id, user_id],
-            |row| row.get(0),
-        )
-        .ok();
+    let reverse_pending: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM friendships WHERE requester_id = $1 AND recipient_id = $2 AND status = 'pending'",
+    )
+    .bind(target_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(internal_error)?;
 
     if let Some(id) = reverse_pending {
-        conn.execute(
-            "UPDATE friendships SET status = 'accepted' WHERE id = ?1",
-            params![id],
-        )
-        .map_err(internal_error)?;
-        let name = user_display_name(&conn, user_id);
+        sqlx::query("UPDATE friendships SET status = 'accepted' WHERE id = $1")
+            .bind(id)
+            .execute(&state.db)
+            .await
+            .map_err(internal_error)?;
+        let name = user_display_name(&state.db, user_id).await;
         create_notification(
-            &conn,
+            &state.db,
             target_id,
             "friend_accepted",
             &format!("{name} hat deine Freundschaftsanfrage angenommen"),
             None,
             Some(user_id),
-        );
+        )
+        .await;
         return Ok(StatusCode::OK);
     }
 
-    conn.execute(
-        "INSERT OR IGNORE INTO friendships (requester_id, recipient_id, status) VALUES (?1, ?2, 'pending')",
-        params![user_id, target_id],
+    sqlx::query(
+        "INSERT INTO friendships (requester_id, recipient_id, status) VALUES ($1, $2, 'pending') \
+         ON CONFLICT (requester_id, recipient_id) DO NOTHING",
     )
+    .bind(user_id)
+    .bind(target_id)
+    .execute(&state.db)
+    .await
     .map_err(internal_error)?;
-    let name = user_display_name(&conn, user_id);
+    let name = user_display_name(&state.db, user_id).await;
     create_notification(
-        &conn,
+        &state.db,
         target_id,
         "friend_request",
         &format!("{name} hat dir eine Freundschaftsanfrage gesendet"),
         None,
         Some(user_id),
-    );
+    )
+    .await;
 
     Ok(StatusCode::CREATED)
 }
@@ -610,46 +573,48 @@ pub async fn accept_friend_request(
     AuthUser(user_id): AuthUser,
     Path(target_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let affected = conn
-        .execute(
-            "UPDATE friendships SET status = 'accepted' WHERE requester_id = ?1 AND recipient_id = ?2 AND status = 'pending'",
-            params![target_id, user_id],
-        )
-        .map_err(internal_error)?;
+    let result = sqlx::query(
+        "UPDATE friendships SET status = 'accepted' WHERE requester_id = $1 AND recipient_id = $2 AND status = 'pending'",
+    )
+    .bind(target_id)
+    .bind(user_id)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
 
-    if affected == 0 {
+    if result.rows_affected() == 0 {
         return Err((
             StatusCode::NOT_FOUND,
             "Keine offene Freundschaftsanfrage gefunden".to_string(),
         ));
     }
-    let name = user_display_name(&conn, user_id);
+    let name = user_display_name(&state.db, user_id).await;
     create_notification(
-        &conn,
+        &state.db,
         target_id,
         "friend_accepted",
         &format!("{name} hat deine Freundschaftsanfrage angenommen"),
         None,
         Some(user_id),
-    );
-    check_social_butterfly_badge(&conn, user_id);
-    check_social_butterfly_badge(&conn, target_id);
+    )
+    .await;
+    check_social_butterfly_badge(&state.db, user_id).await;
+    check_social_butterfly_badge(&state.db, target_id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Awards "social_butterfly" once a user reaches 10 accepted friendships.
-fn check_social_butterfly_badge(conn: &rusqlite::Connection, user_id: i64) {
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM friendships \
-             WHERE status = 'accepted' AND (requester_id = ?1 OR recipient_id = ?1)",
-            params![user_id],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
+async fn check_social_butterfly_badge(pool: &PgPool, user_id: i64) {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM friendships \
+         WHERE status = 'accepted' AND (requester_id = $1 OR recipient_id = $1)",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
     if count >= 10 {
-        award_badge(conn, user_id, "social_butterfly");
+        award_badge(pool, user_id, "social_butterfly").await;
     }
 }
 
@@ -660,11 +625,13 @@ pub async fn remove_friend(
     AuthUser(user_id): AuthUser,
     Path(target_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
-        "DELETE FROM friendships WHERE (requester_id = ?1 AND recipient_id = ?2) OR (requester_id = ?2 AND recipient_id = ?1)",
-        params![user_id, target_id],
+    sqlx::query(
+        "DELETE FROM friendships WHERE (requester_id = $1 AND recipient_id = $2) OR (requester_id = $2 AND recipient_id = $1)",
     )
+    .bind(user_id)
+    .bind(target_id)
+    .execute(&state.db)
+    .await
     .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -674,21 +641,18 @@ pub async fn list_friends(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
 ) -> Result<Json<Vec<crate::models::UserSummary>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
-             JOIN friendships f ON (f.requester_id = u.id OR f.recipient_id = u.id) \
-             WHERE f.status = 'accepted' AND u.id != ?1 \
-             AND (f.requester_id = ?1 OR f.recipient_id = ?1) \
-             ORDER BY u.display_name COLLATE NOCASE"
-        ))
-        .map_err(internal_error)?;
-    let friends = stmt
-        .query_map(params![user_id], row_to_user_summary)
-        .map_err(internal_error)?
-        .filter_map(|f| f.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
+         JOIN friendships f ON (f.requester_id = u.id OR f.recipient_id = u.id) \
+         WHERE f.status = 'accepted' AND u.id != $1 \
+         AND (f.requester_id = $1 OR f.recipient_id = $1) \
+         ORDER BY lower(u.display_name)"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let friends = rows.iter().filter_map(|r| row_to_user_summary(r).ok()).collect();
     Ok(Json(friends))
 }
 
@@ -699,92 +663,86 @@ pub async fn list_friend_requests(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
 ) -> Result<Json<crate::models::FriendRequests>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
+    let incoming_rows = sqlx::query(&format!(
+        "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
+         JOIN friendships f ON f.requester_id = u.id \
+         WHERE f.recipient_id = $1 AND f.status = 'pending' \
+         ORDER BY f.created_at DESC"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let incoming = incoming_rows.iter().filter_map(|r| row_to_user_summary(r).ok()).collect();
 
-    let mut incoming_stmt = conn
-        .prepare(&format!(
-            "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
-             JOIN friendships f ON f.requester_id = u.id \
-             WHERE f.recipient_id = ?1 AND f.status = 'pending' \
-             ORDER BY f.created_at DESC"
-        ))
-        .map_err(internal_error)?;
-    let incoming = incoming_stmt
-        .query_map(params![user_id], row_to_user_summary)
-        .map_err(internal_error)?
-        .filter_map(|f| f.ok())
-        .collect();
-
-    let mut outgoing_stmt = conn
-        .prepare(&format!(
-            "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
-             JOIN friendships f ON f.recipient_id = u.id \
-             WHERE f.requester_id = ?1 AND f.status = 'pending' \
-             ORDER BY f.created_at DESC"
-        ))
-        .map_err(internal_error)?;
-    let outgoing = outgoing_stmt
-        .query_map(params![user_id], row_to_user_summary)
-        .map_err(internal_error)?
-        .filter_map(|f| f.ok())
-        .collect();
+    let outgoing_rows = sqlx::query(&format!(
+        "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
+         JOIN friendships f ON f.recipient_id = u.id \
+         WHERE f.requester_id = $1 AND f.status = 'pending' \
+         ORDER BY f.created_at DESC"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let outgoing = outgoing_rows.iter().filter_map(|r| row_to_user_summary(r).ok()).collect();
 
     Ok(Json(crate::models::FriendRequests { incoming, outgoing }))
 }
 
-fn row_to_game(row: &rusqlite::Row) -> rusqlite::Result<CatalogGame> {
+fn row_to_game(row: &PgRow) -> Result<CatalogGame, sqlx::Error> {
     Ok(CatalogGame {
-        id: row.get(0)?,
-        publisher_user_id: row.get(1)?,
-        title: row.get(2)?,
-        description: row.get(3)?,
-        cover_url: row.get(4)?,
-        price_cents: row.get(5)?,
-        created_at: row.get(6)?,
-        file_url: row.get(7)?,
-        file_size_bytes: row.get(8)?,
-        version: row.get(9)?,
-        tags: row.get(10)?,
-        status: row.get(11)?,
-        min_specs: row.get(12)?,
-        recommended_specs: row.get(13)?,
-        save_path_hint: row.get(14)?,
-        avg_rating: row.get(15)?,
-        review_count: row.get(16)?,
+        id: row.try_get(0)?,
+        publisher_user_id: row.try_get(1)?,
+        title: row.try_get(2)?,
+        description: row.try_get(3)?,
+        cover_url: row.try_get(4)?,
+        price_cents: row.try_get(5)?,
+        created_at: row.try_get(6)?,
+        file_url: row.try_get(7)?,
+        file_size_bytes: row.try_get(8)?,
+        version: row.try_get(9)?,
+        tags: row.try_get(10)?,
+        status: row.try_get(11)?,
+        min_specs: row.try_get(12)?,
+        recommended_specs: row.try_get(13)?,
+        save_path_hint: row.try_get(14)?,
+        avg_rating: row.try_get(15)?,
+        review_count: row.try_get(16)?,
     })
 }
 
 const GAME_COLUMNS: &str = "catalog_games.id, catalog_games.publisher_user_id, catalog_games.title, \
     catalog_games.description, catalog_games.cover_url, catalog_games.price_cents, \
-    catalog_games.created_at, catalog_games.file_url, catalog_games.file_size_bytes, \
+    catalog_games.created_at::TEXT, catalog_games.file_url, catalog_games.file_size_bytes, \
     catalog_games.version, catalog_games.tags, catalog_games.status, catalog_games.min_specs, \
     catalog_games.recommended_specs, catalog_games.save_path_hint, \
     (SELECT AVG(rating) FROM game_reviews WHERE catalog_game_id = catalog_games.id), \
     (SELECT COUNT(*) FROM game_reviews WHERE catalog_game_id = catalog_games.id)";
 
-const GAME_SCREENSHOT_COLUMNS: &str = "id, catalog_game_id, image_url, created_at";
+const GAME_SCREENSHOT_COLUMNS: &str = "id, catalog_game_id, image_url, created_at::TEXT";
 
-fn row_to_game_screenshot(row: &rusqlite::Row) -> rusqlite::Result<GameScreenshot> {
+fn row_to_game_screenshot(row: &PgRow) -> Result<GameScreenshot, sqlx::Error> {
     Ok(GameScreenshot {
-        id: row.get(0)?,
-        catalog_game_id: row.get(1)?,
-        image_url: row.get(2)?,
-        created_at: row.get(3)?,
+        id: row.try_get(0)?,
+        catalog_game_id: row.try_get(1)?,
+        image_url: row.try_get(2)?,
+        created_at: row.try_get(3)?,
     })
 }
 
 const GAME_REVIEW_COLUMNS: &str = "game_reviews.id, game_reviews.catalog_game_id, game_reviews.user_id, \
-    users.display_name, game_reviews.rating, game_reviews.body, game_reviews.created_at";
+    users.display_name, game_reviews.rating, game_reviews.body, game_reviews.created_at::TEXT";
 
-fn row_to_game_review(row: &rusqlite::Row) -> rusqlite::Result<GameReview> {
+fn row_to_game_review(row: &PgRow) -> Result<GameReview, sqlx::Error> {
     Ok(GameReview {
-        id: row.get(0)?,
-        catalog_game_id: row.get(1)?,
-        user_id: row.get(2)?,
-        reviewer_display_name: row.get(3)?,
-        rating: row.get(4)?,
-        body: row.get(5)?,
-        created_at: row.get(6)?,
+        id: row.try_get(0)?,
+        catalog_game_id: row.try_get(1)?,
+        user_id: row.try_get(2)?,
+        reviewer_display_name: row.try_get(3)?,
+        rating: row.try_get(4)?,
+        body: row.try_get(5)?,
+        created_at: row.try_get(6)?,
     })
 }
 
@@ -793,18 +751,15 @@ pub async fn list_game_screenshots(
     State(state): State<AppState>,
     Path(game_id): Path<i64>,
 ) -> Result<Json<Vec<GameScreenshot>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {GAME_SCREENSHOT_COLUMNS} FROM game_screenshots \
-             WHERE catalog_game_id = ?1 ORDER BY id ASC"
-        ))
-        .map_err(internal_error)?;
-    let shots = stmt
-        .query_map(params![game_id], row_to_game_screenshot)
-        .map_err(internal_error)?
-        .filter_map(|s| s.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {GAME_SCREENSHOT_COLUMNS} FROM game_screenshots \
+         WHERE catalog_game_id = $1 ORDER BY id ASC"
+    ))
+    .bind(game_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let shots = rows.iter().filter_map(|r| row_to_game_screenshot(r).ok()).collect();
     Ok(Json(shots))
 }
 
@@ -814,39 +769,28 @@ pub async fn add_game_screenshot(
     Path(game_id): Path<i64>,
     Json(req): Json<ImageUpload>,
 ) -> Result<Json<GameScreenshot>, ApiError> {
-    {
-        let conn = state.db.lock().map_err(internal_error)?;
-        let publisher_id: i64 = conn
-            .query_row(
-                "SELECT publisher_user_id FROM catalog_games WHERE id = ?1",
-                params![game_id],
-                |r| r.get(0),
-            )
-            .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
-        if publisher_id != user_id {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "Nur der Publisher kann Bilder hinzufügen".to_string(),
-            ));
-        }
+    let publisher_id: i64 = sqlx::query_scalar("SELECT publisher_user_id FROM catalog_games WHERE id = $1")
+        .bind(game_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+    if publisher_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur der Publisher kann Bilder hinzufügen".to_string(),
+        ));
     }
 
     let url = save_data_url_image(&req.image)?;
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
-        "INSERT INTO game_screenshots (catalog_game_id, image_url) VALUES (?1, ?2)",
-        params![game_id, url],
-    )
+    let row = sqlx::query(&format!(
+        "INSERT INTO game_screenshots (catalog_game_id, image_url) VALUES ($1, $2) RETURNING {GAME_SCREENSHOT_COLUMNS}"
+    ))
+    .bind(game_id)
+    .bind(url)
+    .fetch_one(&state.db)
+    .await
     .map_err(internal_error)?;
-
-    let id = conn.last_insert_rowid();
-    conn.query_row(
-        &format!("SELECT {GAME_SCREENSHOT_COLUMNS} FROM game_screenshots WHERE id = ?1"),
-        params![id],
-        row_to_game_screenshot,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    row_to_game_screenshot(&row).map(Json).map_err(internal_error)
 }
 
 pub async fn delete_game_screenshot(
@@ -854,13 +798,10 @@ pub async fn delete_game_screenshot(
     AuthUser(user_id): AuthUser,
     Path((game_id, screenshot_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let publisher_id: i64 = conn
-        .query_row(
-            "SELECT publisher_user_id FROM catalog_games WHERE id = ?1",
-            params![game_id],
-            |r| r.get(0),
-        )
+    let publisher_id: i64 = sqlx::query_scalar("SELECT publisher_user_id FROM catalog_games WHERE id = $1")
+        .bind(game_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
     if publisher_id != user_id {
         return Err((
@@ -869,13 +810,13 @@ pub async fn delete_game_screenshot(
         ));
     }
 
-    let affected = conn
-        .execute(
-            "DELETE FROM game_screenshots WHERE id = ?1 AND catalog_game_id = ?2",
-            params![screenshot_id, game_id],
-        )
+    let result = sqlx::query("DELETE FROM game_screenshots WHERE id = $1 AND catalog_game_id = $2")
+        .bind(screenshot_id)
+        .bind(game_id)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
-    if affected == 0 {
+    if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "Bild nicht gefunden".to_string()));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -885,20 +826,17 @@ pub async fn list_game_reviews(
     State(state): State<AppState>,
     Path(game_id): Path<i64>,
 ) -> Result<Json<Vec<GameReview>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {GAME_REVIEW_COLUMNS} FROM game_reviews \
-             JOIN users ON users.id = game_reviews.user_id \
-             WHERE game_reviews.catalog_game_id = ?1 \
-             ORDER BY game_reviews.created_at DESC"
-        ))
-        .map_err(internal_error)?;
-    let reviews = stmt
-        .query_map(params![game_id], row_to_game_review)
-        .map_err(internal_error)?
-        .filter_map(|r| r.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {GAME_REVIEW_COLUMNS} FROM game_reviews \
+         JOIN users ON users.id = game_reviews.user_id \
+         WHERE game_reviews.catalog_game_id = $1 \
+         ORDER BY game_reviews.created_at DESC"
+    ))
+    .bind(game_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let reviews = rows.iter().filter_map(|r| row_to_game_review(r).ok()).collect();
     Ok(Json(reviews))
 }
 
@@ -921,15 +859,14 @@ pub async fn upsert_game_review(
         ));
     }
 
-    let conn = state.db.lock().map_err(internal_error)?;
-
-    let owns = conn
-        .query_row(
-            "SELECT 1 FROM ownerships WHERE user_id = ?1 AND catalog_game_id = ?2",
-            params![user_id, game_id],
-            |_| Ok(()),
-        )
-        .is_ok();
+    let owns: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM ownerships WHERE user_id = $1 AND catalog_game_id = $2)",
+    )
+    .bind(user_id)
+    .bind(game_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
     if !owns {
         return Err((
             StatusCode::FORBIDDEN,
@@ -937,37 +874,42 @@ pub async fn upsert_game_review(
         ));
     }
 
-    let had_any_review_before: bool = conn
-        .query_row(
-            "SELECT 1 FROM game_reviews WHERE user_id = ?1",
-            params![user_id],
-            |_| Ok(()),
-        )
-        .is_ok();
-
-    conn.execute(
-        "INSERT INTO game_reviews (catalog_game_id, user_id, rating, body) VALUES (?1, ?2, ?3, ?4) \
-         ON CONFLICT(catalog_game_id, user_id) DO UPDATE SET \
-         rating = excluded.rating, body = excluded.body, created_at = datetime('now')",
-        params![game_id, user_id, req.rating, req.body],
+    let had_any_review_before: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM game_reviews WHERE user_id = $1)",
     )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
+
+    sqlx::query(
+        "INSERT INTO game_reviews (catalog_game_id, user_id, rating, body) VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (catalog_game_id, user_id) DO UPDATE SET \
+         rating = excluded.rating, body = excluded.body, created_at = now()",
+    )
+    .bind(game_id)
+    .bind(user_id)
+    .bind(req.rating)
+    .bind(&req.body)
+    .execute(&state.db)
+    .await
     .map_err(internal_error)?;
 
     if !had_any_review_before {
-        award_badge(&conn, user_id, "first_review");
+        award_badge(&state.db, user_id, "first_review").await;
     }
 
-    conn.query_row(
-        &format!(
-            "SELECT {GAME_REVIEW_COLUMNS} FROM game_reviews \
-             JOIN users ON users.id = game_reviews.user_id \
-             WHERE game_reviews.catalog_game_id = ?1 AND game_reviews.user_id = ?2"
-        ),
-        params![game_id, user_id],
-        row_to_game_review,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    let row = sqlx::query(&format!(
+        "SELECT {GAME_REVIEW_COLUMNS} FROM game_reviews \
+         JOIN users ON users.id = game_reviews.user_id \
+         WHERE game_reviews.catalog_game_id = $1 AND game_reviews.user_id = $2"
+    ))
+    .bind(game_id)
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(internal_error)?;
+    row_to_game_review(&row).map(Json).map_err(internal_error)
 }
 
 pub async fn delete_game_review(
@@ -975,14 +917,13 @@ pub async fn delete_game_review(
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let affected = conn
-        .execute(
-            "DELETE FROM game_reviews WHERE catalog_game_id = ?1 AND user_id = ?2",
-            params![game_id, user_id],
-        )
+    let result = sqlx::query("DELETE FROM game_reviews WHERE catalog_game_id = $1 AND user_id = $2")
+        .bind(game_id)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
-    if affected == 0 {
+    if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "Bewertung nicht gefunden".to_string()));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -996,19 +937,16 @@ pub async fn list_games(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<Vec<CatalogGame>>, ApiError> {
     let current_user_id = user_id_from_headers(&headers, &state.jwt_secret).unwrap_or(-1);
-    let conn = state.db.lock().map_err(internal_error)?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {GAME_COLUMNS} FROM catalog_games \
-             WHERE status = 'approved' OR publisher_user_id = ?1 \
-             ORDER BY created_at DESC"
-        ))
-        .map_err(internal_error)?;
-    let games = stmt
-        .query_map(params![current_user_id], row_to_game)
-        .map_err(internal_error)?
-        .filter_map(|g| g.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {GAME_COLUMNS} FROM catalog_games \
+         WHERE status = 'approved' OR publisher_user_id = $1 \
+         ORDER BY created_at DESC"
+    ))
+    .bind(current_user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let games = rows.iter().filter_map(|r| row_to_game(r).ok()).collect();
     Ok(Json(games))
 }
 
@@ -1018,16 +956,9 @@ pub async fn get_game(
     Path(game_id): Path<i64>,
 ) -> Result<Json<CatalogGame>, ApiError> {
     let current_user_id = user_id_from_headers(&headers, &state.jwt_secret).unwrap_or(-1);
-    let conn = state.db.lock().map_err(internal_error)?;
     let not_found = || (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string());
 
-    let game = conn
-        .query_row(
-            &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
-            params![game_id],
-            row_to_game,
-        )
-        .map_err(|_| not_found())?;
+    let game = fetch_game(&state.db, game_id).await.map_err(|_| not_found())?;
 
     if game.status != "approved" && game.publisher_user_id != current_user_id {
         return Err(not_found());
@@ -1055,20 +986,17 @@ pub async fn list_users_for_admin(
         return Ok(Json(Vec::new()));
     }
 
-    let conn = state.db.lock().map_err(internal_error)?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {USER_COLUMNS} FROM users \
-             WHERE display_name LIKE ?1 OR email LIKE ?1 \
-             ORDER BY display_name COLLATE NOCASE LIMIT 50"
-        ))
-        .map_err(internal_error)?;
     let pattern = format!("%{search}%");
-    let users = stmt
-        .query_map(params![pattern], row_to_user)
-        .map_err(internal_error)?
-        .filter_map(|u| u.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {USER_COLUMNS} FROM users \
+         WHERE display_name ILIKE $1 OR email ILIKE $1 \
+         ORDER BY lower(display_name) LIMIT 50"
+    ))
+    .bind(pattern)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let users = rows.iter().filter_map(|r| row_to_user(r).ok()).collect();
 
     Ok(Json(users))
 }
@@ -1078,14 +1006,12 @@ pub async fn promote_user(
     AdminUser(_admin_id): AdminUser,
     Path(target_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let affected = conn
-        .execute(
-            "UPDATE users SET is_admin = 1 WHERE id = ?1",
-            params![target_id],
-        )
+    let result = sqlx::query("UPDATE users SET is_admin = TRUE WHERE id = $1")
+        .bind(target_id)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
-    if affected == 0 {
+    if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "Nutzer nicht gefunden".to_string()));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -1103,14 +1029,12 @@ pub async fn demote_user(
         ));
     }
 
-    let conn = state.db.lock().map_err(internal_error)?;
-    let affected = conn
-        .execute(
-            "UPDATE users SET is_admin = 0 WHERE id = ?1",
-            params![target_id],
-        )
+    let result = sqlx::query("UPDATE users SET is_admin = FALSE WHERE id = $1")
+        .bind(target_id)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
-    if affected == 0 {
+    if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "Nutzer nicht gefunden".to_string()));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -1122,17 +1046,13 @@ pub async fn list_pending_games(
     State(state): State<AppState>,
     AdminUser(_admin_id): AdminUser,
 ) -> Result<Json<Vec<CatalogGame>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {GAME_COLUMNS} FROM catalog_games WHERE status = 'pending' ORDER BY created_at ASC"
-        ))
-        .map_err(internal_error)?;
-    let games = stmt
-        .query_map([], row_to_game)
-        .map_err(internal_error)?
-        .filter_map(|g| g.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {GAME_COLUMNS} FROM catalog_games WHERE status = 'pending' ORDER BY created_at ASC"
+    ))
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let games = rows.iter().filter_map(|r| row_to_game(r).ok()).collect();
     Ok(Json(games))
 }
 
@@ -1141,46 +1061,39 @@ async fn set_game_status(
     game_id: i64,
     status: &str,
 ) -> Result<Json<CatalogGame>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let affected = conn
-        .execute(
-            "UPDATE catalog_games SET status = ?1 WHERE id = ?2",
-            params![status, game_id],
-        )
+    let result = sqlx::query("UPDATE catalog_games SET status = $1 WHERE id = $2")
+        .bind(status)
+        .bind(game_id)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
-    if affected == 0 {
+    if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()));
     }
 
     if status == "approved" {
-        let publisher_id: Option<i64> = conn
-            .query_row(
-                "SELECT publisher_user_id FROM catalog_games WHERE id = ?1",
-                params![game_id],
-                |row| row.get(0),
-            )
-            .ok();
+        let publisher_id: Option<i64> = sqlx::query_scalar(
+            "SELECT publisher_user_id FROM catalog_games WHERE id = $1",
+        )
+        .bind(game_id)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
         if let Some(publisher_id) = publisher_id {
-            let approved_count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM catalog_games WHERE publisher_user_id = ?1 AND status = 'approved'",
-                    params![publisher_id],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0);
+            let approved_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM catalog_games WHERE publisher_user_id = $1 AND status = 'approved'",
+            )
+            .bind(publisher_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
             if approved_count == 1 {
-                award_badge(&conn, publisher_id, "first_publish");
+                award_badge(&state.db, publisher_id, "first_publish").await;
             }
         }
     }
 
-    conn.query_row(
-        &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
-        params![game_id],
-        row_to_game,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    fetch_game(&state.db, game_id).await.map(Json).map_err(internal_error)
 }
 
 pub async fn approve_game(
@@ -1204,31 +1117,23 @@ pub async fn create_game(
     AuthUser(user_id): AuthUser,
     Json(req): Json<NewCatalogGame>,
 ) -> Result<Json<CatalogGame>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
+    let id: i64 = sqlx::query_scalar(
         "INSERT INTO catalog_games (publisher_user_id, title, description, cover_url, tags, min_specs, recommended_specs, save_path_hint) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![
-            user_id,
-            req.title,
-            req.description,
-            req.cover_url,
-            req.tags,
-            req.min_specs,
-            req.recommended_specs,
-            req.save_path_hint
-        ],
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
     )
+    .bind(user_id)
+    .bind(&req.title)
+    .bind(&req.description)
+    .bind(&req.cover_url)
+    .bind(&req.tags)
+    .bind(&req.min_specs)
+    .bind(&req.recommended_specs)
+    .bind(&req.save_path_hint)
+    .fetch_one(&state.db)
+    .await
     .map_err(internal_error)?;
 
-    let id = conn.last_insert_rowid();
-    conn.query_row(
-        &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
-        params![id],
-        row_to_game,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    fetch_game(&state.db, id).await.map(Json).map_err(internal_error)
 }
 
 pub async fn purchase_game(
@@ -1236,27 +1141,26 @@ pub async fn purchase_game(
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
 ) -> Result<Json<CatalogGame>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-
-    let game = conn
-        .query_row(
-            &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
-            params![game_id],
-            row_to_game,
-        )
+    let game = fetch_game(&state.db, game_id)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
 
-    conn.execute(
-        "INSERT OR IGNORE INTO ownerships (user_id, catalog_game_id) VALUES (?1, ?2)",
-        params![user_id, game_id],
+    sqlx::query(
+        "INSERT INTO ownerships (user_id, catalog_game_id) VALUES ($1, $2) \
+         ON CONFLICT (user_id, catalog_game_id) DO NOTHING",
     )
+    .bind(user_id)
+    .bind(game_id)
+    .execute(&state.db)
+    .await
     .map_err(internal_error)?;
 
     // Mirrors Steam: a purchased game no longer needs to be wished for.
-    let _ = conn.execute(
-        "DELETE FROM wishlist_items WHERE user_id = ?1 AND catalog_game_id = ?2",
-        params![user_id, game_id],
-    );
+    let _ = sqlx::query("DELETE FROM wishlist_items WHERE user_id = $1 AND catalog_game_id = $2")
+        .bind(user_id)
+        .bind(game_id)
+        .execute(&state.db)
+        .await;
 
     Ok(Json(game))
 }
@@ -1266,12 +1170,12 @@ pub async fn revoke_ownership(
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
-        "DELETE FROM ownerships WHERE user_id = ?1 AND catalog_game_id = ?2",
-        params![user_id, game_id],
-    )
-    .map_err(internal_error)?;
+    sqlx::query("DELETE FROM ownerships WHERE user_id = $1 AND catalog_game_id = $2")
+        .bind(user_id)
+        .bind(game_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1279,20 +1183,16 @@ pub async fn list_library(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
 ) -> Result<Json<Vec<CatalogGame>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {GAME_COLUMNS} FROM catalog_games \
-             JOIN ownerships ON ownerships.catalog_game_id = catalog_games.id \
-             WHERE ownerships.user_id = ?1 ORDER BY ownerships.purchased_at DESC"
-        ))
-        .map_err(internal_error)?;
-    let games = stmt
-        .query_map(params![user_id], row_to_game)
-        .map_err(internal_error)?
-        .filter_map(|g| g.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {GAME_COLUMNS} FROM catalog_games \
+         JOIN ownerships ON ownerships.catalog_game_id = catalog_games.id \
+         WHERE ownerships.user_id = $1 ORDER BY ownerships.purchased_at DESC"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let games = rows.iter().filter_map(|r| row_to_game(r).ok()).collect();
     Ok(Json(games))
 }
 
@@ -1300,20 +1200,16 @@ pub async fn list_wishlist(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
 ) -> Result<Json<Vec<CatalogGame>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {GAME_COLUMNS} FROM catalog_games \
-             JOIN wishlist_items ON wishlist_items.catalog_game_id = catalog_games.id \
-             WHERE wishlist_items.user_id = ?1 ORDER BY wishlist_items.created_at DESC"
-        ))
-        .map_err(internal_error)?;
-    let games = stmt
-        .query_map(params![user_id], row_to_game)
-        .map_err(internal_error)?
-        .filter_map(|g| g.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {GAME_COLUMNS} FROM catalog_games \
+         JOIN wishlist_items ON wishlist_items.catalog_game_id = catalog_games.id \
+         WHERE wishlist_items.user_id = $1 ORDER BY wishlist_items.created_at DESC"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let games = rows.iter().filter_map(|r| row_to_game(r).ok()).collect();
     Ok(Json(games))
 }
 
@@ -1322,11 +1218,14 @@ pub async fn add_to_wishlist(
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
-        "INSERT OR IGNORE INTO wishlist_items (user_id, catalog_game_id) VALUES (?1, ?2)",
-        params![user_id, game_id],
+    sqlx::query(
+        "INSERT INTO wishlist_items (user_id, catalog_game_id) VALUES ($1, $2) \
+         ON CONFLICT (user_id, catalog_game_id) DO NOTHING",
     )
+    .bind(user_id)
+    .bind(game_id)
+    .execute(&state.db)
+    .await
     .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1336,12 +1235,12 @@ pub async fn remove_from_wishlist(
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
-        "DELETE FROM wishlist_items WHERE user_id = ?1 AND catalog_game_id = ?2",
-        params![user_id, game_id],
-    )
-    .map_err(internal_error)?;
+    sqlx::query("DELETE FROM wishlist_items WHERE user_id = $1 AND catalog_game_id = $2")
+        .bind(user_id)
+        .bind(game_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1385,15 +1284,9 @@ pub async fn upload_game_file(
     axum::extract::Query(query): axum::extract::Query<UploadQuery>,
     body: axum::body::Bytes,
 ) -> Result<Json<CatalogGame>, ApiError> {
-    let game = {
-        let conn = state.db.lock().map_err(internal_error)?;
-        conn.query_row(
-            &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
-            params![game_id],
-            row_to_game,
-        )
-        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?
-    };
+    let game = fetch_game(&state.db, game_id)
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
 
     if game.publisher_user_id != user_id {
         return Err((
@@ -1458,21 +1351,19 @@ pub async fn upload_game_file(
     }
 
     {
-        let conn = state.db.lock().map_err(internal_error)?;
-        let quota: i64 = conn
-            .query_row(
-                "SELECT storage_quota_bytes FROM users WHERE id = ?1",
-                params![user_id],
-                |row| row.get(0),
-            )
+        let quota: i64 = sqlx::query_scalar("SELECT storage_quota_bytes FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&state.db)
+            .await
             .map_err(internal_error)?;
-        let usage_excluding_this_game: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(file_size_bytes), 0) FROM catalog_games WHERE publisher_user_id = ?1 AND id != ?2",
-                params![user_id, game_id],
-                |row| row.get(0),
-            )
-            .map_err(internal_error)?;
+        let usage_excluding_this_game: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(file_size_bytes), 0)::BIGINT FROM catalog_games WHERE publisher_user_id = $1 AND id != $2",
+        )
+        .bind(user_id)
+        .bind(game_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(internal_error)?;
         let projected_usage = usage_excluding_this_game + precomputed_total;
         if projected_usage > quota {
             return Err((
@@ -1548,27 +1439,34 @@ pub async fn upload_game_file(
         return Err(bad_request("ZIP-Datei enthält keine Dateien"));
     }
 
-    let conn = state.db.lock().map_err(internal_error)?;
-
-    conn.execute(
-        "DELETE FROM game_file_manifest WHERE catalog_game_id = ?1",
-        params![game_id],
-    )
-    .map_err(internal_error)?;
+    sqlx::query("DELETE FROM game_file_manifest WHERE catalog_game_id = $1")
+        .bind(game_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
     for (relative_path, sha256, size_bytes) in &manifest {
-        conn.execute(
-            "INSERT INTO game_file_manifest (catalog_game_id, version, relative_path, sha256, size_bytes) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![game_id, new_version, relative_path, sha256, size_bytes],
+        sqlx::query(
+            "INSERT INTO game_file_manifest (catalog_game_id, version, relative_path, sha256, size_bytes) VALUES ($1, $2, $3, $4, $5)",
         )
+        .bind(game_id)
+        .bind(&new_version)
+        .bind(relative_path)
+        .bind(sha256)
+        .bind(size_bytes)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
     }
 
     let file_url = format!("/uploads/games/{game_id}/{new_version}/");
-    conn.execute(
-        "UPDATE catalog_games SET file_url = ?1, file_size_bytes = ?2, version = ?3 WHERE id = ?4",
-        params![file_url, total_size, new_version, game_id],
-    )
-    .map_err(internal_error)?;
+    sqlx::query("UPDATE catalog_games SET file_url = $1, file_size_bytes = $2, version = $3 WHERE id = $4")
+        .bind(&file_url)
+        .bind(total_size)
+        .bind(&new_version)
+        .bind(game_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
 
     // Remove the previous version's files now that the new version is
     // safely stored, so replacing/updating a build doesn't leak disk space.
@@ -1576,44 +1474,33 @@ pub async fn upload_game_file(
         let _ = std::fs::remove_dir_all(games_dir.join(&game.version));
     }
 
-    conn.query_row(
-        &format!("SELECT {GAME_COLUMNS} FROM catalog_games WHERE id = ?1"),
-        params![game_id],
-        row_to_game,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    fetch_game(&state.db, game_id).await.map(Json).map_err(internal_error)
 }
 
 pub async fn get_game_manifest(
     State(state): State<AppState>,
     Path(game_id): Path<i64>,
 ) -> Result<Json<crate::models::GameManifest>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-
-    let version: String = conn
-        .query_row(
-            "SELECT version FROM catalog_games WHERE id = ?1",
-            params![game_id],
-            |row| row.get(0),
-        )
+    let version: String = sqlx::query_scalar("SELECT version FROM catalog_games WHERE id = $1")
+        .bind(game_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT relative_path, sha256, size_bytes FROM game_file_manifest WHERE catalog_game_id = ?1",
-        )
-        .map_err(internal_error)?;
-    let files = stmt
-        .query_map(params![game_id], |row| {
-            Ok(crate::models::ManifestFile {
-                relative_path: row.get(0)?,
-                sha256: row.get(1)?,
-                size_bytes: row.get(2)?,
-            })
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT relative_path, sha256, size_bytes FROM game_file_manifest WHERE catalog_game_id = $1",
+    )
+    .bind(game_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let files = rows
+        .into_iter()
+        .map(|(relative_path, sha256, size_bytes)| crate::models::ManifestFile {
+            relative_path,
+            sha256,
+            size_bytes,
         })
-        .map_err(internal_error)?
-        .filter_map(|f| f.ok())
         .collect();
 
     Ok(Json(crate::models::GameManifest { version, files }))
@@ -1623,21 +1510,18 @@ pub async fn get_storage_usage(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
 ) -> Result<Json<crate::models::StorageUsage>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let quota_bytes: i64 = conn
-        .query_row(
-            "SELECT storage_quota_bytes FROM users WHERE id = ?1",
-            params![user_id],
-            |row| row.get(0),
-        )
+    let quota_bytes: i64 = sqlx::query_scalar("SELECT storage_quota_bytes FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(internal_error)?;
-    let used_bytes: i64 = conn
-        .query_row(
-            "SELECT COALESCE(SUM(file_size_bytes), 0) FROM catalog_games WHERE publisher_user_id = ?1",
-            params![user_id],
-            |row| row.get(0),
-        )
-        .map_err(internal_error)?;
+    let used_bytes: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(file_size_bytes), 0)::BIGINT FROM catalog_games WHERE publisher_user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(internal_error)?;
     Ok(Json(crate::models::StorageUsage {
         used_bytes,
         quota_bytes,
@@ -1651,26 +1535,30 @@ pub async fn get_storage_usage(
 const CLOUD_SAVE_MAX_BYTES: i64 = 100 * 1024 * 1024;
 const CLOUD_SAVE_USER_QUOTA_BYTES: i64 = 1024 * 1024 * 1024;
 
+fn row_to_cloud_save(row: &PgRow) -> Result<CloudSave, sqlx::Error> {
+    Ok(CloudSave {
+        catalog_game_id: row.try_get(0)?,
+        size_bytes: row.try_get(1)?,
+        updated_at: row.try_get(2)?,
+    })
+}
+
+const CLOUD_SAVE_COLUMNS: &str = "catalog_game_id, size_bytes, updated_at::TEXT";
+
 pub async fn get_cloud_save(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
 ) -> Result<Json<CloudSave>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.query_row(
-        "SELECT catalog_game_id, size_bytes, updated_at FROM cloud_saves \
-         WHERE user_id = ?1 AND catalog_game_id = ?2",
-        params![user_id, game_id],
-        |row| {
-            Ok(CloudSave {
-                catalog_game_id: row.get(0)?,
-                size_bytes: row.get(1)?,
-                updated_at: row.get(2)?,
-            })
-        },
-    )
-    .map(Json)
-    .map_err(|_| (StatusCode::NOT_FOUND, "Kein Cloud-Save vorhanden".to_string()))
+    let row = sqlx::query(&format!(
+        "SELECT {CLOUD_SAVE_COLUMNS} FROM cloud_saves WHERE user_id = $1 AND catalog_game_id = $2"
+    ))
+    .bind(user_id)
+    .bind(game_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|_| (StatusCode::NOT_FOUND, "Kein Cloud-Save vorhanden".to_string()))?;
+    row_to_cloud_save(&row).map(Json).map_err(internal_error)
 }
 
 pub async fn upload_cloud_save(
@@ -1694,14 +1582,13 @@ pub async fn upload_cloud_save(
         ));
     }
 
-    {
-        let conn = state.db.lock().map_err(internal_error)?;
-        conn.query_row(
-            "SELECT id FROM catalog_games WHERE id = ?1",
-            params![game_id],
-            |_| Ok(()),
-        )
-        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+    let game_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM catalog_games WHERE id = $1)")
+        .bind(game_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(false);
+    if !game_exists {
+        return Err((StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()));
     }
 
     if let Some(clamd_address) = &state.clamd_address {
@@ -1731,32 +1618,32 @@ pub async fn upload_cloud_save(
         }
     }
 
-    let old_url: Option<String> = {
-        let conn = state.db.lock().map_err(internal_error)?;
-        let usage_excluding_this_game: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(size_bytes), 0) FROM cloud_saves WHERE user_id = ?1 AND catalog_game_id != ?2",
-                params![user_id, game_id],
-                |row| row.get(0),
-            )
-            .map_err(internal_error)?;
-        if usage_excluding_this_game + body.len() as i64 > CLOUD_SAVE_USER_QUOTA_BYTES {
-            return Err((
-                StatusCode::PAYLOAD_TOO_LARGE,
-                format!(
-                    "Cloud-Save-Speicherquote überschritten: {} von {} belegt.",
-                    format_bytes(usage_excluding_this_game),
-                    format_bytes(CLOUD_SAVE_USER_QUOTA_BYTES)
-                ),
-            ));
-        }
-        conn.query_row(
-            "SELECT file_url FROM cloud_saves WHERE user_id = ?1 AND catalog_game_id = ?2",
-            params![user_id, game_id],
-            |row| row.get(0),
-        )
-        .ok()
-    };
+    let usage_excluding_this_game: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(size_bytes), 0)::BIGINT FROM cloud_saves WHERE user_id = $1 AND catalog_game_id != $2",
+    )
+    .bind(user_id)
+    .bind(game_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(internal_error)?;
+    if usage_excluding_this_game + body.len() as i64 > CLOUD_SAVE_USER_QUOTA_BYTES {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "Cloud-Save-Speicherquote überschritten: {} von {} belegt.",
+                format_bytes(usage_excluding_this_game),
+                format_bytes(CLOUD_SAVE_USER_QUOTA_BYTES)
+            ),
+        ));
+    }
+    let old_url: Option<String> = sqlx::query_scalar(
+        "SELECT file_url FROM cloud_saves WHERE user_id = $1 AND catalog_game_id = $2",
+    )
+    .bind(user_id)
+    .bind(game_id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
 
     if let Some(available) = available_disk_bytes(FsPath::new("data")) {
         if available < body.len() as u64 + state.min_free_disk_bytes {
@@ -1774,14 +1661,18 @@ pub async fn upload_cloud_save(
     std::fs::write(&file_path, &body).map_err(internal_error)?;
     let file_url = format!("/uploads/saves/{filename}");
 
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
+    sqlx::query(
         "INSERT INTO cloud_saves (user_id, catalog_game_id, file_url, size_bytes, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, datetime('now')) \
-         ON CONFLICT(user_id, catalog_game_id) DO UPDATE SET \
+         VALUES ($1, $2, $3, $4, now()) \
+         ON CONFLICT (user_id, catalog_game_id) DO UPDATE SET \
          file_url = excluded.file_url, size_bytes = excluded.size_bytes, updated_at = excluded.updated_at",
-        params![user_id, game_id, file_url, body.len() as i64],
     )
+    .bind(user_id)
+    .bind(game_id)
+    .bind(&file_url)
+    .bind(body.len() as i64)
+    .execute(&state.db)
+    .await
     .map_err(internal_error)?;
 
     // Best-effort: remove the previous blob now that the new one is
@@ -1794,20 +1685,15 @@ pub async fn upload_cloud_save(
         }
     }
 
-    conn.query_row(
-        "SELECT catalog_game_id, size_bytes, updated_at FROM cloud_saves \
-         WHERE user_id = ?1 AND catalog_game_id = ?2",
-        params![user_id, game_id],
-        |row| {
-            Ok(CloudSave {
-                catalog_game_id: row.get(0)?,
-                size_bytes: row.get(1)?,
-                updated_at: row.get(2)?,
-            })
-        },
-    )
-    .map(Json)
-    .map_err(internal_error)
+    let row = sqlx::query(&format!(
+        "SELECT {CLOUD_SAVE_COLUMNS} FROM cloud_saves WHERE user_id = $1 AND catalog_game_id = $2"
+    ))
+    .bind(user_id)
+    .bind(game_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(internal_error)?;
+    row_to_cloud_save(&row).map(Json).map_err(internal_error)
 }
 
 pub async fn download_cloud_save(
@@ -1815,15 +1701,14 @@ pub async fn download_cloud_save(
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
 ) -> Result<Vec<u8>, ApiError> {
-    let file_url: String = {
-        let conn = state.db.lock().map_err(internal_error)?;
-        conn.query_row(
-            "SELECT file_url FROM cloud_saves WHERE user_id = ?1 AND catalog_game_id = ?2",
-            params![user_id, game_id],
-            |row| row.get(0),
-        )
-        .map_err(|_| (StatusCode::NOT_FOUND, "Kein Cloud-Save vorhanden".to_string()))?
-    };
+    let file_url: String = sqlx::query_scalar(
+        "SELECT file_url FROM cloud_saves WHERE user_id = $1 AND catalog_game_id = $2",
+    )
+    .bind(user_id)
+    .bind(game_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|_| (StatusCode::NOT_FOUND, "Kein Cloud-Save vorhanden".to_string()))?;
     let path = FsPath::new("data").join(file_url.trim_start_matches('/'));
     std::fs::read(path).map_err(internal_error)
 }
@@ -1833,19 +1718,20 @@ pub async fn delete_cloud_save(
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let file_url: Option<String> = conn
-        .query_row(
-            "SELECT file_url FROM cloud_saves WHERE user_id = ?1 AND catalog_game_id = ?2",
-            params![user_id, game_id],
-            |row| row.get(0),
-        )
-        .ok();
-    conn.execute(
-        "DELETE FROM cloud_saves WHERE user_id = ?1 AND catalog_game_id = ?2",
-        params![user_id, game_id],
+    let file_url: Option<String> = sqlx::query_scalar(
+        "SELECT file_url FROM cloud_saves WHERE user_id = $1 AND catalog_game_id = $2",
     )
-    .map_err(internal_error)?;
+    .bind(user_id)
+    .bind(game_id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+    sqlx::query("DELETE FROM cloud_saves WHERE user_id = $1 AND catalog_game_id = $2")
+        .bind(user_id)
+        .bind(game_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
     if let Some(file_url) = file_url {
         let path = FsPath::new("data").join(file_url.trim_start_matches('/'));
         let _ = std::fs::remove_file(path);
@@ -1853,15 +1739,15 @@ pub async fn delete_cloud_save(
     Ok(StatusCode::NO_CONTENT)
 }
 
-const GAME_VERSION_NOTE_COLUMNS: &str = "id, catalog_game_id, version, notes, created_at";
+const GAME_VERSION_NOTE_COLUMNS: &str = "id, catalog_game_id, version, notes, created_at::TEXT";
 
-fn row_to_version_note(row: &rusqlite::Row) -> rusqlite::Result<GameVersionNote> {
+fn row_to_version_note(row: &PgRow) -> Result<GameVersionNote, sqlx::Error> {
     Ok(GameVersionNote {
-        id: row.get(0)?,
-        catalog_game_id: row.get(1)?,
-        version: row.get(2)?,
-        notes: row.get(3)?,
-        created_at: row.get(4)?,
+        id: row.try_get(0)?,
+        catalog_game_id: row.try_get(1)?,
+        version: row.try_get(2)?,
+        notes: row.try_get(3)?,
+        created_at: row.try_get(4)?,
     })
 }
 
@@ -1872,18 +1758,15 @@ pub async fn list_version_notes(
     State(state): State<AppState>,
     Path(game_id): Path<i64>,
 ) -> Result<Json<Vec<GameVersionNote>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {GAME_VERSION_NOTE_COLUMNS} FROM game_version_notes \
-             WHERE catalog_game_id = ?1 ORDER BY created_at DESC"
-        ))
-        .map_err(internal_error)?;
-    let notes = stmt
-        .query_map(params![game_id], row_to_version_note)
-        .map_err(internal_error)?
-        .filter_map(|n| n.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {GAME_VERSION_NOTE_COLUMNS} FROM game_version_notes \
+         WHERE catalog_game_id = $1 ORDER BY created_at DESC"
+    ))
+    .bind(game_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let notes = rows.iter().filter_map(|r| row_to_version_note(r).ok()).collect();
     Ok(Json(notes))
 }
 
@@ -1900,13 +1783,10 @@ pub async fn upsert_version_note(
         return Err((StatusCode::BAD_REQUEST, "Version darf nicht leer sein".to_string()));
     }
 
-    let conn = state.db.lock().map_err(internal_error)?;
-    let publisher_id: i64 = conn
-        .query_row(
-            "SELECT publisher_user_id FROM catalog_games WHERE id = ?1",
-            params![game_id],
-            |r| r.get(0),
-        )
+    let publisher_id: i64 = sqlx::query_scalar("SELECT publisher_user_id FROM catalog_games WHERE id = $1")
+        .bind(game_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
     if publisher_id != user_id {
         return Err((
@@ -1915,24 +1795,28 @@ pub async fn upsert_version_note(
         ));
     }
 
-    conn.execute(
-        "INSERT INTO game_version_notes (catalog_game_id, version, notes) VALUES (?1, ?2, ?3) \
-         ON CONFLICT(catalog_game_id, version) DO UPDATE SET \
-         notes = excluded.notes, created_at = datetime('now')",
-        params![game_id, req.version.trim(), req.notes],
+    sqlx::query(
+        "INSERT INTO game_version_notes (catalog_game_id, version, notes) VALUES ($1, $2, $3) \
+         ON CONFLICT (catalog_game_id, version) DO UPDATE SET \
+         notes = excluded.notes, created_at = now()",
     )
+    .bind(game_id)
+    .bind(req.version.trim())
+    .bind(&req.notes)
+    .execute(&state.db)
+    .await
     .map_err(internal_error)?;
 
-    conn.query_row(
-        &format!(
-            "SELECT {GAME_VERSION_NOTE_COLUMNS} FROM game_version_notes \
-             WHERE catalog_game_id = ?1 AND version = ?2"
-        ),
-        params![game_id, req.version.trim()],
-        row_to_version_note,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    let row = sqlx::query(&format!(
+        "SELECT {GAME_VERSION_NOTE_COLUMNS} FROM game_version_notes \
+         WHERE catalog_game_id = $1 AND version = $2"
+    ))
+    .bind(game_id)
+    .bind(req.version.trim())
+    .fetch_one(&state.db)
+    .await
+    .map_err(internal_error)?;
+    row_to_version_note(&row).map(Json).map_err(internal_error)
 }
 
 pub async fn delete_version_note(
@@ -1940,13 +1824,10 @@ pub async fn delete_version_note(
     AuthUser(user_id): AuthUser,
     Path((game_id, note_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let publisher_id: i64 = conn
-        .query_row(
-            "SELECT publisher_user_id FROM catalog_games WHERE id = ?1",
-            params![game_id],
-            |r| r.get(0),
-        )
+    let publisher_id: i64 = sqlx::query_scalar("SELECT publisher_user_id FROM catalog_games WHERE id = $1")
+        .bind(game_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
     if publisher_id != user_id {
         return Err((
@@ -1954,13 +1835,13 @@ pub async fn delete_version_note(
             "Nur der Publisher kann Patch-Notes entfernen".to_string(),
         ));
     }
-    let affected = conn
-        .execute(
-            "DELETE FROM game_version_notes WHERE id = ?1 AND catalog_game_id = ?2",
-            params![note_id, game_id],
-        )
+    let result = sqlx::query("DELETE FROM game_version_notes WHERE id = $1 AND catalog_game_id = $2")
+        .bind(note_id)
+        .bind(game_id)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
-    if affected == 0 {
+    if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "Patch-Note nicht gefunden".to_string()));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -1977,60 +1858,133 @@ pub async fn set_playing(
     AuthUser(user_id): AuthUser,
     Json(req): Json<SetPlayingRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
-        "UPDATE users SET currently_playing_catalog_game_id = ?1 WHERE id = ?2",
-        params![req.catalog_game_id, user_id],
-    )
-    .map_err(internal_error)?;
+    sqlx::query("UPDATE users SET currently_playing_catalog_game_id = $1 WHERE id = $2")
+        .bind(req.catalog_game_id)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn row_to_event(row: &rusqlite::Row) -> rusqlite::Result<GameEvent> {
+/// Inserts a notification for `user_id`. Failures are logged, not
+/// propagated — a missed notification shouldn't roll back the friend
+/// request / match result / etc. that triggered it.
+async fn create_notification(
+    pool: &PgPool,
+    user_id: i64,
+    kind: &str,
+    message: &str,
+    event_id: Option<i64>,
+    actor_user_id: Option<i64>,
+) {
+    let _ = sqlx::query(
+        "INSERT INTO notifications (user_id, kind, message, event_id, actor_user_id) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(user_id)
+    .bind(kind)
+    .bind(message)
+    .bind(event_id)
+    .bind(actor_user_id)
+    .execute(pool)
+    .await;
+}
+
+async fn user_display_name(pool: &PgPool, user_id: i64) -> String {
+    sqlx::query_scalar("SELECT display_name FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or_else(|_| "Jemand".to_string())
+}
+
+/// Records that `user_id` earned `badge_key`, if they haven't already
+/// (`UNIQUE(user_id, badge_key)` makes the insert idempotent), and notifies
+/// them — but only on the insert that actually happened, not on repeat
+/// calls for a badge they already hold (e.g. `check_host_beginner_badge`
+/// runs on every join, long after the badge was first earned). Best-effort:
+/// a failed award shouldn't roll back the join/match-result that triggered
+/// it, same philosophy as `create_notification`.
+async fn award_badge(pool: &PgPool, user_id: i64, badge_key: &str) {
+    let inserted = sqlx::query(
+        "INSERT INTO user_badges (user_id, badge_key) VALUES ($1, $2) ON CONFLICT (user_id, badge_key) DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(badge_key)
+    .execute(pool)
+    .await
+    .map(|r| r.rows_affected() > 0)
+    .unwrap_or(false);
+    if inserted {
+        if let Some(def) = find_badge(badge_key) {
+            create_notification(
+                pool,
+                user_id,
+                "badge_earned",
+                &format!("{} Du hast das Badge \"{}\" verdient!", def.icon, def.label),
+                None,
+                None,
+            )
+            .await;
+        }
+    }
+}
+
+fn row_to_event(row: &PgRow) -> Result<GameEvent, sqlx::Error> {
     Ok(GameEvent {
-        id: row.get(0)?,
-        host_user_id: row.get(1)?,
-        host_display_name: row.get(2)?,
-        title: row.get(3)?,
-        description: row.get(4)?,
-        catalog_game_id: row.get(5)?,
-        catalog_game_title: row.get(6)?,
-        custom_game_title: row.get(7)?,
-        registration_deadline: row.get(8)?,
-        starts_at: row.get(9)?,
-        ends_at: row.get(10)?,
-        prize_cents: row.get(11)?,
-        prize_mode: row.get(12)?,
-        prize_second_cents: row.get(13)?,
-        prize_third_cents: row.get(14)?,
-        team_size: row.get(15)?,
-        max_entries: row.get(16)?,
-        format: row.get(17)?,
-        is_private: row.get(18)?,
-        join_code: row.get(19)?,
-        created_at: row.get(20)?,
-        participant_count: row.get(21)?,
-        joined: row.get(22)?,
+        id: row.try_get(0)?,
+        host_user_id: row.try_get(1)?,
+        host_display_name: row.try_get(2)?,
+        title: row.try_get(3)?,
+        description: row.try_get(4)?,
+        catalog_game_id: row.try_get(5)?,
+        catalog_game_title: row.try_get(6)?,
+        custom_game_title: row.try_get(7)?,
+        registration_deadline: row.try_get(8)?,
+        starts_at: row.try_get(9)?,
+        ends_at: row.try_get(10)?,
+        prize_cents: row.try_get(11)?,
+        prize_mode: row.try_get(12)?,
+        prize_second_cents: row.try_get(13)?,
+        prize_third_cents: row.try_get(14)?,
+        team_size: row.try_get(15)?,
+        max_entries: row.try_get(16)?,
+        format: row.try_get(17)?,
+        is_private: row.try_get(18)?,
+        join_code: row.try_get(19)?,
+        created_at: row.try_get(20)?,
+        participant_count: row.try_get(21)?,
+        joined: row.try_get(22)?,
     })
 }
 
-/// `?1` in the `joined` EXISTS clause is always the viewer's id (or `-1` for
+/// `$1` in the `joined` EXISTS clause is always the viewer's id (or `-1` for
 /// anonymous browsing, like `list_games` does) — every query using this
-/// constant binds it first. The same `?1` masks `join_code` so only the host
+/// constant binds it first. The same `$1` masks `join_code` so only the host
 /// ever gets the code back in a payload.
 const EVENT_COLUMNS: &str = "events.id, events.host_user_id, users.display_name, events.title, \
     events.description, events.catalog_game_id, catalog_games.title, events.custom_game_title, \
-    events.registration_deadline, events.starts_at, events.ends_at, events.prize_cents, \
+    events.registration_deadline::TEXT, events.starts_at::TEXT, events.ends_at::TEXT, events.prize_cents, \
     events.prize_mode, events.prize_second_cents, events.prize_third_cents, \
     events.team_size, events.max_entries, events.format, events.is_private, \
-    CASE WHEN events.host_user_id = ?1 THEN events.join_code ELSE NULL END, \
-    events.created_at, \
+    CASE WHEN events.host_user_id = $1 THEN events.join_code ELSE NULL END, \
+    events.created_at::TEXT, \
     (SELECT COUNT(*) FROM event_participants WHERE event_id = events.id), \
-    EXISTS(SELECT 1 FROM event_participants WHERE event_id = events.id AND user_id = ?1) AS joined";
+    EXISTS(SELECT 1 FROM event_participants WHERE event_id = events.id AND user_id = $1) AS joined";
 
 const EVENT_FROM: &str = "FROM events \
     JOIN users ON users.id = events.host_user_id \
     LEFT JOIN catalog_games ON catalog_games.id = events.catalog_game_id";
+
+async fn fetch_event(pool: &PgPool, viewer_id: i64, event_id: i64) -> Result<GameEvent, sqlx::Error> {
+    let row = sqlx::query(&format!("SELECT {EVENT_COLUMNS} {EVENT_FROM} WHERE events.id = $2"))
+        .bind(viewer_id)
+        .bind(event_id)
+        .fetch_one(pool)
+        .await?;
+    row_to_event(&row)
+}
 
 /// Lists all events, newest first. Public (browsing game jams/tournaments
 /// shouldn't require an account), but reads an optional bearer token —
@@ -2045,20 +1999,17 @@ pub async fn list_events(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<Vec<GameEvent>>, ApiError> {
     let current_user_id = user_id_from_headers(&headers, &state.jwt_secret).unwrap_or(-1);
-    let conn = state.db.lock().map_err(internal_error)?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {EVENT_COLUMNS} {EVENT_FROM} \
-             WHERE events.is_private = 0 OR events.host_user_id = ?1 \
-             OR EXISTS(SELECT 1 FROM event_participants WHERE event_id = events.id AND user_id = ?1) \
-             ORDER BY events.created_at DESC"
-        ))
-        .map_err(internal_error)?;
-    let events = stmt
-        .query_map(params![current_user_id], row_to_event)
-        .map_err(internal_error)?
-        .filter_map(|e| e.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {EVENT_COLUMNS} {EVENT_FROM} \
+         WHERE NOT events.is_private OR events.host_user_id = $1 \
+         OR EXISTS(SELECT 1 FROM event_participants WHERE event_id = events.id AND user_id = $1) \
+         ORDER BY events.created_at DESC"
+    ))
+    .bind(current_user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let events = rows.iter().filter_map(|e| row_to_event(e).ok()).collect();
     Ok(Json(events))
 }
 
@@ -2068,14 +2019,10 @@ pub async fn get_event(
     Path(event_id): Path<i64>,
 ) -> Result<Json<GameEvent>, ApiError> {
     let current_user_id = user_id_from_headers(&headers, &state.jwt_secret).unwrap_or(-1);
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.query_row(
-        &format!("SELECT {EVENT_COLUMNS} {EVENT_FROM} WHERE events.id = ?2"),
-        params![current_user_id, event_id],
-        row_to_event,
-    )
-    .map(Json)
-    .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))
+    fetch_event(&state.db, current_user_id, event_id)
+        .await
+        .map(Json)
+        .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))
 }
 
 pub async fn create_event(
@@ -2118,41 +2065,42 @@ pub async fn create_event(
         return Err((StatusCode::BAD_REQUEST, "Ungültiges Turnierformat".to_string()));
     }
 
-    let conn = state.db.lock().map_err(internal_error)?;
-    let join_code = if req.is_private { Some(generate_join_code(&conn)) } else { None };
-    conn.execute(
+    let join_code = if req.is_private {
+        Some(generate_join_code(&state.db).await)
+    } else {
+        None
+    };
+    let custom_game_title = req
+        .custom_game_title
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let id: i64 = sqlx::query_scalar(
         "INSERT INTO events (host_user_id, title, description, catalog_game_id, custom_game_title, registration_deadline, starts_at, ends_at, prize_cents, prize_mode, prize_second_cents, prize_third_cents, team_size, max_entries, format, is_private, join_code) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
-        params![
-            user_id,
-            req.title.trim(),
-            req.description,
-            req.catalog_game_id,
-            req.custom_game_title.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-            req.registration_deadline,
-            req.starts_at,
-            req.ends_at,
-            req.prize_cents,
-            req.prize_mode,
-            prize_second_cents,
-            prize_third_cents,
-            req.team_size,
-            req.max_entries,
-            req.format,
-            req.is_private,
-            join_code
-        ],
+         VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz, $8::timestamptz, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id",
     )
+    .bind(user_id)
+    .bind(req.title.trim())
+    .bind(&req.description)
+    .bind(req.catalog_game_id)
+    .bind(&custom_game_title)
+    .bind(&req.registration_deadline)
+    .bind(&req.starts_at)
+    .bind(&req.ends_at)
+    .bind(req.prize_cents)
+    .bind(&req.prize_mode)
+    .bind(prize_second_cents)
+    .bind(prize_third_cents)
+    .bind(req.team_size)
+    .bind(req.max_entries)
+    .bind(&req.format)
+    .bind(req.is_private)
+    .bind(&join_code)
+    .fetch_one(&state.db)
+    .await
     .map_err(internal_error)?;
-    let id = conn.last_insert_rowid();
 
-    conn.query_row(
-        &format!("SELECT {EVENT_COLUMNS} {EVENT_FROM} WHERE events.id = ?2"),
-        params![user_id, id],
-        row_to_event,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    fetch_event(&state.db, user_id, id).await.map(Json).map_err(internal_error)
 }
 
 pub async fn delete_event(
@@ -2160,13 +2108,10 @@ pub async fn delete_event(
     AuthUser(user_id): AuthUser,
     Path(event_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let host_user_id: i64 = conn
-        .query_row(
-            "SELECT host_user_id FROM events WHERE id = ?1",
-            params![event_id],
-            |row| row.get(0),
-        )
+    let host_user_id: i64 = sqlx::query_scalar("SELECT host_user_id FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
     if host_user_id != user_id {
         return Err((
@@ -2177,22 +2122,38 @@ pub async fn delete_event(
     // Children must go before the parent row — event_participants also
     // references event_teams, so it has to be cleared before event_teams
     // too, and notifications.event_id is nullable so we detach it instead
-    // of deleting the user's notification history outright.
-    conn.execute(
-        "DELETE FROM event_participants WHERE event_id = ?1",
-        params![event_id],
-    )
-    .map_err(internal_error)?;
-    conn.execute("DELETE FROM event_matches WHERE event_id = ?1", params![event_id])
+    // of deleting the user's notification history outright. Postgres
+    // enforces the tournament_wins FK (SQLite never did), so it needs
+    // clearing here too.
+    sqlx::query("DELETE FROM tournament_wins WHERE event_id = $1")
+        .bind(event_id)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
-    conn.execute("DELETE FROM event_teams WHERE event_id = ?1", params![event_id])
+    sqlx::query("DELETE FROM event_participants WHERE event_id = $1")
+        .bind(event_id)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
-    conn.execute(
-        "UPDATE notifications SET event_id = NULL WHERE event_id = ?1",
-        params![event_id],
-    )
-    .map_err(internal_error)?;
-    conn.execute("DELETE FROM events WHERE id = ?1", params![event_id])
+    sqlx::query("DELETE FROM event_matches WHERE event_id = $1")
+        .bind(event_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+    sqlx::query("DELETE FROM event_teams WHERE event_id = $1")
+        .bind(event_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+    sqlx::query("UPDATE notifications SET event_id = NULL WHERE event_id = $1")
+        .bind(event_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+    sqlx::query("DELETE FROM events WHERE id = $1")
+        .bind(event_id)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -2203,14 +2164,15 @@ pub async fn join_event(
     Path(event_id): Path<i64>,
     Json(req): Json<crate::models::JoinWithCode>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let (team_size, max_entries, is_private, join_code): (i64, Option<i64>, bool, Option<String>) =
-        conn.query_row(
-            "SELECT team_size, max_entries, is_private, join_code FROM events WHERE id = ?1",
-            params![event_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
+    let row = sqlx::query("SELECT team_size, max_entries, is_private, join_code FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    let team_size: i64 = row.try_get(0).map_err(internal_error)?;
+    let max_entries: Option<i64> = row.try_get(1).map_err(internal_error)?;
+    let is_private: bool = row.try_get(2).map_err(internal_error)?;
+    let join_code: Option<String> = row.try_get(3).map_err(internal_error)?;
     if team_size > 1 {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -2221,23 +2183,25 @@ pub async fn join_event(
         return Err((StatusCode::FORBIDDEN, "Falscher oder fehlender Code".to_string()));
     }
     if let Some(max) = max_entries {
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM event_participants WHERE event_id = ?1",
-                params![event_id],
-                |row| row.get(0),
-            )
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_participants WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_one(&state.db)
+            .await
             .map_err(internal_error)?;
         if count >= max {
             return Err((StatusCode::BAD_REQUEST, "Turnier ist bereits voll".to_string()));
         }
     }
-    conn.execute(
-        "INSERT OR IGNORE INTO event_participants (event_id, user_id) VALUES (?1, ?2)",
-        params![event_id, user_id],
+    sqlx::query(
+        "INSERT INTO event_participants (event_id, user_id) VALUES ($1, $2) \
+         ON CONFLICT (event_id, user_id) DO NOTHING",
     )
+    .bind(event_id)
+    .bind(user_id)
+    .execute(&state.db)
+    .await
     .map_err(internal_error)?;
-    check_host_beginner_badge(&conn, event_id);
+    check_host_beginner_badge(&state.db, event_id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -2246,54 +2210,59 @@ pub async fn leave_event(
     AuthUser(user_id): AuthUser,
     Path(event_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let team_id: Option<i64> = conn
-        .query_row(
-            "SELECT team_id FROM event_participants WHERE event_id = ?1 AND user_id = ?2",
-            params![event_id, user_id],
-            |row| row.get(0),
-        )
-        .ok()
-        .flatten();
-    conn.execute(
-        "DELETE FROM event_participants WHERE event_id = ?1 AND user_id = ?2",
-        params![event_id, user_id],
+    let team_id: Option<i64> = sqlx::query_scalar(
+        "SELECT team_id FROM event_participants WHERE event_id = $1 AND user_id = $2",
     )
-    .map_err(internal_error)?;
+    .bind(event_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    sqlx::query("DELETE FROM event_participants WHERE event_id = $1 AND user_id = $2")
+        .bind(event_id)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
     if let Some(team_id) = team_id {
-        let remaining: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM event_participants WHERE team_id = ?1",
-                params![team_id],
-                |row| row.get(0),
-            )
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_participants WHERE team_id = $1")
+            .bind(team_id)
+            .fetch_one(&state.db)
+            .await
             .unwrap_or(0);
         if remaining == 0 {
-            let _ = conn.execute("DELETE FROM event_teams WHERE id = ?1", params![team_id]);
+            let _ = sqlx::query("DELETE FROM event_teams WHERE id = $1")
+                .bind(team_id)
+                .execute(&state.db)
+                .await;
         }
     }
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn load_event_team(conn: &rusqlite::Connection, team_id: i64) -> Result<EventTeam, ApiError> {
-    let (event_id, name, created_by): (i64, String, i64) = conn
-        .query_row(
-            "SELECT event_id, name, created_by FROM event_teams WHERE id = ?1",
-            params![team_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
+async fn load_event_team(pool: &PgPool, team_id: i64) -> Result<EventTeam, ApiError> {
+    let row = sqlx::query("SELECT event_id, name, created_by FROM event_teams WHERE id = $1")
+        .bind(team_id)
+        .fetch_one(pool)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Team nicht gefunden".to_string()))?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
-             JOIN event_participants ep ON ep.user_id = u.id \
-             WHERE ep.team_id = ?1 ORDER BY ep.joined_at ASC"
-        ))
-        .map_err(internal_error)?;
-    let members: Vec<crate::models::UserSummary> = stmt
-        .query_map(params![team_id], row_to_user_summary)
-        .map_err(internal_error)?
-        .filter_map(|m| m.ok())
+    let event_id: i64 = row.try_get(0).map_err(internal_error)?;
+    let name: String = row.try_get(1).map_err(internal_error)?;
+    let created_by: i64 = row.try_get(2).map_err(internal_error)?;
+
+    let member_rows = sqlx::query(&format!(
+        "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
+         JOIN event_participants ep ON ep.user_id = u.id \
+         WHERE ep.team_id = $1 ORDER BY ep.joined_at ASC"
+    ))
+    .bind(team_id)
+    .fetch_all(pool)
+    .await
+    .map_err(internal_error)?;
+    let members: Vec<crate::models::UserSummary> = member_rows
+        .iter()
+        .filter_map(|r| row_to_user_summary(r).ok())
         .collect();
     Ok(EventTeam {
         id: team_id,
@@ -2312,20 +2281,19 @@ pub async fn list_event_teams(
     State(state): State<AppState>,
     Path(event_id): Path<i64>,
 ) -> Result<Json<Vec<EventTeam>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let team_ids: Vec<i64> = {
-        let mut stmt = conn
-            .prepare("SELECT id FROM event_teams WHERE event_id = ?1 ORDER BY created_at ASC")
-            .map_err(internal_error)?;
-        let rows = stmt
-            .query_map(params![event_id], |row| row.get(0))
-            .map_err(internal_error)?;
-        rows.filter_map(|r| r.ok()).collect()
-    };
-    let teams = team_ids
-        .into_iter()
-        .filter_map(|id| load_event_team(&conn, id).ok())
-        .collect();
+    let team_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM event_teams WHERE event_id = $1 ORDER BY created_at ASC",
+    )
+    .bind(event_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let mut teams = Vec::new();
+    for id in team_ids {
+        if let Ok(team) = load_event_team(&state.db, id).await {
+            teams.push(team);
+        }
+    }
     Ok(Json(teams))
 }
 
@@ -2338,54 +2306,59 @@ pub async fn create_event_team(
     if req.name.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "Teamname darf nicht leer sein".to_string()));
     }
-    let conn = state.db.lock().map_err(internal_error)?;
-    let (team_size, max_entries, is_private, join_code): (i64, Option<i64>, bool, Option<String>) =
-        conn.query_row(
-            "SELECT team_size, max_entries, is_private, join_code FROM events WHERE id = ?1",
-            params![event_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
+    let row = sqlx::query("SELECT team_size, max_entries, is_private, join_code FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    let team_size: i64 = row.try_get(0).map_err(internal_error)?;
+    let max_entries: Option<i64> = row.try_get(1).map_err(internal_error)?;
+    let is_private: bool = row.try_get(2).map_err(internal_error)?;
+    let join_code: Option<String> = row.try_get(3).map_err(internal_error)?;
     if team_size <= 1 {
         return Err((StatusCode::BAD_REQUEST, "Dieses Event hat keine Teams".to_string()));
     }
     if is_private && normalize_code(&req.code) != join_code {
         return Err((StatusCode::FORBIDDEN, "Falscher oder fehlender Code".to_string()));
     }
-    let already_in: bool = conn
-        .query_row(
-            "SELECT 1 FROM event_participants WHERE event_id = ?1 AND user_id = ?2",
-            params![event_id, user_id],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
+    let already_in: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM event_participants WHERE event_id = $1 AND user_id = $2)",
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
     if already_in {
         return Err((StatusCode::BAD_REQUEST, "Du bist bereits angemeldet".to_string()));
     }
     if let Some(max) = max_entries {
-        let team_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM event_teams WHERE event_id = ?1",
-                params![event_id],
-                |row| row.get(0),
-            )
+        let team_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_teams WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_one(&state.db)
+            .await
             .map_err(internal_error)?;
         if team_count >= max {
             return Err((StatusCode::BAD_REQUEST, "Turnier ist bereits voll".to_string()));
         }
     }
-    conn.execute(
-        "INSERT INTO event_teams (event_id, name, created_by) VALUES (?1, ?2, ?3)",
-        params![event_id, req.name.trim(), user_id],
+    let team_id: i64 = sqlx::query_scalar(
+        "INSERT INTO event_teams (event_id, name, created_by) VALUES ($1, $2, $3) RETURNING id",
     )
+    .bind(event_id)
+    .bind(req.name.trim())
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await
     .map_err(internal_error)?;
-    let team_id = conn.last_insert_rowid();
-    conn.execute(
-        "INSERT INTO event_participants (event_id, user_id, team_id) VALUES (?1, ?2, ?3)",
-        params![event_id, user_id, team_id],
-    )
-    .map_err(internal_error)?;
-    load_event_team(&conn, team_id).map(Json)
+    sqlx::query("INSERT INTO event_participants (event_id, user_id, team_id) VALUES ($1, $2, $3)")
+        .bind(event_id)
+        .bind(user_id)
+        .bind(team_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+    load_event_team(&state.db, team_id).await.map(Json)
 }
 
 pub async fn join_event_team(
@@ -2394,20 +2367,18 @@ pub async fn join_event_team(
     Path((event_id, team_id)): Path<(i64, i64)>,
     Json(req): Json<crate::models::JoinWithCode>,
 ) -> Result<Json<EventTeam>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let (team_size, is_private, join_code): (i64, bool, Option<String>) = conn
-        .query_row(
-            "SELECT team_size, is_private, join_code FROM events WHERE id = ?1",
-            params![event_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
+    let row = sqlx::query("SELECT team_size, is_private, join_code FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
-    let team_event_id: i64 = conn
-        .query_row(
-            "SELECT event_id FROM event_teams WHERE id = ?1",
-            params![team_id],
-            |row| row.get(0),
-        )
+    let team_size: i64 = row.try_get(0).map_err(internal_error)?;
+    let is_private: bool = row.try_get(1).map_err(internal_error)?;
+    let join_code: Option<String> = row.try_get(2).map_err(internal_error)?;
+    let team_event_id: i64 = sqlx::query_scalar("SELECT event_id FROM event_teams WHERE id = $1")
+        .bind(team_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Team nicht gefunden".to_string()))?;
     if team_event_id != event_id {
         return Err((StatusCode::BAD_REQUEST, "Team gehört nicht zu diesem Event".to_string()));
@@ -2415,62 +2386,71 @@ pub async fn join_event_team(
     if is_private && normalize_code(&req.code) != join_code {
         return Err((StatusCode::FORBIDDEN, "Falscher oder fehlender Code".to_string()));
     }
-    let already_in: bool = conn
-        .query_row(
-            "SELECT 1 FROM event_participants WHERE event_id = ?1 AND user_id = ?2",
-            params![event_id, user_id],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
+    let already_in: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM event_participants WHERE event_id = $1 AND user_id = $2)",
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
     if already_in {
         return Err((StatusCode::BAD_REQUEST, "Du bist bereits angemeldet".to_string()));
     }
-    let member_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM event_participants WHERE team_id = ?1",
-            params![team_id],
-            |row| row.get(0),
-        )
+    let member_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_participants WHERE team_id = $1")
+        .bind(team_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(internal_error)?;
     if member_count >= team_size {
         return Err((StatusCode::BAD_REQUEST, "Team ist bereits voll".to_string()));
     }
-    conn.execute(
-        "INSERT INTO event_participants (event_id, user_id, team_id) VALUES (?1, ?2, ?3)",
-        params![event_id, user_id, team_id],
-    )
-    .map_err(internal_error)?;
-    check_host_beginner_badge(&conn, event_id);
-
-    let joiner_name = user_display_name(&conn, user_id);
-    let (team_name, event_title): (String, String) = conn
-        .query_row(
-            "SELECT event_teams.name, events.title FROM event_teams \
-             JOIN events ON events.id = event_teams.event_id WHERE event_teams.id = ?1",
-            params![team_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap_or_default();
-    let mut stmt = conn
-        .prepare("SELECT user_id FROM event_participants WHERE team_id = ?1 AND user_id != ?2")
+    sqlx::query("INSERT INTO event_participants (event_id, user_id, team_id) VALUES ($1, $2, $3)")
+        .bind(event_id)
+        .bind(user_id)
+        .bind(team_id)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
-    let teammates: Vec<i64> = stmt
-        .query_map(params![team_id, user_id], |row| row.get(0))
-        .map_err(internal_error)?
-        .filter_map(|r| r.ok())
-        .collect();
+    check_host_beginner_badge(&state.db, event_id).await;
+
+    let joiner_name = user_display_name(&state.db, user_id).await;
+    let team_event_row = sqlx::query(
+        "SELECT event_teams.name, events.title FROM event_teams \
+         JOIN events ON events.id = event_teams.event_id WHERE event_teams.id = $1",
+    )
+    .bind(team_id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+    let (team_name, event_title): (String, String) = match team_event_row {
+        Some(row) => (
+            row.try_get(0).unwrap_or_default(),
+            row.try_get(1).unwrap_or_default(),
+        ),
+        None => Default::default(),
+    };
+    let teammates: Vec<i64> = sqlx::query_scalar(
+        "SELECT user_id FROM event_participants WHERE team_id = $1 AND user_id != $2",
+    )
+    .bind(team_id)
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
     for teammate_id in teammates {
         create_notification(
-            &conn,
+            &state.db,
             teammate_id,
             "team_joined",
             &format!("{joiner_name} ist deinem Team \"{team_name}\" im Turnier \"{event_title}\" beigetreten"),
             Some(event_id),
             Some(user_id),
-        );
+        )
+        .await;
     }
 
-    load_event_team(&conn, team_id).map(Json)
+    load_event_team(&state.db, team_id).await.map(Json)
 }
 
 fn shuffle<T>(items: &mut [T]) {
@@ -2485,7 +2465,7 @@ fn shuffle<T>(items: &mut [T]) {
 /// 6 chars from an ambiguity-reduced alphabet (no `0/O/1/I`), regenerated on
 /// collision — codes are short-lived join tokens, not security secrets, so a
 /// linear retry loop is plenty.
-fn generate_join_code(conn: &rusqlite::Connection) -> String {
+async fn generate_join_code(pool: &PgPool) -> String {
     use rand_core::{OsRng, RngCore};
     const CHARS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let mut rng = OsRng;
@@ -2493,8 +2473,10 @@ fn generate_join_code(conn: &rusqlite::Connection) -> String {
         let code: String = (0..6)
             .map(|_| CHARS[(rng.next_u32() as usize) % CHARS.len()] as char)
             .collect();
-        let exists: bool = conn
-            .query_row("SELECT 1 FROM events WHERE join_code = ?1", params![code], |_| Ok(true))
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM events WHERE join_code = $1)")
+            .bind(&code)
+            .fetch_one(pool)
+            .await
             .unwrap_or(false);
         if !exists {
             return code;
@@ -2518,50 +2500,43 @@ pub async fn find_event_by_code(
     if code.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "Code darf nicht leer sein".to_string()));
     }
-    let conn = state.db.lock().map_err(internal_error)?;
-    let event_id: i64 = conn
-        .query_row("SELECT id FROM events WHERE join_code = ?1", params![code], |row| {
-            row.get(0)
-        })
+    let event_id: i64 = sqlx::query_scalar("SELECT id FROM events WHERE join_code = $1")
+        .bind(code)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Kein Turnier mit diesem Code gefunden".to_string()))?;
-    conn.query_row(
-        &format!("SELECT {EVENT_COLUMNS} {EVENT_FROM} WHERE events.id = ?2"),
-        params![current_user_id, event_id],
-        row_to_event,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    fetch_event(&state.db, current_user_id, event_id)
+        .await
+        .map(Json)
+        .map_err(internal_error)
 }
 
-fn load_bracket(conn: &rusqlite::Connection, event_id: i64) -> Result<EventBracket, ApiError> {
-    let team_size: i64 = conn
-        .query_row(
-            "SELECT team_size FROM events WHERE id = ?1",
-            params![event_id],
-            |row| row.get(0),
-        )
+async fn load_bracket(pool: &PgPool, event_id: i64) -> Result<EventBracket, ApiError> {
+    let team_size: i64 = sqlx::query_scalar("SELECT team_size FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(pool)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, round, slot, entry_a_id, entry_b_id, winner_entry_id \
-             FROM event_matches WHERE event_id = ?1 ORDER BY round ASC, slot ASC",
-        )
-        .map_err(internal_error)?;
-    let matches: Vec<EventMatch> = stmt
-        .query_map(params![event_id], |row| {
-            Ok(EventMatch {
-                id: row.get(0)?,
-                round: row.get(1)?,
-                slot: row.get(2)?,
-                entry_a_id: row.get(3)?,
-                entry_b_id: row.get(4)?,
-                winner_entry_id: row.get(5)?,
-            })
+    let match_rows = sqlx::query(
+        "SELECT id, round, slot, entry_a_id, entry_b_id, winner_entry_id \
+         FROM event_matches WHERE event_id = $1 ORDER BY round ASC, slot ASC",
+    )
+    .bind(event_id)
+    .fetch_all(pool)
+    .await
+    .map_err(internal_error)?;
+    fn row_to_match(row: &PgRow) -> Result<EventMatch, sqlx::Error> {
+        Ok(EventMatch {
+            id: row.try_get(0)?,
+            round: row.try_get(1)?,
+            slot: row.try_get(2)?,
+            entry_a_id: row.try_get(3)?,
+            entry_b_id: row.try_get(4)?,
+            winner_entry_id: row.try_get(5)?,
         })
-        .map_err(internal_error)?
-        .filter_map(|m| m.ok())
-        .collect();
+    }
+    let matches: Vec<EventMatch> = match_rows.iter().filter_map(|row| row_to_match(row).ok()).collect();
 
     let mut entry_ids: Vec<i64> = Vec::new();
     for m in &matches {
@@ -2575,18 +2550,21 @@ fn load_bracket(conn: &rusqlite::Connection, event_id: i64) -> Result<EventBrack
     }
 
     let name_query = if team_size > 1 {
-        "SELECT name FROM event_teams WHERE id = ?1"
+        "SELECT name FROM event_teams WHERE id = $1"
     } else {
-        "SELECT display_name FROM users WHERE id = ?1"
+        "SELECT display_name FROM users WHERE id = $1"
     };
-    let entries: Vec<BracketEntry> = entry_ids
-        .into_iter()
-        .filter_map(|id| {
-            conn.query_row(name_query, params![id], |row| row.get::<_, String>(0))
-                .ok()
-                .map(|name| BracketEntry { id, name })
-        })
-        .collect();
+    let mut entries: Vec<BracketEntry> = Vec::new();
+    for id in entry_ids {
+        let name: Option<String> = sqlx::query_scalar(name_query)
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+        if let Some(name) = name {
+            entries.push(BracketEntry { id, name });
+        }
+    }
 
     Ok(EventBracket { entries, matches })
 }
@@ -2600,14 +2578,15 @@ pub async fn start_event_tournament(
     AuthUser(user_id): AuthUser,
     Path(event_id): Path<i64>,
 ) -> Result<Json<EventBracket>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let (host_user_id, team_size, format, event_title): (i64, i64, String, String) = conn
-        .query_row(
-            "SELECT host_user_id, team_size, format, title FROM events WHERE id = ?1",
-            params![event_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
+    let row = sqlx::query("SELECT host_user_id, team_size, format, title FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    let host_user_id: i64 = row.try_get(0).map_err(internal_error)?;
+    let team_size: i64 = row.try_get(1).map_err(internal_error)?;
+    let format: String = row.try_get(2).map_err(internal_error)?;
+    let event_title: String = row.try_get(3).map_err(internal_error)?;
     if host_user_id != user_id {
         return Err((
             StatusCode::FORBIDDEN,
@@ -2620,33 +2599,26 @@ pub async fn start_event_tournament(
             "Nur Knockout-Turniere haben einen Turnierbaum".to_string(),
         ));
     }
-    let existing_matches: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM event_matches WHERE event_id = ?1",
-            params![event_id],
-            |row| row.get(0),
-        )
+    let existing_matches: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_matches WHERE event_id = $1")
+        .bind(event_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(internal_error)?;
     if existing_matches > 0 {
         return Err((StatusCode::BAD_REQUEST, "Turnier wurde bereits gestartet".to_string()));
     }
 
     let mut entries: Vec<BracketEntry> = if team_size > 1 {
-        let mut stmt = conn
-            .prepare("SELECT id, name FROM event_teams WHERE event_id = ?1")
+        let teams: Vec<(i64, String)> = sqlx::query_as("SELECT id, name FROM event_teams WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_all(&state.db)
+            .await
             .map_err(internal_error)?;
-        let teams: Vec<(i64, String)> = stmt
-            .query_map(params![event_id], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(internal_error)?
-            .filter_map(|r| r.ok())
-            .collect();
         for (team_id, name) in &teams {
-            let count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM event_participants WHERE team_id = ?1",
-                    params![team_id],
-                    |row| row.get(0),
-                )
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_participants WHERE team_id = $1")
+                .bind(team_id)
+                .fetch_one(&state.db)
+                .await
                 .unwrap_or(0);
             if count != team_size {
                 return Err((
@@ -2660,18 +2632,15 @@ pub async fn start_event_tournament(
             .map(|(id, name)| BracketEntry { id, name })
             .collect()
     } else {
-        let mut stmt = conn
-            .prepare(
-                "SELECT u.id, u.display_name FROM users u \
-                 JOIN event_participants ep ON ep.user_id = u.id WHERE ep.event_id = ?1",
-            )
-            .map_err(internal_error)?;
-        let rows = stmt
-            .query_map(params![event_id], |row| {
-                Ok(BracketEntry { id: row.get(0)?, name: row.get(1)? })
-            })
-            .map_err(internal_error)?;
-        rows.filter_map(|r| r.ok()).collect()
+        let rows: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT u.id, u.display_name FROM users u \
+             JOIN event_participants ep ON ep.user_id = u.id WHERE ep.event_id = $1",
+        )
+        .bind(event_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(internal_error)?;
+        rows.into_iter().map(|(id, name)| BracketEntry { id, name }).collect()
     };
 
     if entries.len() < 2 {
@@ -2702,78 +2671,81 @@ pub async fn start_event_tournament(
             (None, Some(b)) => Some(b.id),
             _ => None,
         };
-        conn.execute(
+        sqlx::query(
             "INSERT INTO event_matches (event_id, round, slot, entry_a_id, entry_b_id, winner_entry_id) \
-             VALUES (?1, 1, ?2, ?3, ?4, ?5)",
-            params![
-                event_id,
-                slot as i64,
-                a.as_ref().map(|e| e.id),
-                b.as_ref().map(|e| e.id),
-                winner_id
-            ],
+             VALUES ($1, 1, $2, $3, $4, $5)",
         )
+        .bind(event_id)
+        .bind(slot as i64)
+        .bind(a.as_ref().map(|e| e.id))
+        .bind(b.as_ref().map(|e| e.id))
+        .bind(winner_id)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
     }
     for round in 2..=rounds {
         let matches_in_round = bracket_size >> round;
         for slot in 0..matches_in_round {
-            conn.execute(
+            sqlx::query(
                 "INSERT INTO event_matches (event_id, round, slot, entry_a_id, entry_b_id, winner_entry_id) \
-                 VALUES (?1, ?2, ?3, NULL, NULL, NULL)",
-                params![event_id, round, slot as i64],
+                 VALUES ($1, $2, $3, NULL, NULL, NULL)",
             )
+            .bind(event_id)
+            .bind(round)
+            .bind(slot as i64)
+            .execute(&state.db)
+            .await
             .map_err(internal_error)?;
         }
     }
 
     if rounds >= 2 {
-        let mut stmt = conn
-            .prepare(
-                "SELECT slot, winner_entry_id FROM event_matches \
-                 WHERE event_id = ?1 AND round = 1 AND winner_entry_id IS NOT NULL",
-            )
-            .map_err(internal_error)?;
-        let byes: Vec<(i64, i64)> = stmt
-            .query_map(params![event_id], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(internal_error)?
-            .filter_map(|r| r.ok())
-            .collect();
+        let byes: Vec<(i64, i64)> = sqlx::query_as(
+            "SELECT slot, winner_entry_id FROM event_matches \
+             WHERE event_id = $1 AND round = 1 AND winner_entry_id IS NOT NULL",
+        )
+        .bind(event_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(internal_error)?;
         for (slot, winner_id) in byes {
             let next_slot = slot / 2;
             let column = if slot % 2 == 0 { "entry_a_id" } else { "entry_b_id" };
-            conn.execute(
-                &format!(
-                    "UPDATE event_matches SET {column} = ?1 WHERE event_id = ?2 AND round = 2 AND slot = ?3"
-                ),
-                params![winner_id, event_id, next_slot],
-            )
+            sqlx::query(&format!(
+                "UPDATE event_matches SET {column} = $1 WHERE event_id = $2 AND round = 2 AND slot = $3"
+            ))
+            .bind(winner_id)
+            .bind(event_id)
+            .bind(next_slot)
+            .execute(&state.db)
+            .await
             .map_err(internal_error)?;
         }
     }
 
     for entry_id in entry_ids {
-        for member_id in entry_member_ids(&conn, team_size, entry_id) {
+        for member_id in entry_member_ids(&state.db, team_size, entry_id).await {
             create_notification(
-                &conn,
+                &state.db,
                 member_id,
                 "tournament_started",
                 &format!("Das Turnier \"{event_title}\" hat begonnen — dein erstes Match steht fest"),
                 Some(event_id),
                 None,
-            );
+            )
+            .await;
         }
     }
 
-    load_bracket(&conn, event_id).map(Json)
+    load_bracket(&state.db, event_id).await.map(Json)
 }
 
 pub async fn get_event_bracket(
     State(state): State<AppState>,
     Path(event_id): Path<i64>,
 ) -> Result<Json<EventBracket>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    load_bracket(&conn, event_id).map(Json)
+    load_bracket(&state.db, event_id).await.map(Json)
 }
 
 pub async fn set_match_winner(
@@ -2782,95 +2754,108 @@ pub async fn set_match_winner(
     Path((event_id, match_id)): Path<(i64, i64)>,
     Json(req): Json<SetMatchWinner>,
 ) -> Result<Json<EventBracket>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let (host_user_id, team_size, event_title): (i64, i64, String) = conn
-        .query_row(
-            "SELECT host_user_id, team_size, title FROM events WHERE id = ?1",
-            params![event_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
+    let row = sqlx::query("SELECT host_user_id, team_size, title FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(&state.db)
+        .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    let host_user_id: i64 = row.try_get(0).map_err(internal_error)?;
+    let team_size: i64 = row.try_get(1).map_err(internal_error)?;
+    let event_title: String = row.try_get(2).map_err(internal_error)?;
     if host_user_id != user_id {
         return Err((
             StatusCode::FORBIDDEN,
             "Nur der Host kann Ergebnisse eintragen".to_string(),
         ));
     }
-    let (round, slot, entry_a_id, entry_b_id): (i64, i64, Option<i64>, Option<i64>) = conn
-        .query_row(
-            "SELECT round, slot, entry_a_id, entry_b_id FROM event_matches WHERE id = ?1 AND event_id = ?2",
-            params![match_id, event_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .map_err(|_| (StatusCode::NOT_FOUND, "Match nicht gefunden".to_string()))?;
+    let match_row = sqlx::query(
+        "SELECT round, slot, entry_a_id, entry_b_id FROM event_matches WHERE id = $1 AND event_id = $2",
+    )
+    .bind(match_id)
+    .bind(event_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|_| (StatusCode::NOT_FOUND, "Match nicht gefunden".to_string()))?;
+    let round: i64 = match_row.try_get(0).map_err(internal_error)?;
+    let slot: i64 = match_row.try_get(1).map_err(internal_error)?;
+    let entry_a_id: Option<i64> = match_row.try_get(2).map_err(internal_error)?;
+    let entry_b_id: Option<i64> = match_row.try_get(3).map_err(internal_error)?;
     if entry_a_id != Some(req.winner_entry_id) && entry_b_id != Some(req.winner_entry_id) {
         return Err((
             StatusCode::BAD_REQUEST,
             "Sieger ist kein Teilnehmer dieses Matches".to_string(),
         ));
     }
-    conn.execute(
-        "UPDATE event_matches SET winner_entry_id = ?1 WHERE id = ?2",
-        params![req.winner_entry_id, match_id],
-    )
-    .map_err(internal_error)?;
+    sqlx::query("UPDATE event_matches SET winner_entry_id = $1 WHERE id = $2")
+        .bind(req.winner_entry_id)
+        .bind(match_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
 
     let next_round = round + 1;
     let next_slot = slot / 2;
-    let exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM event_matches WHERE event_id = ?1 AND round = ?2 AND slot = ?3",
-            params![event_id, next_round, next_slot],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM event_matches WHERE event_id = $1 AND round = $2 AND slot = $3)",
+    )
+    .bind(event_id)
+    .bind(next_round)
+    .bind(next_slot)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
     if exists {
         let column = if slot % 2 == 0 { "entry_a_id" } else { "entry_b_id" };
-        conn.execute(
-            &format!(
-                "UPDATE event_matches SET {column} = ?1 WHERE event_id = ?2 AND round = ?3 AND slot = ?4"
-            ),
-            params![req.winner_entry_id, event_id, next_round, next_slot],
-        )
+        sqlx::query(&format!(
+            "UPDATE event_matches SET {column} = $1 WHERE event_id = $2 AND round = $3 AND slot = $4"
+        ))
+        .bind(req.winner_entry_id)
+        .bind(event_id)
+        .bind(next_round)
+        .bind(next_slot)
+        .execute(&state.db)
+        .await
         .map_err(internal_error)?;
     }
 
     if !exists {
         // No next-round match was created — this was the final, so the
         // winner(s) take the tournament.
-        for member_id in entry_member_ids(&conn, team_size, req.winner_entry_id) {
-            award_badge(&conn, member_id, "tournament_winner_first");
-            record_tournament_win(&conn, member_id, event_id);
+        for member_id in entry_member_ids(&state.db, team_size, req.winner_entry_id).await {
+            award_badge(&state.db, member_id, "tournament_winner_first").await;
+            record_tournament_win(&state.db, member_id, event_id).await;
         }
     }
 
     let winner_id = req.winner_entry_id;
     let loser_id = if entry_a_id == Some(winner_id) { entry_b_id } else { entry_a_id };
-    let winner_name = entry_display_name(&conn, team_size, winner_id);
-    for member_id in entry_member_ids(&conn, team_size, winner_id) {
+    let winner_name = entry_display_name(&state.db, team_size, winner_id).await;
+    for member_id in entry_member_ids(&state.db, team_size, winner_id).await {
         create_notification(
-            &conn,
+            &state.db,
             member_id,
             "match_won",
             &format!("Ihr habt euer Match in \"{event_title}\" gewonnen — weiter geht's!"),
             Some(event_id),
             None,
-        );
+        )
+        .await;
     }
     if let Some(loser_id) = loser_id {
-        for member_id in entry_member_ids(&conn, team_size, loser_id) {
+        for member_id in entry_member_ids(&state.db, team_size, loser_id).await {
             create_notification(
-                &conn,
+                &state.db,
                 member_id,
                 "match_lost",
                 &format!("{winner_name} hat euer Match in \"{event_title}\" gewonnen — ihr seid ausgeschieden"),
                 Some(event_id),
                 None,
-            );
+            )
+            .await;
         }
     }
 
-    load_bracket(&conn, event_id).map(Json)
+    load_bracket(&state.db, event_id).await.map(Json)
 }
 
 /// Public participant list for an event's detail page — seeing who's
@@ -2879,86 +2864,41 @@ pub async fn list_event_participants(
     State(state): State<AppState>,
     Path(event_id): Path<i64>,
 ) -> Result<Json<Vec<crate::models::UserSummary>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
-             JOIN event_participants ep ON ep.user_id = u.id \
-             WHERE ep.event_id = ?1 ORDER BY ep.joined_at ASC"
-        ))
-        .map_err(internal_error)?;
-    let participants = stmt
-        .query_map(params![event_id], row_to_user_summary)
-        .map_err(internal_error)?
-        .filter_map(|p| p.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {USER_SUMMARY_COLUMNS} FROM users u \
+         JOIN event_participants ep ON ep.user_id = u.id \
+         WHERE ep.event_id = $1 ORDER BY ep.joined_at ASC"
+    ))
+    .bind(event_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let participants = rows.iter().filter_map(|r| row_to_user_summary(r).ok()).collect();
     Ok(Json(participants))
 }
 
 // ---- notifications ----
 
-fn user_display_name(conn: &rusqlite::Connection, user_id: i64) -> String {
-    conn.query_row(
-        "SELECT display_name FROM users WHERE id = ?1",
-        params![user_id],
-        |row| row.get(0),
-    )
-    .unwrap_or_else(|_| "Jemand".to_string())
-}
-
-/// Records that `user_id` earned `badge_key`, if they haven't already
-/// (`UNIQUE(user_id, badge_key)` makes the insert idempotent), and notifies
-/// them — but only on the insert that actually happened, not on repeat
-/// calls for a badge they already hold (e.g. `check_host_beginner_badge`
-/// runs on every join, long after the badge was first earned). Best-effort:
-/// a failed award shouldn't roll back the join/match-result that triggered
-/// it, same philosophy as `create_notification`.
-fn award_badge(conn: &rusqlite::Connection, user_id: i64, badge_key: &str) {
-    let inserted = conn
-        .execute(
-            "INSERT OR IGNORE INTO user_badges (user_id, badge_key) VALUES (?1, ?2)",
-            params![user_id, badge_key],
-        )
-        .unwrap_or(0)
-        > 0;
-    if inserted {
-        if let Some(def) = find_badge(badge_key) {
-            create_notification(
-                conn,
-                user_id,
-                "badge_earned",
-                &format!("{} Du hast das Badge \"{}\" verdient!", def.icon, def.label),
-                None,
-                None,
-            );
-        }
-    }
-}
-
 /// Awards the host "host_beginner"/"host_pro" badges once an event they're
 /// hosting reaches 32/64 registered participants (counted per-user, so it
 /// applies the same way to team and solo events).
-fn check_host_beginner_badge(conn: &rusqlite::Connection, event_id: i64) {
-    let host_id: Option<i64> = conn
-        .query_row(
-            "SELECT host_user_id FROM events WHERE id = ?1",
-            params![event_id],
-            |row| row.get(0),
-        )
-        .ok();
+async fn check_host_beginner_badge(pool: &PgPool, event_id: i64) {
+    let host_id: Option<i64> = sqlx::query_scalar("SELECT host_user_id FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
     let Some(host_id) = host_id else { return };
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM event_participants WHERE event_id = ?1",
-            params![event_id],
-            |row| row.get(0),
-        )
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_participants WHERE event_id = $1")
+        .bind(event_id)
+        .fetch_one(pool)
+        .await
         .unwrap_or(0);
     if count >= 32 {
-        award_badge(conn, host_id, "host_beginner");
+        award_badge(pool, host_id, "host_beginner").await;
     }
     if count >= 64 {
-        award_badge(conn, host_id, "host_pro");
+        award_badge(pool, host_id, "host_pro").await;
     }
 }
 
@@ -2966,83 +2906,65 @@ fn check_host_beginner_badge(conn: &rusqlite::Connection, event_id: i64) {
 /// (or, for team events, every member) has won 5 distinct tournaments.
 /// Separate from `tournament_winner_first` so the count survives even
 /// though that badge itself only gets awarded once.
-fn record_tournament_win(conn: &rusqlite::Connection, user_id: i64, event_id: i64) {
-    let _ = conn.execute(
-        "INSERT OR IGNORE INTO tournament_wins (user_id, event_id) VALUES (?1, ?2)",
-        params![user_id, event_id],
-    );
-    let wins: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM tournament_wins WHERE user_id = ?1",
-            params![user_id],
-            |row| row.get(0),
-        )
+async fn record_tournament_win(pool: &PgPool, user_id: i64, event_id: i64) {
+    let _ = sqlx::query(
+        "INSERT INTO tournament_wins (user_id, event_id) VALUES ($1, $2) ON CONFLICT (user_id, event_id) DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(event_id)
+    .execute(pool)
+    .await;
+    let wins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tournament_wins WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
         .unwrap_or(0);
     if wins >= 5 {
-        award_badge(conn, user_id, "tournament_champion");
+        award_badge(pool, user_id, "tournament_champion").await;
     }
-}
-
-/// Inserts a notification for `user_id`. Failures are logged, not
-/// propagated — a missed notification shouldn't roll back the friend
-/// request / match result / etc. that triggered it.
-fn create_notification(
-    conn: &rusqlite::Connection,
-    user_id: i64,
-    kind: &str,
-    message: &str,
-    event_id: Option<i64>,
-    actor_user_id: Option<i64>,
-) {
-    let _ = conn.execute(
-        "INSERT INTO notifications (user_id, kind, message, event_id, actor_user_id) \
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![user_id, kind, message, event_id, actor_user_id],
-    );
 }
 
 /// Resolves the individual user ids behind a bracket entry — the entry
 /// itself for solo events, or every team member for team events. Used to
 /// fan a single tournament notification out to everyone it concerns.
-fn entry_member_ids(conn: &rusqlite::Connection, team_size: i64, entry_id: i64) -> Vec<i64> {
+async fn entry_member_ids(pool: &PgPool, team_size: i64, entry_id: i64) -> Vec<i64> {
     if team_size <= 1 {
         return vec![entry_id];
     }
-    let mut stmt = match conn.prepare(
-        "SELECT user_id FROM event_participants WHERE team_id = ?1",
-    ) {
-        Ok(stmt) => stmt,
-        Err(_) => return Vec::new(),
-    };
-    stmt.query_map(params![entry_id], |row| row.get(0))
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    sqlx::query_scalar("SELECT user_id FROM event_participants WHERE team_id = $1")
+        .bind(entry_id)
+        .fetch_all(pool)
+        .await
         .unwrap_or_default()
 }
 
 /// Resolves a bracket entry id to its display name — a team name for team
 /// events, a user's display name otherwise.
-fn entry_display_name(conn: &rusqlite::Connection, team_size: i64, entry_id: i64) -> String {
+async fn entry_display_name(pool: &PgPool, team_size: i64, entry_id: i64) -> String {
     let query = if team_size > 1 {
-        "SELECT name FROM event_teams WHERE id = ?1"
+        "SELECT name FROM event_teams WHERE id = $1"
     } else {
-        "SELECT display_name FROM users WHERE id = ?1"
+        "SELECT display_name FROM users WHERE id = $1"
     };
-    conn.query_row(query, params![entry_id], |row| row.get(0))
+    sqlx::query_scalar(query)
+        .bind(entry_id)
+        .fetch_one(pool)
+        .await
         .unwrap_or_else(|_| "Jemand".to_string())
 }
 
 const NOTIFICATION_COLUMNS: &str =
-    "id, kind, message, event_id, actor_user_id, is_read, created_at";
+    "id, kind, message, event_id, actor_user_id, is_read, created_at::TEXT";
 
-fn row_to_notification(row: &rusqlite::Row) -> rusqlite::Result<Notification> {
+fn row_to_notification(row: &PgRow) -> Result<Notification, sqlx::Error> {
     Ok(Notification {
-        id: row.get(0)?,
-        kind: row.get(1)?,
-        message: row.get(2)?,
-        event_id: row.get(3)?,
-        actor_user_id: row.get(4)?,
-        is_read: row.get(5)?,
-        created_at: row.get(6)?,
+        id: row.try_get(0)?,
+        kind: row.try_get(1)?,
+        message: row.try_get(2)?,
+        event_id: row.try_get(3)?,
+        actor_user_id: row.try_get(4)?,
+        is_read: row.try_get(5)?,
+        created_at: row.try_get(6)?,
     })
 }
 
@@ -3050,18 +2972,15 @@ pub async fn list_notifications(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
 ) -> Result<Json<Vec<Notification>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {NOTIFICATION_COLUMNS} FROM notifications \
-             WHERE user_id = ?1 ORDER BY created_at DESC LIMIT 50"
-        ))
-        .map_err(internal_error)?;
-    let notifications = stmt
-        .query_map(params![user_id], row_to_notification)
-        .map_err(internal_error)?
-        .filter_map(|n| n.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {NOTIFICATION_COLUMNS} FROM notifications \
+         WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let notifications = rows.iter().filter_map(|n| row_to_notification(n).ok()).collect();
     Ok(Json(notifications))
 }
 
@@ -3070,12 +2989,12 @@ pub async fn mark_notification_read(
     AuthUser(user_id): AuthUser,
     Path(notification_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
-        "UPDATE notifications SET is_read = 1 WHERE id = ?1 AND user_id = ?2",
-        params![notification_id, user_id],
-    )
-    .map_err(internal_error)?;
+    sqlx::query("UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2")
+        .bind(notification_id)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -3083,28 +3002,27 @@ pub async fn mark_all_notifications_read(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
 ) -> Result<StatusCode, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    conn.execute(
-        "UPDATE notifications SET is_read = 1 WHERE user_id = ?1 AND is_read = 0",
-        params![user_id],
-    )
-    .map_err(internal_error)?;
+    sqlx::query("UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND NOT is_read")
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn row_to_direct_message(row: &rusqlite::Row) -> rusqlite::Result<crate::models::DirectMessage> {
+fn row_to_direct_message(row: &PgRow) -> Result<crate::models::DirectMessage, sqlx::Error> {
     Ok(crate::models::DirectMessage {
-        id: row.get(0)?,
-        sender_id: row.get(1)?,
-        sender_display_name: row.get(2)?,
-        recipient_id: row.get(3)?,
-        body: row.get(4)?,
-        created_at: row.get(5)?,
+        id: row.try_get(0)?,
+        sender_id: row.try_get(1)?,
+        sender_display_name: row.try_get(2)?,
+        recipient_id: row.try_get(3)?,
+        body: row.try_get(4)?,
+        created_at: row.try_get(5)?,
     })
 }
 
 const DIRECT_MESSAGE_COLUMNS: &str = "direct_messages.id, direct_messages.sender_id, \
-    users.display_name, direct_messages.recipient_id, direct_messages.body, direct_messages.created_at";
+    users.display_name, direct_messages.recipient_id, direct_messages.body, direct_messages.created_at::TEXT";
 
 /// Full DM history between the caller and `friend_id`, oldest first. Only
 /// accepted friends can message each other — mirrors the friend-request
@@ -3114,27 +3032,25 @@ pub async fn list_direct_messages(
     AuthUser(user_id): AuthUser,
     Path(friend_id): Path<i64>,
 ) -> Result<Json<Vec<crate::models::DirectMessage>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    if !are_friends(&conn, user_id, friend_id) {
+    if !are_friends(&state.db, user_id, friend_id).await {
         return Err((
             StatusCode::FORBIDDEN,
             "Ihr müsst befreundet sein, um euch Nachrichten zu schreiben".to_string(),
         ));
     }
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {DIRECT_MESSAGE_COLUMNS} FROM direct_messages \
-             JOIN users ON users.id = direct_messages.sender_id \
-             WHERE (direct_messages.sender_id = ?1 AND direct_messages.recipient_id = ?2) \
-                OR (direct_messages.sender_id = ?2 AND direct_messages.recipient_id = ?1) \
-             ORDER BY direct_messages.created_at ASC"
-        ))
-        .map_err(internal_error)?;
-    let messages = stmt
-        .query_map(params![user_id, friend_id], row_to_direct_message)
-        .map_err(internal_error)?
-        .filter_map(|m| m.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {DIRECT_MESSAGE_COLUMNS} FROM direct_messages \
+         JOIN users ON users.id = direct_messages.sender_id \
+         WHERE (direct_messages.sender_id = $1 AND direct_messages.recipient_id = $2) \
+            OR (direct_messages.sender_id = $2 AND direct_messages.recipient_id = $1) \
+         ORDER BY direct_messages.created_at ASC"
+    ))
+    .bind(user_id)
+    .bind(friend_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let messages = rows.iter().filter_map(|m| row_to_direct_message(m).ok()).collect();
     Ok(Json(messages))
 }
 
@@ -3155,63 +3071,70 @@ pub async fn send_direct_message(
         ));
     }
 
-    let conn = state.db.lock().map_err(internal_error)?;
-    if !are_friends(&conn, user_id, friend_id) {
+    if !are_friends(&state.db, user_id, friend_id).await {
         return Err((
             StatusCode::FORBIDDEN,
             "Ihr müsst befreundet sein, um euch Nachrichten zu schreiben".to_string(),
         ));
     }
-    conn.execute(
-        "INSERT INTO direct_messages (sender_id, recipient_id, body) VALUES (?1, ?2, ?3)",
-        params![user_id, friend_id, body],
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO direct_messages (sender_id, recipient_id, body) VALUES ($1, $2, $3) RETURNING id",
     )
+    .bind(user_id)
+    .bind(friend_id)
+    .bind(&body)
+    .fetch_one(&state.db)
+    .await
     .map_err(internal_error)?;
-    let id = conn.last_insert_rowid();
 
-    conn.query_row(
-        &format!(
-            "SELECT {DIRECT_MESSAGE_COLUMNS} FROM direct_messages \
-             JOIN users ON users.id = direct_messages.sender_id \
-             WHERE direct_messages.id = ?1"
-        ),
-        params![id],
-        row_to_direct_message,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    let row = sqlx::query(&format!(
+        "SELECT {DIRECT_MESSAGE_COLUMNS} FROM direct_messages \
+         JOIN users ON users.id = direct_messages.sender_id \
+         WHERE direct_messages.id = $1"
+    ))
+    .bind(id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(internal_error)?;
+    row_to_direct_message(&row).map(Json).map_err(internal_error)
 }
 
-fn row_to_event_message(row: &rusqlite::Row) -> rusqlite::Result<crate::models::EventMessage> {
+fn row_to_event_message(row: &PgRow) -> Result<crate::models::EventMessage, sqlx::Error> {
     Ok(crate::models::EventMessage {
-        id: row.get(0)?,
-        event_id: row.get(1)?,
-        sender_id: row.get(2)?,
-        sender_display_name: row.get(3)?,
-        body: row.get(4)?,
-        created_at: row.get(5)?,
+        id: row.try_get(0)?,
+        event_id: row.try_get(1)?,
+        sender_id: row.try_get(2)?,
+        sender_display_name: row.try_get(3)?,
+        body: row.try_get(4)?,
+        created_at: row.try_get(5)?,
     })
 }
 
 const EVENT_MESSAGE_COLUMNS: &str = "event_messages.id, event_messages.event_id, \
-    event_messages.sender_id, users.display_name, event_messages.body, event_messages.created_at";
+    event_messages.sender_id, users.display_name, event_messages.body, event_messages.created_at::TEXT";
 
 /// True if `user_id` hosts `event_id` or is a registered participant —
 /// the gate for reading/posting in that event's chat.
-fn is_event_member(conn: &rusqlite::Connection, event_id: i64, user_id: i64) -> bool {
-    conn.query_row(
-        "SELECT 1 FROM events WHERE id = ?1 AND host_user_id = ?2",
-        params![event_id, user_id],
-        |_| Ok(()),
+async fn is_event_member(pool: &PgPool, event_id: i64, user_id: i64) -> bool {
+    let is_host: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM events WHERE id = $1 AND host_user_id = $2)",
     )
-    .is_ok()
-        || conn
-            .query_row(
-                "SELECT 1 FROM event_participants WHERE event_id = ?1 AND user_id = ?2",
-                params![event_id, user_id],
-                |_| Ok(()),
-            )
-            .is_ok()
+    .bind(event_id)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+    if is_host {
+        return true;
+    }
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM event_participants WHERE event_id = $1 AND user_id = $2)",
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false)
 }
 
 pub async fn list_event_messages(
@@ -3219,25 +3142,22 @@ pub async fn list_event_messages(
     AuthUser(user_id): AuthUser,
     Path(event_id): Path<i64>,
 ) -> Result<Json<Vec<crate::models::EventMessage>>, ApiError> {
-    let conn = state.db.lock().map_err(internal_error)?;
-    if !is_event_member(&conn, event_id, user_id) {
+    if !is_event_member(&state.db, event_id, user_id).await {
         return Err((
             StatusCode::FORBIDDEN,
             "Nur Teilnehmer und der Host sehen den Event-Chat".to_string(),
         ));
     }
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {EVENT_MESSAGE_COLUMNS} FROM event_messages \
-             JOIN users ON users.id = event_messages.sender_id \
-             WHERE event_messages.event_id = ?1 ORDER BY event_messages.created_at ASC"
-        ))
-        .map_err(internal_error)?;
-    let messages = stmt
-        .query_map(params![event_id], row_to_event_message)
-        .map_err(internal_error)?
-        .filter_map(|m| m.ok())
-        .collect();
+    let rows = sqlx::query(&format!(
+        "SELECT {EVENT_MESSAGE_COLUMNS} FROM event_messages \
+         JOIN users ON users.id = event_messages.sender_id \
+         WHERE event_messages.event_id = $1 ORDER BY event_messages.created_at ASC"
+    ))
+    .bind(event_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let messages = rows.iter().filter_map(|m| row_to_event_message(m).ok()).collect();
     Ok(Json(messages))
 }
 
@@ -3258,29 +3178,30 @@ pub async fn send_event_message(
         ));
     }
 
-    let conn = state.db.lock().map_err(internal_error)?;
-    if !is_event_member(&conn, event_id, user_id) {
+    if !is_event_member(&state.db, event_id, user_id).await {
         return Err((
             StatusCode::FORBIDDEN,
             "Nur Teilnehmer und der Host können im Event-Chat schreiben".to_string(),
         ));
     }
-    conn.execute(
-        "INSERT INTO event_messages (event_id, sender_id, body) VALUES (?1, ?2, ?3)",
-        params![event_id, user_id, body],
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO event_messages (event_id, sender_id, body) VALUES ($1, $2, $3) RETURNING id",
     )
+    .bind(event_id)
+    .bind(user_id)
+    .bind(&body)
+    .fetch_one(&state.db)
+    .await
     .map_err(internal_error)?;
-    let id = conn.last_insert_rowid();
 
-    conn.query_row(
-        &format!(
-            "SELECT {EVENT_MESSAGE_COLUMNS} FROM event_messages \
-             JOIN users ON users.id = event_messages.sender_id \
-             WHERE event_messages.id = ?1"
-        ),
-        params![id],
-        row_to_event_message,
-    )
-    .map(Json)
-    .map_err(internal_error)
+    let row = sqlx::query(&format!(
+        "SELECT {EVENT_MESSAGE_COLUMNS} FROM event_messages \
+         JOIN users ON users.id = event_messages.sender_id \
+         WHERE event_messages.id = $1"
+    ))
+    .bind(id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(internal_error)?;
+    row_to_event_message(&row).map(Json).map_err(internal_error)
 }

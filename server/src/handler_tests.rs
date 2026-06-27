@@ -42,9 +42,9 @@ fn bearer_headers(state: &AppState, user_id: i64) -> HeaderMap {
 
 // ---- auth ----
 
-#[tokio::test]
-async fn login_succeeds_with_correct_password_and_fails_with_wrong_one() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn login_succeeds_with_correct_password_and_fails_with_wrong_one(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     register_user(&state, "a@test.de", "correct-password", "Alice").await;
 
     let ok = login(
@@ -68,9 +68,9 @@ async fn login_succeeds_with_correct_password_and_fails_with_wrong_one() {
     assert_eq!(err.unwrap_err().0, StatusCode::UNAUTHORIZED);
 }
 
-#[tokio::test]
-async fn admin_emails_grant_role_on_register_and_survive_relogin_without_relisting() {
-    let mut state = AppState::for_tests();
+#[sqlx::test]
+async fn admin_emails_grant_role_on_register_and_survive_relogin_without_relisting(pool: sqlx::PgPool) {
+    let mut state = AppState::for_tests(pool);
     state.admin_emails = vec!["boss@test.de".to_string()];
 
     let user = register_user(&state, "boss@test.de", "password123", "Boss").await;
@@ -95,9 +95,9 @@ async fn admin_emails_grant_role_on_register_and_survive_relogin_without_relisti
 
 // ---- catalog moderation ----
 
-#[tokio::test]
-async fn new_games_are_pending_and_hidden_from_public_catalog_until_approved() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn new_games_are_pending_and_hidden_from_public_catalog_until_approved(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
 
     let game = create_game(
@@ -159,9 +159,9 @@ async fn new_games_are_pending_and_hidden_from_public_catalog_until_approved() {
 
 // ---- friends ----
 
-#[tokio::test]
-async fn friend_request_accept_and_remove_round_trip() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn friend_request_accept_and_remove_round_trip(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
     let bob = register_user(&state, "bob@test.de", "password123", "Bob").await;
 
@@ -201,9 +201,9 @@ async fn friend_request_accept_and_remove_round_trip() {
     assert!(alice_friends_after.iter().all(|f| f.id != bob.id));
 }
 
-#[tokio::test]
-async fn cannot_friend_request_yourself() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn cannot_friend_request_yourself(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let alice = register_user(&state, "alice2@test.de", "password123", "Alice").await;
 
     let result = send_friend_request(State(state.clone()), AuthUser(alice.id), Path(alice.id))
@@ -213,9 +213,9 @@ async fn cannot_friend_request_yourself() {
 
 // ---- privacy ----
 
-#[tokio::test]
-async fn hidden_profile_is_excluded_from_search_but_visible_to_friends() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn hidden_profile_is_excluded_from_search_but_visible_to_friends(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let alice = register_user(&state, "alice3@test.de", "password123", "Alice").await;
     let hidden = register_user(&state, "hidden@test.de", "password123", "HiddenPerson").await;
 
@@ -262,9 +262,9 @@ async fn hidden_profile_is_excluded_from_search_but_visible_to_friends() {
 
 // ---- admin role management ----
 
-#[tokio::test]
-async fn promote_and_demote_user_toggles_admin_flag() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn promote_and_demote_user_toggles_admin_flag(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let target = register_user(&state, "target@test.de", "password123", "Target").await;
     assert!(!target.is_admin);
 
@@ -299,9 +299,9 @@ async fn promote_and_demote_user_toggles_admin_flag() {
     assert!(!admin_list_after.iter().find(|u| u.id == target.id).unwrap().is_admin);
 }
 
-#[tokio::test]
-async fn admin_cannot_demote_themselves() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn admin_cannot_demote_themselves(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let admin = register_user(&state, "selfadmin@test.de", "password123", "SelfAdmin").await;
     promote_user(State(state.clone()), AdminUser(999), Path(admin.id))
         .await
@@ -313,9 +313,9 @@ async fn admin_cannot_demote_themselves() {
 
 // ---- notifications ----
 
-#[tokio::test]
-async fn friend_request_and_accept_each_notify_the_other_party() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn friend_request_and_accept_each_notify_the_other_party(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let alice = register_user(&state, "nalice@test.de", "password123", "Alice").await;
     let bob = register_user(&state, "nbob@test.de", "password123", "Bob").await;
 
@@ -369,9 +369,9 @@ async fn friend_request_and_accept_each_notify_the_other_party() {
     assert!(alice_final.iter().all(|n| n.is_read));
 }
 
-#[tokio::test]
-async fn match_result_notifies_both_sides_and_team_join_notifies_teammates() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn match_result_notifies_both_sides_and_team_join_notifies_teammates(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let host = register_user(&state, "mnhost@test.de", "password123", "Host").await;
     let a1 = register_user(&state, "mna1@test.de", "password123", "A1").await;
     let a2 = register_user(&state, "mna2@test.de", "password123", "A2").await;
@@ -462,9 +462,9 @@ async fn match_result_notifies_both_sides_and_team_join_notifies_teammates() {
     assert!(b1_final.iter().any(|n| n.kind == "match_lost"));
 }
 
-#[tokio::test]
-async fn deleting_an_event_cleans_up_participants_teams_matches_and_notifications() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn deleting_an_event_cleans_up_participants_teams_matches_and_notifications(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let host = register_user(&state, "delhost@test.de", "password123", "Host").await;
     let p1 = register_user(&state, "del1@test.de", "password123", "P1").await;
     let p2 = register_user(&state, "del2@test.de", "password123", "P2").await;
@@ -545,9 +545,9 @@ fn new_event_req(
     }
 }
 
-#[tokio::test]
-async fn knockout_bracket_handles_byes_and_propagates_winners_to_the_final() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn knockout_bracket_handles_byes_and_propagates_winners_to_the_final(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let host = register_user(&state, "host@test.de", "password123", "Host").await;
     let p1 = register_user(&state, "p1@test.de", "password123", "P1").await;
     let p2 = register_user(&state, "p2@test.de", "password123", "P2").await;
@@ -636,9 +636,9 @@ async fn knockout_bracket_handles_byes_and_propagates_winners_to_the_final() {
     );
 }
 
-#[tokio::test]
-async fn team_event_blocks_direct_join_and_requires_full_teams_to_start() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn team_event_blocks_direct_join_and_requires_full_teams_to_start(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let host = register_user(&state, "thost@test.de", "password123", "Host").await;
     let a1 = register_user(&state, "a1@test.de", "password123", "A1").await;
     let a2 = register_user(&state, "a2@test.de", "password123", "A2").await;
@@ -707,9 +707,9 @@ async fn team_event_blocks_direct_join_and_requires_full_teams_to_start() {
     assert_eq!(overfull.unwrap_err().0, StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
-async fn max_entries_caps_join_event() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn max_entries_caps_join_event(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let host = register_user(&state, "caphost@test.de", "password123", "Host").await;
     let p1 = register_user(&state, "cap1@test.de", "password123", "P1").await;
     let p2 = register_user(&state, "cap2@test.de", "password123", "P2").await;
@@ -736,9 +736,9 @@ async fn max_entries_caps_join_event() {
     assert_eq!(result.unwrap_err().0, StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
-async fn private_event_requires_code_and_is_hidden_from_strangers() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn private_event_requires_code_and_is_hidden_from_strangers(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let host = register_user(&state, "phost@test.de", "password123", "Host").await;
     let joiner = register_user(&state, "pjoiner@test.de", "password123", "Joiner").await;
     let stranger = register_user(&state, "pstranger@test.de", "password123", "Stranger").await;
@@ -822,9 +822,9 @@ async fn private_event_requires_code_and_is_hidden_from_strangers() {
     assert_eq!(found.id, created.id);
 }
 
-#[tokio::test]
-async fn only_host_can_set_match_winner_and_winner_must_be_in_the_match() {
-    let state = AppState::for_tests();
+#[sqlx::test]
+async fn only_host_can_set_match_winner_and_winner_must_be_in_the_match(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool);
     let host = register_user(&state, "whost@test.de", "password123", "Host").await;
     let p1 = register_user(&state, "w1@test.de", "password123", "W1").await;
     let p2 = register_user(&state, "w2@test.de", "password123", "W2").await;
@@ -887,11 +887,11 @@ fn rate_limiter_blocks_after_max_requests_within_window() {
 
 // ---- AdminUser extractor: real HTTP-header-based access control ----
 
-#[tokio::test]
-async fn admin_extractor_rejects_non_admin_and_accepts_admin() {
+#[sqlx::test]
+async fn admin_extractor_rejects_non_admin_and_accepts_admin(pool: sqlx::PgPool) {
     use axum::extract::FromRequestParts;
 
-    let state = AppState::for_tests();
+    let state = AppState::for_tests(pool);
     let regular = register_user(&state, "regular@test.de", "password123", "Regular").await;
     let admin = register_user(&state, "realadmin@test.de", "password123", "RealAdmin").await;
     promote_user(State(state.clone()), AdminUser(999), Path(admin.id))

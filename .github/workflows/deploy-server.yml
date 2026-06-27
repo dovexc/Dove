@@ -1,0 +1,83 @@
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - ".github/workflows/deploy-server.yml"
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: dove
+          POSTGRES_USER: dove
+          POSTGRES_PASSWORD: dove_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://dove:dove_test_password@localhost:5432/dove
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - name: cargo test
+        working-directory: server
+        run: cargo test --release
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+      - name: cargo build --release
+        working-directory: server
+        run: cargo build --release
+
+      - name: Set up deploy key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload binary + migrations
+        run: |
+          scp -i ~/.ssh/deploy_key server/target/release/dove-server \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/dove/server/dove-server.new"
+          scp -i ~/.ssh/deploy_key -r server/migrations \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/dove/server/migrations.new"
+
+      - name: Swap in and restart
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
+            set -e
+            systemctl stop dove-server
+            mv /opt/dove/server/dove-server.new /opt/dove/server/dove-server
+            rm -rf /opt/dove/server/migrations
+            mv /opt/dove/server/migrations.new /opt/dove/server/migrations
+            chown -R dove:dove /opt/dove/server
+            chmod +x /opt/dove/server/dove-server
+            systemctl start dove-server
+            sleep 2
+            systemctl is-active --quiet dove-server
+          '
+
+      - name: Smoke test
+        run: curl -sf https://api.dovexc.com/api/games > /dev/null

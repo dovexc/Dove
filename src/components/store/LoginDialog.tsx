@@ -24,8 +24,11 @@ export function LoginDialog({ onClose }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (token) onClose();
+  }, [token, onClose]);
+
   if (token) {
-    onClose();
     return null;
   }
 

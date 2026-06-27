@@ -2,7 +2,9 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { Badge, ProfileScreenshot, StoreUser } from "./types";
 
-const API_BASE = "http://127.0.0.1:4000";
+// Set VITE_API_BASE at build time (e.g. in a `.env.production`) to point a
+// release build at the deployed backend instead of localhost.
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:4000";
 const TOKEN_STORAGE_KEY = "dove_store_token";
 
 interface AuthState {
@@ -95,8 +97,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const response = await fetch(`${API_BASE}/api/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (response.status === 401) {
-        // Token actually rejected (expired/invalid) — the session is gone.
+      if (response.status === 401 || response.status === 404) {
+        // Token rejected (expired/invalid) or the user it points to no
+        // longer exists (e.g. a dev database reset) — the session is gone.
         localStorage.removeItem(TOKEN_STORAGE_KEY);
         set({ token: null, user: null });
         return;

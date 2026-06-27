@@ -1,0 +1,21 @@
+# Production Postgres on the Hetzner VPS. Copy to /opt/dove/ and run
+# `docker compose -f docker-compose.postgres.yml up -d`.
+#
+# Postgres is bound to localhost only — it's reached over the docker0
+# bridge / loopback by the dove-server systemd unit, never exposed
+# externally. The Hetzner Cloud Firewall should only allow 80/443 in.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dove
+      POSTGRES_USER: dove
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - dove_pg_data:/var/lib/postgresql/data
+
+volumes:
+  dove_pg_data:

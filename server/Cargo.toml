@@ -8,7 +8,7 @@ axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.40.1", features = ["bundled"] }
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "macros", "migrate", "chrono"] }
 jsonwebtoken = "9"
 argon2 = "0.5"
 rand_core = { version = "0.6", features = ["getrandom"] }

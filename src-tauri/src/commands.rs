@@ -513,7 +513,12 @@ fn watch_process_under_dir(
     set_remote_playing_status(&auth_token, None);
 }
 
-const STORE_API_BASE: &str = "http://127.0.0.1:4000";
+// Set DOVE_API_BASE at build time to point a release build at the deployed
+// backend instead of localhost (mirrors VITE_API_BASE on the frontend side).
+const STORE_API_BASE: &str = match option_env!("DOVE_API_BASE") {
+    Some(url) => url,
+    None => "http://127.0.0.1:4000",
+};
 const PAUSED_SENTINEL: &str = "__paused__";
 
 /// Walks a directory recursively and returns every regular file found.

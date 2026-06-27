@@ -1,0 +1,22 @@
+[Unit]
+Description=Dove backend (Axum + Postgres)
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=dove
+WorkingDirectory=/opt/dove/server
+EnvironmentFile=/opt/dove/server/.env
+ExecStart=/opt/dove/server/dove-server
+Restart=on-failure
+RestartSec=5
+
+# Hardening — the service only needs its own working dir and the uploads it writes there.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/dove/server/data
+
+[Install]
+WantedBy=multi-user.target

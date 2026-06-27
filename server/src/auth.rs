@@ -96,13 +96,11 @@ impl FromRequestParts<AppState> for AuthUser {
 
         // Every authenticated request counts as activity — cheap presence
         // tracking without a dedicated heartbeat endpoint. Best-effort: a
-        // lock failure here shouldn't block the actual request.
-        if let Ok(conn) = state.db.lock() {
-            let _ = conn.execute(
-                "UPDATE users SET last_seen_at = datetime('now') WHERE id = ?1",
-                rusqlite::params![user_id],
-            );
-        }
+        // failure here shouldn't block the actual request.
+        let _ = sqlx::query("UPDATE users SET last_seen_at = now() WHERE id = $1")
+            .bind(user_id)
+            .execute(&state.db)
+            .await;
 
         Ok(AuthUser(user_id))
     }
@@ -123,15 +121,10 @@ impl FromRequestParts<AppState> for AdminUser {
     ) -> Result<Self, Self::Rejection> {
         let AuthUser(user_id) = AuthUser::from_request_parts(parts, state).await?;
 
-        let is_admin: bool = state
-            .db
-            .lock()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .query_row(
-                "SELECT is_admin FROM users WHERE id = ?1",
-                [user_id],
-                |row| row.get(0),
-            )
+        let is_admin: bool = sqlx::query_scalar("SELECT is_admin FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&state.db)
+            .await
             .unwrap_or(false);
 
         if !is_admin {
