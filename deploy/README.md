@@ -57,6 +57,9 @@ DOVE_API_BASE=https://api.dovexc.com npm run tauri build
 ```
 
 ## Redeploying after a code change
+Push to `main` — `.github/workflows/deploy-server.yml` tests against a
+Postgres service container, builds the release binary, and deploys it to
+the VPS automatically. For a one-off manual deploy:
 ```bash
 cd server && cargo build --release
 scp target/release/dove-server root@<vps-ip>:/opt/dove/server/dove-server.new
@@ -66,4 +69,25 @@ ssh root@<vps-ip> '
   systemctl start dove-server
 '
 ```
-(This manual loop is the placeholder until the GitHub Actions CI/CD step is built.)
+
+## Backups
+`dove-backup.timer` runs daily at 03:30 UTC, dumping Postgres
+(`docker exec dove-postgres-1 pg_dump`) and uploading it gzip-compressed to
+the **private** `dove-backups` R2 bucket (`postgres/` prefix) — never the
+public `dove-assets` bucket, which is served at `cdn.dovexc.com`. A bucket
+lifecycle rule expires backups after 30 days.
+
+Setup on a fresh VPS:
+```bash
+apt-get install -y awscli
+cp deploy/backup.sh /opt/dove/backup.sh && chmod +x /opt/dove/backup.sh
+cp deploy/dove-backup.service /etc/systemd/system/
+cp deploy/dove-backup.timer /etc/systemd/system/
+# /opt/dove/backup.env needs AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+# (same R2 token as DOVE_R2_ACCESS_KEY_ID/SECRET in server/.env, just
+# renamed to what awscli expects) and DOVE_R2_ACCOUNT_ID.
+systemctl daemon-reload
+systemctl enable --now dove-backup.timer
+```
+
+Restore: `gunzip -c dove-backup-<ts>.sql.gz | docker exec -i dove-postgres-1 psql -U dove dove`

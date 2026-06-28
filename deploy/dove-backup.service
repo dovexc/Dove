@@ -1,0 +1,8 @@
+[Unit]
+Description=Dove Postgres backup to R2
+After=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/opt/dove/backup.env
+ExecStart=/opt/dove/backup.sh
