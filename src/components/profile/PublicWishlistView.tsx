@@ -21,9 +21,9 @@ interface Props {
 export function PublicWishlistView({ ownerName, games, onBack }: Props) {
   const t = useT();
   const library = useCatalogStore((s) => s.library);
-  const purchaseGame = useCatalogStore((s) => s.purchaseGame);
   const purchasingId = useCatalogStore((s) => s.purchasingId);
   const openGameDetail = useCatalogStore((s) => s.openGameDetail);
+  const openCheckout = useCatalogStore((s) => s.openCheckout);
   const detailGame = useCatalogStore((s) => s.detailGame);
   const authUser = useAuthStore((s) => s.user);
   const [ownedIds] = useState(() => new Set(library.map((g) => g.id)));
@@ -92,7 +92,7 @@ export function PublicWishlistView({ ownerName, games, onBack }: Props) {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          purchaseGame(game.id);
+                          openCheckout(game);
                         }}
                         disabled={purchasingId === game.id}
                         className="rounded bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
@@ -113,7 +113,7 @@ export function PublicWishlistView({ ownerName, games, onBack }: Props) {
           owned={ownedIds.has(detailGame.id)}
           isPublisher={authUser?.id === detailGame.publisher_user_id}
           purchasing={purchasingId === detailGame.id}
-          onPurchase={() => purchaseGame(detailGame.id)}
+          onPurchase={() => openCheckout(detailGame)}
         />
       )}
     </div>

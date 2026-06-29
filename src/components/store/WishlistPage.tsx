@@ -20,9 +20,9 @@ export function WishlistPage({ onClose }: Props) {
   const library = useCatalogStore((s) => s.library);
   const fetchWishlist = useCatalogStore((s) => s.fetchWishlist);
   const removeFromWishlist = useCatalogStore((s) => s.removeFromWishlist);
-  const purchaseGame = useCatalogStore((s) => s.purchaseGame);
   const purchasingId = useCatalogStore((s) => s.purchasingId);
   const openGameDetail = useCatalogStore((s) => s.openGameDetail);
+  const openCheckout = useCatalogStore((s) => s.openCheckout);
   const detailGame = useCatalogStore((s) => s.detailGame);
   const authUser = useAuthStore((s) => s.user);
 
@@ -109,7 +109,7 @@ export function WishlistPage({ onClose }: Props) {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        purchaseGame(game.id);
+                        openCheckout(game);
                       }}
                       disabled={purchasingId === game.id}
                       className="rounded bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
@@ -129,7 +129,7 @@ export function WishlistPage({ onClose }: Props) {
           owned={ownedIds.has(detailGame.id)}
           isPublisher={authUser?.id === detailGame.publisher_user_id}
           purchasing={purchasingId === detailGame.id}
-          onPurchase={() => purchaseGame(detailGame.id)}
+          onPurchase={() => openCheckout(detailGame)}
         />
       )}
     </div>

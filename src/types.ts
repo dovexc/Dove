@@ -242,6 +242,29 @@ export interface StorageUsage {
   quota_bytes: number;
 }
 
+export interface TournamentPayout {
+  id: number;
+  event_id: number;
+  event_title: string;
+  user_id: number;
+  placement: 1 | 2;
+  amount_cents: number;
+  status: "pending" | "paid";
+  created_at: string;
+}
+
+export interface Order {
+  id: number;
+  user_id: number;
+  catalog_game_id: number;
+  catalog_game_title: string;
+  amount_cents: number;
+  status: "pending" | "paid" | "failed";
+  stripe_payment_intent_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DirectMessage {
   id: number;
   sender_id: number;

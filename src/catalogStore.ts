@@ -7,6 +7,7 @@ import type {
   GameScreenshot,
   GameVersionNote,
   NewCatalogGame,
+  Order,
   StorageUsage,
 } from "./types";
 
@@ -53,6 +54,9 @@ interface CatalogState {
   detailChangelog: GameVersionNote[];
   detailLoading: boolean;
   checkoutGame: CatalogGame | null;
+  orders: Order[];
+  ordersLoading: boolean;
+  fetchOrders: () => Promise<void>;
   fetchCatalog: () => Promise<void>;
   fetchLibrary: () => Promise<void>;
   fetchWishlist: () => Promise<void>;
@@ -101,6 +105,25 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   detailChangelog: [],
   detailLoading: false,
   checkoutGame: null,
+  orders: [],
+  ordersLoading: false,
+
+  fetchOrders: async () => {
+    const headers = getAuthHeader();
+    if (!headers.Authorization) {
+      set({ orders: [] });
+      return;
+    }
+    set({ ordersLoading: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/me/orders`, { headers });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const orders: Order[] = await response.json();
+      set({ orders, ordersLoading: false });
+    } catch (e) {
+      set({ error: String(e), ordersLoading: false });
+    }
+  },
 
   fetchCatalog: async () => {
     set({ loading: true, error: null });

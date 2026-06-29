@@ -11,7 +11,7 @@ use crate::badges::{find_badge, Badge};
 use crate::models::{
     AuthResponse, BracketEntry, CatalogGame, CloudSave, EventBracket, EventMatch, EventTeam,
     GameEvent, GameReview, GameScreenshot, GameVersionNote, ImageUpload, LoginRequest,
-    NewCatalogGame, NewEventTeam, NewGameEvent, NewGameReview, NewGameVersionNote, Notification,
+    NewCatalogGame, NewEventTeam, NewGameEvent, NewGameReview, NewGameVersionNote, Notification, Order,
     ProfileScreenshot, PublicProfile, RegisterRequest, SetBadgeRequest, SetMatchWinner,
     SetPlayingRequest, UpdateProfileRequest, User,
 };
@@ -20,8 +20,12 @@ use crate::storage::Storage;
 
 pub type ApiError = (StatusCode, String);
 
+/// Logs the underlying error (so it shows up in `journalctl`/CI logs on the
+/// server) and returns a generic 500 to the client instead of leaking
+/// internals like SQL error text in the response body.
 fn internal_error<E: std::fmt::Display>(e: E) -> ApiError {
-    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    tracing::error!(error = %e, "internal error");
+    (StatusCode::INTERNAL_SERVER_ERROR, "Interner Serverfehler".to_string())
 }
 
 fn row_to_user(row: &PgRow) -> Result<User, sqlx::Error> {
@@ -301,6 +305,143 @@ pub async fn change_password(
         .execute(&state.db)
         .await
         .map_err(internal_error)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// DSGVO Art. 15/20 data export: everything tied to the account that the
+/// user themselves entered or accumulated — profile, purchases, library,
+/// wishlist, reviews and badges. Excludes other users' data (e.g. who they
+/// are friends with) since that's a third party's personal data too.
+pub async fn export_my_data(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = fetch_user(&state.db, user_id).await.map_err(internal_error)?;
+
+    let order_rows = sqlx::query(&format!(
+        "SELECT {ORDER_COLUMNS} FROM orders \
+         JOIN catalog_games ON catalog_games.id = orders.catalog_game_id \
+         WHERE orders.user_id = $1 ORDER BY orders.created_at DESC"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let orders: Vec<Order> = order_rows.iter().filter_map(|r| row_to_order(r).ok()).collect();
+
+    let library_rows = sqlx::query(&format!(
+        "SELECT {GAME_COLUMNS} FROM catalog_games \
+         JOIN ownerships ON ownerships.catalog_game_id = catalog_games.id \
+         WHERE ownerships.user_id = $1"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let library: Vec<CatalogGame> = library_rows.iter().filter_map(|r| row_to_game(r).ok()).collect();
+
+    let wishlist_rows = sqlx::query(&format!(
+        "SELECT {GAME_COLUMNS} FROM catalog_games \
+         JOIN wishlist_items ON wishlist_items.catalog_game_id = catalog_games.id \
+         WHERE wishlist_items.user_id = $1"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let wishlist: Vec<CatalogGame> = wishlist_rows.iter().filter_map(|r| row_to_game(r).ok()).collect();
+
+    let reviews: Vec<(i64, f64, Option<String>, String)> = sqlx::query_as(
+        "SELECT catalog_game_id, rating, body, created_at::TEXT FROM game_reviews \
+         WHERE user_id = $1 ORDER BY created_at DESC",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    let badge_rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT badge_key, earned_at::TEXT FROM user_badges WHERE user_id = $1 ORDER BY earned_at ASC",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    Ok(Json(serde_json::json!({
+        "profile": user,
+        "orders": orders,
+        "library": library,
+        "wishlist": wishlist,
+        "reviews": reviews.into_iter().map(|(catalog_game_id, rating, body, created_at)| {
+            serde_json::json!({ "catalog_game_id": catalog_game_id, "rating": rating, "body": body, "created_at": created_at })
+        }).collect::<Vec<_>>(),
+        "badges": badge_rows.into_iter().map(|(badge_key, earned_at)| {
+            serde_json::json!({ "badge_key": badge_key, "earned_at": earned_at })
+        }).collect::<Vec<_>>(),
+    })))
+}
+
+/// DSGVO Art. 17 right to erasure. Hard-deleting the `users` row isn't
+/// possible without breaking referential integrity (other users' purchases,
+/// reviews, tournament results reference it), so this anonymizes the
+/// account instead: personal fields are scrubbed and login is made
+/// permanently impossible, while non-identifying records (orders, reviews,
+/// tournament history) stay intact under the now-anonymous account.
+/// Existing JWTs remain valid until they expire (no server-side token
+/// revocation list exists yet) — acceptable for now since the account can no
+/// longer be logged into to mint new ones.
+pub async fn delete_account(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Json(req): Json<crate::models::DeleteAccountRequest>,
+) -> Result<StatusCode, ApiError> {
+    let current_hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(internal_error)?;
+
+    if !verify_password(&req.password, &current_hash) {
+        return Err((StatusCode::UNAUTHORIZED, "Passwort ist falsch".to_string()));
+    }
+
+    let unusable_hash = hash_password(&uuid::Uuid::new_v4().to_string()).map_err(internal_error)?;
+
+    let mut tx = state.db.begin().await.map_err(internal_error)?;
+
+    for query in [
+        "DELETE FROM profile_screenshots WHERE user_id = $1",
+        "DELETE FROM wishlist_items WHERE user_id = $1",
+        "DELETE FROM cloud_saves WHERE user_id = $1",
+        "DELETE FROM notifications WHERE user_id = $1 OR actor_user_id = $1",
+        "DELETE FROM friendships WHERE requester_id = $1 OR recipient_id = $1",
+        "DELETE FROM direct_messages WHERE sender_id = $1 OR recipient_id = $1",
+    ] {
+        sqlx::query(query)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(internal_error)?;
+    }
+
+    sqlx::query(
+        "UPDATE users SET \
+            email = $1, password_hash = $2, display_name = 'Gelöschter Nutzer', \
+            avatar_url = NULL, background_url = NULL, bio = NULL, \
+            is_profile_hidden = TRUE, equipped_badge = NULL, \
+            currently_playing_catalog_game_id = NULL \
+         WHERE id = $3",
+    )
+    .bind(format!("deleted-{user_id}@deleted.dove"))
+    .bind(unusable_hash)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(internal_error)?;
+
+    tx.commit().await.map_err(internal_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1171,6 +1312,42 @@ pub async fn create_game(
     fetch_game(&state.db, id).await.map(Json).map_err(internal_error)
 }
 
+const ORDER_COLUMNS: &str = "orders.id, orders.user_id, orders.catalog_game_id, \
+    catalog_games.title, orders.amount_cents, orders.status, orders.stripe_payment_intent_id, \
+    orders.created_at::TEXT, orders.updated_at::TEXT";
+
+fn row_to_order(row: &PgRow) -> Result<Order, sqlx::Error> {
+    Ok(Order {
+        id: row.try_get(0)?,
+        user_id: row.try_get(1)?,
+        catalog_game_id: row.try_get(2)?,
+        catalog_game_title: row.try_get(3)?,
+        amount_cents: row.try_get(4)?,
+        status: row.try_get(5)?,
+        stripe_payment_intent_id: row.try_get(6)?,
+        created_at: row.try_get(7)?,
+        updated_at: row.try_get(8)?,
+    })
+}
+
+pub async fn list_my_orders(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<Json<Vec<Order>>, ApiError> {
+    let rows = sqlx::query(&format!(
+        "SELECT {ORDER_COLUMNS} FROM orders \
+         JOIN catalog_games ON catalog_games.id = orders.catalog_game_id \
+         WHERE orders.user_id = $1 ORDER BY orders.created_at DESC"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    let orders = rows.iter().filter_map(|r| row_to_order(r).ok()).collect();
+    Ok(Json(orders))
+}
+
 pub async fn purchase_game(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
@@ -1179,6 +1356,20 @@ pub async fn purchase_game(
     let game = fetch_game(&state.db, game_id)
         .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+
+    // No payment provider is wired up yet, so every order is settled as
+    // `paid` immediately — see the `Order` doc comment for how this is
+    // meant to change once Stripe is in place.
+    sqlx::query(
+        "INSERT INTO orders (user_id, catalog_game_id, amount_cents, status) \
+         VALUES ($1, $2, $3, 'paid')",
+    )
+    .bind(user_id)
+    .bind(game_id)
+    .bind(game.price_cents)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
 
     sqlx::query(
         "INSERT INTO ownerships (user_id, catalog_game_id) VALUES ($1, $2) \
@@ -2749,14 +2940,20 @@ pub async fn set_match_winner(
     Path((event_id, match_id)): Path<(i64, i64)>,
     Json(req): Json<SetMatchWinner>,
 ) -> Result<Json<EventBracket>, ApiError> {
-    let row = sqlx::query("SELECT host_user_id, team_size, title FROM events WHERE id = $1")
-        .bind(event_id)
-        .fetch_one(&state.db)
-        .await
-        .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    let row = sqlx::query(
+        "SELECT host_user_id, team_size, title, prize_cents, prize_mode, prize_second_cents \
+         FROM events WHERE id = $1",
+    )
+    .bind(event_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
     let host_user_id: i64 = row.try_get(0).map_err(internal_error)?;
     let team_size: i64 = row.try_get(1).map_err(internal_error)?;
     let event_title: String = row.try_get(2).map_err(internal_error)?;
+    let prize_cents: i64 = row.try_get(3).map_err(internal_error)?;
+    let prize_mode: String = row.try_get(4).map_err(internal_error)?;
+    let prize_second_cents: i64 = row.try_get(5).map_err(internal_error)?;
     if host_user_id != user_id {
         return Err((
             StatusCode::FORBIDDEN,
@@ -2813,17 +3010,37 @@ pub async fn set_match_winner(
         .map_err(internal_error)?;
     }
 
+    let winner_id = req.winner_entry_id;
+    let loser_id = if entry_a_id == Some(winner_id) { entry_b_id } else { entry_a_id };
+
     if !exists {
         // No next-round match was created — this was the final, so the
-        // winner(s) take the tournament.
-        for member_id in entry_member_ids(&state.db, team_size, req.winner_entry_id).await {
-            award_badge(&state.db, member_id, "tournament_winner_first").await;
-            record_tournament_win(&state.db, member_id, event_id).await;
+        // winner(s) take the tournament (and, if there's a cash prize, the
+        // first-place payout). The runner-up only gets a payout under
+        // "split" mode — third place is intentionally not tracked here,
+        // since single-elimination brackets produce two semifinal losers
+        // tied for it, not one (a 3rd-place match would be a separate
+        // feature).
+        let winner_members = entry_member_ids(&state.db, team_size, winner_id).await;
+        let winner_share = prize_cents / winner_members.len().max(1) as i64;
+        for member_id in &winner_members {
+            award_badge(&state.db, *member_id, "tournament_winner_first").await;
+            record_tournament_win(&state.db, *member_id, event_id).await;
+            record_tournament_payout(&state.db, event_id, *member_id, 1, winner_share).await;
+        }
+
+        if prize_mode == "split" && prize_second_cents > 0 {
+            if let Some(loser_id) = loser_id {
+                let runner_up_members = entry_member_ids(&state.db, team_size, loser_id).await;
+                let runner_up_share = prize_second_cents / runner_up_members.len().max(1) as i64;
+                for member_id in &runner_up_members {
+                    record_tournament_payout(&state.db, event_id, *member_id, 2, runner_up_share)
+                        .await;
+                }
+            }
         }
     }
 
-    let winner_id = req.winner_entry_id;
-    let loser_id = if entry_a_id == Some(winner_id) { entry_b_id } else { entry_a_id };
     let winner_name = entry_display_name(&state.db, team_size, winner_id).await;
     for member_id in entry_member_ids(&state.db, team_size, winner_id).await {
         create_notification(
@@ -2917,6 +3134,66 @@ async fn record_tournament_win(pool: &PgPool, user_id: i64, event_id: i64) {
     if wins >= 5 {
         award_badge(pool, user_id, "tournament_champion").await;
     }
+}
+
+async fn record_tournament_payout(
+    pool: &PgPool,
+    event_id: i64,
+    user_id: i64,
+    placement: i64,
+    amount_cents: i64,
+) {
+    if amount_cents <= 0 {
+        return;
+    }
+    let _ = sqlx::query(
+        "INSERT INTO tournament_payouts (event_id, user_id, placement, amount_cents) \
+         VALUES ($1, $2, $3, $4) ON CONFLICT (event_id, user_id, placement) DO NOTHING",
+    )
+    .bind(event_id)
+    .bind(user_id)
+    .bind(placement)
+    .bind(amount_cents)
+    .execute(pool)
+    .await;
+}
+
+pub async fn list_my_tournament_payouts(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<Json<Vec<crate::models::TournamentPayout>>, ApiError> {
+    let rows: Vec<(i64, i64, String, i64, i64, i64, String, String)> = sqlx::query_as(
+        "SELECT tournament_payouts.id, tournament_payouts.event_id, events.title, \
+            tournament_payouts.user_id, tournament_payouts.placement, \
+            tournament_payouts.amount_cents, tournament_payouts.status, \
+            tournament_payouts.created_at::TEXT \
+         FROM tournament_payouts \
+         JOIN events ON events.id = tournament_payouts.event_id \
+         WHERE tournament_payouts.user_id = $1 ORDER BY tournament_payouts.created_at DESC",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    let payouts = rows
+        .into_iter()
+        .map(
+            |(id, event_id, event_title, user_id, placement, amount_cents, status, created_at)| {
+                crate::models::TournamentPayout {
+                    id,
+                    event_id,
+                    event_title,
+                    user_id,
+                    placement,
+                    amount_cents,
+                    status,
+                    created_at,
+                }
+            },
+        )
+        .collect();
+    Ok(Json(payouts))
 }
 
 /// Resolves the individual user ids behind a bracket entry — the entry

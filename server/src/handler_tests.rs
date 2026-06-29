@@ -637,6 +637,83 @@ async fn knockout_bracket_handles_byes_and_propagates_winners_to_the_final(pool:
 }
 
 #[sqlx::test]
+async fn tournament_prize_money_is_recorded_as_payouts_on_completion(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let host = register_user(&state, "phost@test.de", "password123", "Host").await;
+    let p1 = register_user(&state, "pp1@test.de", "password123", "P1").await;
+    let p2 = register_user(&state, "pp2@test.de", "password123", "P2").await;
+
+    let event = create_event(
+        State(state.clone()),
+        AuthUser(host.id),
+        Json(NewGameEvent {
+            title: "Cash Cup".to_string(),
+            description: None,
+            catalog_game_id: None,
+            custom_game_title: None,
+            registration_deadline: None,
+            starts_at: None,
+            ends_at: None,
+            prize_cents: 1000,
+            prize_mode: "split".to_string(),
+            prize_second_cents: 300,
+            prize_third_cents: 0,
+            team_size: 1,
+            max_entries: None,
+            format: "knockout".to_string(),
+            is_private: false,
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    for p in [&p1, &p2] {
+        join_event(
+            State(state.clone()),
+            AuthUser(p.id),
+            Path(event.id),
+            Json(JoinWithCode::default()),
+        )
+        .await
+        .unwrap();
+    }
+
+    let bracket = start_event_tournament(State(state.clone()), AuthUser(host.id), Path(event.id))
+        .await
+        .unwrap()
+        .0;
+    let final_match = bracket.matches.iter().find(|m| m.round == 1).unwrap();
+    let winner_id = final_match.entry_a_id.unwrap();
+    let loser_id = final_match.entry_b_id.unwrap();
+
+    let _ = set_match_winner(
+        State(state.clone()),
+        AuthUser(host.id),
+        Path((event.id, final_match.id)),
+        Json(SetMatchWinner { winner_entry_id: winner_id }),
+    )
+    .await
+    .unwrap();
+
+    let winner_payouts = list_my_tournament_payouts(State(state.clone()), AuthUser(winner_id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(winner_payouts.len(), 1);
+    assert_eq!(winner_payouts[0].placement, 1);
+    assert_eq!(winner_payouts[0].amount_cents, 1000);
+
+    let loser_payouts = list_my_tournament_payouts(State(state.clone()), AuthUser(loser_id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(loser_payouts.len(), 1);
+    assert_eq!(loser_payouts[0].placement, 2);
+    assert_eq!(loser_payouts[0].amount_cents, 300);
+}
+
+#[sqlx::test]
 async fn team_event_blocks_direct_join_and_requires_full_teams_to_start(pool: sqlx::PgPool) {
     let state = AppState::for_tests(pool).await;
     let host = register_user(&state, "thost@test.de", "password123", "Host").await;
@@ -916,4 +993,80 @@ async fn admin_extractor_rejects_non_admin_and_accepts_admin(pool: sqlx::PgPool)
         StatusCode::FORBIDDEN
     );
     assert!(extract_admin(&state, admin.id).await.is_ok());
+}
+
+// ---- GDPR ----
+
+#[sqlx::test]
+async fn delete_account_rejects_wrong_password_and_scrubs_pii_on_success(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let alice = register_user(&state, "alice@test.de", "correct-password", "Alice").await;
+
+    let denied = delete_account(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Json(DeleteAccountRequest { password: "wrong-password".to_string() }),
+    )
+    .await;
+    assert_eq!(denied.unwrap_err().0, StatusCode::UNAUTHORIZED);
+
+    delete_account(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Json(DeleteAccountRequest { password: "correct-password".to_string() }),
+    )
+    .await
+    .expect("deletion with the correct password should succeed");
+
+    let scrubbed = me(State(state.clone()), AuthUser(alice.id)).await.unwrap().0;
+    assert_eq!(scrubbed.display_name, "Gelöschter Nutzer");
+    assert!(scrubbed.avatar_url.is_none());
+    assert!(scrubbed.is_profile_hidden);
+
+    let login_attempt = login(
+        State(state.clone()),
+        Json(LoginRequest {
+            email: "alice@test.de".to_string(),
+            password: "correct-password".to_string(),
+        }),
+    )
+    .await;
+    assert!(login_attempt.is_err(), "old credentials must no longer work");
+}
+
+#[sqlx::test]
+async fn export_my_data_includes_orders_and_library(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+
+    let game = create_game(
+        State(state.clone()),
+        AuthUser(publisher.id),
+        Json(NewCatalogGame {
+            title: "Pixel Knights".to_string(),
+            description: None,
+            cover_url: None,
+            tags: None,
+            min_specs: None,
+            recommended_specs: None,
+            save_path_hint: None,
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    let _ = purchase_game(State(state.clone()), AuthUser(alice.id), Path(game.id))
+        .await
+        .unwrap();
+
+    let export = export_my_data(State(state.clone()), AuthUser(alice.id))
+        .await
+        .unwrap()
+        .0;
+
+    assert_eq!(export["orders"].as_array().unwrap().len(), 1);
+    assert_eq!(export["library"].as_array().unwrap().len(), 1);
+    assert_eq!(export["profile"]["display_name"], "Alice");
 }

@@ -7,6 +7,9 @@ import { ACCENT_PRESETS, applyAccent, getStoredAccent } from "../../theme";
 import type { AccentId } from "../../theme";
 import { useI18nStore } from "../../i18nStore";
 import { useT } from "../../translations";
+import { OrderHistoryDialog } from "./OrderHistoryDialog";
+import { TournamentPayoutsDialog } from "./TournamentPayoutsDialog";
+import { DeleteAccountDialog } from "./DeleteAccountDialog";
 
 interface Props {
   onClose: () => void;
@@ -25,6 +28,7 @@ export function SettingsView({ onClose }: Props) {
   const logout = useAuthStore((s) => s.logout);
   const changePassword = useAuthStore((s) => s.changePassword);
   const updateProfile = useAuthStore((s) => s.updateProfile);
+  const exportMyData = useAuthStore((s) => s.exportMyData);
   const authError = useAuthStore((s) => s.error);
   const authLoading = useAuthStore((s) => s.loading);
   const clearError = useAuthStore((s) => s.clearError);
@@ -36,6 +40,9 @@ export function SettingsView({ onClose }: Props) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [passwordSuccess, setPasswordSuccess] = useState(false);
+  const [showOrderHistory, setShowOrderHistory] = useState(false);
+  const [showPayouts, setShowPayouts] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
 
   useEffect(() => {
     appDataDir()
@@ -98,6 +105,26 @@ export function SettingsView({ onClose }: Props) {
               </button>
             </div>
 
+            <div className="flex items-center justify-between border-t border-zinc-800 pt-4">
+              <p className="text-sm font-medium text-zinc-200">{t("settings_order_history")}</p>
+              <button
+                onClick={() => setShowOrderHistory(true)}
+                className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
+              >
+                {t("settings_order_history_open")}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between border-t border-zinc-800 pt-4">
+              <p className="text-sm font-medium text-zinc-200">{t("settings_tournament_payouts")}</p>
+              <button
+                onClick={() => setShowPayouts(true)}
+                className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
+              >
+                {t("settings_tournament_payouts_open")}
+              </button>
+            </div>
+
             <form onSubmit={handleChangePassword} className="flex flex-col gap-3 border-t border-zinc-800 pt-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
                 {t("settings_change_password")}
@@ -156,6 +183,40 @@ export function SettingsView({ onClose }: Props) {
                 className="h-5 w-5 shrink-0 accent-sky-600"
               />
             </label>
+          </div>
+        </section>
+
+        {/* Daten & Datenschutz */}
+        <section className="mb-8">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
+            {t("settings_data")}
+          </h2>
+          <div className="flex flex-col gap-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-zinc-200">{t("settings_export_data")}</p>
+                <p className="mt-0.5 text-xs text-zinc-500">{t("settings_export_data_desc")}</p>
+              </div>
+              <button
+                onClick={() => exportMyData()}
+                disabled={authLoading}
+                className="shrink-0 rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
+              >
+                {t("settings_export_data")}
+              </button>
+            </div>
+            <div className="flex items-center justify-between gap-4 border-t border-zinc-800 pt-4">
+              <div>
+                <p className="text-sm font-medium text-red-400">{t("settings_delete_account")}</p>
+                <p className="mt-0.5 text-xs text-zinc-500">{t("settings_delete_account_desc")}</p>
+              </div>
+              <button
+                onClick={() => setShowDeleteAccount(true)}
+                className="shrink-0 rounded bg-red-900/60 px-3 py-1.5 text-sm font-semibold text-red-300 hover:bg-red-900"
+              >
+                {t("settings_delete_account")}
+              </button>
+            </div>
           </div>
         </section>
 
@@ -227,6 +288,12 @@ export function SettingsView({ onClose }: Props) {
           </div>
         </section>
       </div>
+
+      {showOrderHistory && <OrderHistoryDialog onClose={() => setShowOrderHistory(false)} />}
+      {showPayouts && <TournamentPayoutsDialog onClose={() => setShowPayouts(false)} />}
+      {showDeleteAccount && (
+        <DeleteAccountDialog onClose={() => setShowDeleteAccount(false)} />
+      )}
     </div>
   );
 }

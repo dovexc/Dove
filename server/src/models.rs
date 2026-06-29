@@ -60,6 +60,11 @@ pub struct ImageUpload {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct DeleteAccountRequest {
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
     pub email: String,
     pub password: String,
@@ -97,6 +102,41 @@ pub struct CatalogGame {
     pub save_path_hint: Option<String>,
     pub avg_rating: Option<f64>,
     pub review_count: i64,
+}
+
+/// Ledger entry for a game purchase. Today `purchase_game` creates and
+/// settles one of these atomically (no real payment exists yet), but the
+/// pending/paid/failed lifecycle is already in place so a future Stripe
+/// integration only needs to: create the order as `pending`, redirect to
+/// Stripe Checkout, and flip it to `paid`/`failed` from a webhook instead
+/// of granting the ownership row directly.
+#[derive(Debug, Serialize, Clone)]
+pub struct Order {
+    pub id: i64,
+    pub user_id: i64,
+    pub catalog_game_id: i64,
+    pub catalog_game_title: String,
+    pub amount_cents: i64,
+    pub status: String,
+    pub stripe_payment_intent_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// What a tournament participant is owed once a knockout event concludes.
+/// No payment provider exists yet (same caveat as `Order`), so this is a
+/// manual-payout ledger for the host today and the structure a future
+/// automated payout (e.g. Stripe Connect transfers) would settle against.
+#[derive(Debug, Serialize, Clone)]
+pub struct TournamentPayout {
+    pub id: i64,
+    pub event_id: i64,
+    pub event_title: String,
+    pub user_id: i64,
+    pub placement: i64,
+    pub amount_cents: i64,
+    pub status: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Deserialize)]

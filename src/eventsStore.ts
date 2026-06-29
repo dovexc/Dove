@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { API_BASE, getAuthHeader, useAuthStore } from "./authStore";
-import type { EventBracket, EventTeam, GameEvent, NewGameEvent, UserSummary } from "./types";
+import type {
+  EventBracket,
+  EventTeam,
+  GameEvent,
+  NewGameEvent,
+  TournamentPayout,
+  UserSummary,
+} from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
   const text = await response.text();
@@ -19,6 +26,9 @@ interface EventsState {
   detailBracket: EventBracket | null;
   detailLoading: boolean;
   teamActionPending: boolean;
+  payouts: TournamentPayout[];
+  payoutsLoading: boolean;
+  fetchPayouts: () => Promise<void>;
   fetchEvents: () => Promise<void>;
   createEvent: (event: NewGameEvent) => Promise<GameEvent | null>;
   deleteEvent: (eventId: number) => Promise<void>;
@@ -61,6 +71,25 @@ export const useEventsStore = create<EventsState>((set, get) => ({
   detailBracket: null,
   detailLoading: false,
   teamActionPending: false,
+  payouts: [],
+  payoutsLoading: false,
+
+  fetchPayouts: async () => {
+    const headers = getAuthHeader();
+    if (!headers.Authorization) {
+      set({ payouts: [] });
+      return;
+    }
+    set({ payoutsLoading: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/me/tournament-payouts`, { headers });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const payouts: TournamentPayout[] = await response.json();
+      set({ payouts, payoutsLoading: false });
+    } catch (e) {
+      set({ error: String(e), payoutsLoading: false });
+    }
+  },
 
   fetchEvents: async () => {
     set({ loading: true, error: null });

@@ -32,6 +32,8 @@ interface AuthState {
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
   fetchBadges: () => Promise<void>;
   setEquippedBadge: (badgeKey: string | null) => Promise<void>;
+  exportMyData: () => Promise<void>;
+  deleteAccount: (password: string) => Promise<boolean>;
 }
 
 async function parseErrorMessage(response: Response): Promise<string> {
@@ -292,6 +294,51 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ user, loading: false });
     } catch (e) {
       set({ error: String(e), loading: false });
+    }
+  },
+
+  exportMyData: async () => {
+    const token = get().token;
+    if (!token) return;
+    set({ loading: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/me/export`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      const data = await response.blob();
+      const url = URL.createObjectURL(data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "dove-meine-daten.json";
+      link.click();
+      URL.revokeObjectURL(url);
+      set({ loading: false });
+    } catch (e) {
+      set({ error: String(e), loading: false });
+    }
+  },
+
+  deleteAccount: async (password) => {
+    const token = get().token;
+    if (!token) return false;
+    set({ loading: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/me`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password }),
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      get().logout();
+      set({ loading: false });
+      return true;
+    } catch (e) {
+      set({ error: String(e), loading: false });
+      return false;
     }
   },
 }));

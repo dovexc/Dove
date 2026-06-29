@@ -26,7 +26,7 @@ export function CheckoutDialog({ game }: Props) {
   const canConfirm = isPaid ? agreeTerms && agreeWithdrawal : agreeTerms;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4">
       <div className="flex w-full max-w-md flex-col gap-5 rounded-lg bg-zinc-900 p-6 shadow-xl">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-zinc-100">{t("checkout_title")}</h2>

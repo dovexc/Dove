@@ -56,10 +56,10 @@ fn load_or_generate_jwt_secret(data_dir: &std::path::Path) -> String {
     if let Ok(existing) = std::fs::read_to_string(&secret_path) {
         let trimmed = existing.trim();
         if !trimmed.is_empty() {
-            eprintln!(
-                "WARNUNG: DOVE_JWT_SECRET ist nicht gesetzt — verwende das gespeicherte \
-                 Dev-Secret aus {}. Vor einem öffentlichen Einsatz unbedingt \
-                 DOVE_JWT_SECRET als Umgebungsvariable setzen!",
+            tracing::warn!(
+                "DOVE_JWT_SECRET ist nicht gesetzt — verwende das gespeicherte Dev-Secret aus {}. \
+                 Vor einem öffentlichen Einsatz unbedingt DOVE_JWT_SECRET als Umgebungsvariable \
+                 setzen!",
                 secret_path.display()
             );
             return trimmed.to_string();
@@ -83,17 +83,17 @@ fn load_or_generate_jwt_secret(data_dir: &std::path::Path) -> String {
             }
         }
         Err(e) => {
-            eprintln!(
-                "WARNUNG: Generiertes JWT-Secret konnte nicht unter {} gespeichert werden ({e}) — \
-                 alle Sessions werden beim nächsten Neustart ungültig.",
+            tracing::warn!(
+                "Generiertes JWT-Secret konnte nicht unter {} gespeichert werden ({e}) — alle \
+                 Sessions werden beim nächsten Neustart ungültig.",
                 secret_path.display()
             );
         }
     }
 
-    eprintln!(
-        "WARNUNG: DOVE_JWT_SECRET ist nicht gesetzt — ein zufälliges Dev-Secret wurde generiert \
-         und unter {} gespeichert. Vor einem öffentlichen Einsatz unbedingt DOVE_JWT_SECRET als \
+    tracing::warn!(
+        "DOVE_JWT_SECRET ist nicht gesetzt — ein zufälliges Dev-Secret wurde generiert und unter \
+         {} gespeichert. Vor einem öffentlichen Einsatz unbedingt DOVE_JWT_SECRET als \
          Umgebungsvariable setzen!",
         secret_path.display()
     );
@@ -121,17 +121,25 @@ async fn main() {
     // never overrides a var that's already set).
     let _ = dotenvy::dotenv();
 
+    // Defaults to `info` level; override with e.g. RUST_LOG=debug,sqlx=warn.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
     let default_quota_bytes = env_i64("DOVE_DEFAULT_QUOTA_BYTES", DEFAULT_QUOTA_BYTES);
 
     let clamd_candidate =
         std::env::var("DOVE_CLAMD_ADDRESS").unwrap_or_else(|_| "127.0.0.1:3310".to_string());
     let clamd_address = if probe_clamd(&clamd_candidate).await {
-        println!("Malware-Scan aktiv: clamd erreichbar unter {clamd_candidate}");
+        tracing::info!("Malware-Scan aktiv: clamd erreichbar unter {clamd_candidate}");
         Some(clamd_candidate)
     } else {
-        eprintln!(
-            "WARNUNG: clamd unter {clamd_candidate} nicht erreichbar — Malware-Scan für \
-             Spiel-Uploads ist deaktiviert. Server trotzdem gestartet."
+        tracing::warn!(
+            "clamd unter {clamd_candidate} nicht erreichbar — Malware-Scan für Spiel-Uploads \
+             ist deaktiviert. Server trotzdem gestartet."
         );
         None
     };
@@ -195,7 +203,13 @@ async fn main() {
 
     let app = Router::new()
         .merge(auth_routes)
-        .route("/api/me", get(handlers::me).patch(handlers::update_profile))
+        .route(
+            "/api/me",
+            get(handlers::me)
+                .patch(handlers::update_profile)
+                .delete(handlers::delete_account),
+        )
+        .route("/api/me/export", get(handlers::export_my_data))
         .route("/api/me/badge", axum::routing::patch(handlers::set_equipped_badge))
         .route("/api/users/:id/badges", get(handlers::list_user_badges))
         .route("/api/me/password", post(handlers::change_password))
@@ -324,6 +338,11 @@ async fn main() {
             "/api/games/:id/purchase",
             post(handlers::purchase_game).delete(handlers::revoke_ownership),
         )
+        .route("/api/me/orders", get(handlers::list_my_orders))
+        .route(
+            "/api/me/tournament-payouts",
+            get(handlers::list_my_tournament_payouts),
+        )
         .route("/api/me/library", get(handlers::list_library))
         .route("/api/me/wishlist", get(handlers::list_wishlist))
         .route(
@@ -339,12 +358,13 @@ async fn main() {
         .merge(cloud_save_routes)
         .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .layer(cors)
+        .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:4000")
         .await
         .expect("failed to bind to port 4000");
-    println!("Dove server listening on http://127.0.0.1:4000");
+    tracing::info!("Dove server listening on http://127.0.0.1:4000");
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
