@@ -221,71 +221,96 @@ export function EventsPage() {
       )}
 
       {showHostForm && !eventKind && (
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-6">
-          <p className="mb-4 text-sm font-semibold text-zinc-300">{t("evt_choose_kind_heading")}</p>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <button
-              onClick={() => setEventKind("tournament")}
-              className="flex flex-col gap-2 rounded-xl border border-white/[0.08] bg-gradient-to-b from-[#161f2a] to-[#121a23] p-5 text-left transition-colors hover:border-sky-300/40"
-            >
-              <span className="self-start rounded-md bg-[#2475c7] px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-white">
-                {t("evt_card_type_tournament")}
-              </span>
-              <span className="text-lg font-bold text-white">{t("evt_kind_tournament_title")}</span>
-              <span className="text-sm text-zinc-400">{t("evt_kind_tournament_desc")}</span>
-            </button>
-            <button
-              onClick={() => setEventKind("jam")}
-              className="flex flex-col gap-2 rounded-xl border border-white/[0.08] bg-gradient-to-b from-[#161f2a] to-[#121a23] p-5 text-left transition-colors hover:border-sky-300/40"
-            >
-              <span className="self-start rounded-md bg-[#7b4397] px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-white">
-                {t("evt_card_type_jam")}
-              </span>
-              <span className="text-lg font-bold text-white">{t("evt_kind_jam_title")}</span>
-              <span className="text-sm text-zinc-400">{t("evt_kind_jam_desc")}</span>
-            </button>
-          </div>
+        <div className="grid grid-cols-1 gap-[22px] sm:grid-cols-2">
+          <button
+            onClick={() => setEventKind("tournament")}
+            className="flex flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-b from-[#161f2a] to-[#121a23] text-left transition-all hover:-translate-y-1 hover:border-sky-300/40 hover:shadow-[0_18px_40px_rgba(0,0,0,0.5)]"
+          >
+            <div className="relative h-[120px]" style={{ background: "linear-gradient(125deg,#2b5876,#1c3a5e)" }}>
+              <div className="absolute inset-0 bg-gradient-to-b from-black/5 to-[#121a23]/70" />
+              <div className="absolute bottom-3.5 left-5 flex items-center gap-2.5">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-black/[0.35] text-xl backdrop-blur-sm">
+                  🏆
+                </div>
+                <span className="text-[22px] font-black tracking-tight text-white">
+                  {t("evt_kind_tournament_title")}
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-col gap-3.5 p-5">
+              <span className="text-sm leading-relaxed text-[#9fb2c2]">{t("evt_kind_tournament_desc")}</span>
+              <span className="text-[13px] font-bold text-[#9fe3ff]">{t("evt_choose_arrow")}</span>
+            </div>
+          </button>
+          <button
+            onClick={() => setEventKind("jam")}
+            className="flex flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-b from-[#161f2a] to-[#121a23] text-left transition-all hover:-translate-y-1 hover:border-sky-300/40 hover:shadow-[0_18px_40px_rgba(0,0,0,0.5)]"
+          >
+            <div className="relative h-[120px]" style={{ background: "linear-gradient(125deg,#614385,#3a2151)" }}>
+              <div className="absolute inset-0 bg-gradient-to-b from-black/5 to-[#121a23]/70" />
+              <div className="absolute bottom-3.5 left-5 flex items-center gap-2.5">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-black/[0.35] text-xl backdrop-blur-sm">
+                  🎮
+                </div>
+                <span className="text-[22px] font-black tracking-tight text-white">
+                  {t("evt_kind_jam_title")}
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-col gap-3.5 p-5">
+              <span className="text-sm leading-relaxed text-[#9fb2c2]">{t("evt_kind_jam_desc")}</span>
+              <span className="text-[13px] font-bold text-[#9fe3ff]">{t("evt_choose_arrow")}</span>
+            </div>
+          </button>
         </div>
       )}
 
       {showHostForm && eventKind && (
         <form
           onSubmit={handleHostSubmit}
-          className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
+          className="rounded-2xl border border-white/[0.06] bg-gradient-to-b from-[#141d27] to-[#111923] p-8"
         >
           <button
             type="button"
             onClick={() => setEventKind(null)}
-            className="self-start text-xs font-semibold text-sky-400 hover:text-sky-300 hover:underline"
+            className="mb-6 flex items-center gap-1.5 text-[13px] font-bold text-[#5b8db8] hover:text-[#9fe3ff]"
           >
             {t("evt_change_kind")}
           </button>
-          <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            {t("evt_title_label")}
+
+          <div className="mb-4 text-xs font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+            {t("evt_section_basics")}
+          </div>
+
+          <label className="mb-5 block">
+            <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">{t("evt_title_label")}</span>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               required
-              className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+              placeholder={eventKind === "tournament" ? t("evt_title_placeholder_tournament") : t("evt_title_placeholder_jam")}
+              className="h-12 w-full rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-4 text-[15px] text-[#dbe7f2] outline-none placeholder:text-zinc-500 focus:border-sky-300/60"
             />
           </label>
-          <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            {t("evt_description")}
+
+          <label className="mb-5 block">
+            <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">{t("evt_description")}</span>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
               placeholder={t("evt_rules_placeholder")}
-              className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+              className="min-h-[110px] w-full resize-vertical rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-4 py-3.5 text-[15px] leading-relaxed text-[#dbe7f2] outline-none placeholder:text-zinc-500 focus:border-sky-300/60"
             />
           </label>
+
           {eventKind === "tournament" && (
-            <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              {t("evt_linked_game_label")}
+            <label className="mb-5 block">
+              <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">{t("evt_linked_game_label")}</span>
               <select
                 value={catalogGameId}
                 onChange={(e) => setCatalogGameId(e.target.value)}
-                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                className="h-12 w-full cursor-pointer rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-4 text-[15px] text-[#dbe7f2] outline-none"
               >
                 <option value="">{t("evt_no_specific_game")}</option>
                 {catalogGames
@@ -299,86 +324,117 @@ export function EventsPage() {
             </label>
           )}
           {(eventKind === "jam" || !catalogGameId) && (
-            <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              {eventKind === "jam" ? t("evt_jam_theme_label") : t("evt_custom_game_label")}
+            <label className="mb-7 block">
+              <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">
+                {eventKind === "jam" ? t("evt_jam_theme_label") : t("evt_custom_game_label")}
+              </span>
               <input
                 value={customGameTitle}
                 onChange={(e) => setCustomGameTitle(e.target.value)}
                 placeholder={eventKind === "jam" ? t("evt_jam_theme_placeholder") : t("evt_custom_game_placeholder")}
-                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                className="h-12 w-full rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-4 text-[15px] text-[#dbe7f2] outline-none placeholder:text-zinc-500 focus:border-sky-300/60"
               />
             </label>
           )}
-          <div className="grid grid-cols-3 gap-3">
-            <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              {t("evt_registration_deadline")}
+
+          <div className="mb-4 border-t border-white/[0.06] pt-6 text-xs font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+            {t("evt_section_schedule")}
+          </div>
+          <div className="mb-7 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <label className="block">
+              <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">{t("evt_registration_deadline")}</span>
               <input
                 type="date"
                 value={registrationDeadline}
                 onChange={(e) => setRegistrationDeadline(e.target.value)}
-                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                className="h-12 w-full rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-3.5 text-[15px] text-[#dbe7f2] outline-none [color-scheme:dark] focus:border-sky-300/60"
               />
             </label>
-            <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              {t("evt_start")}
+            <label className="block">
+              <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">{t("evt_start")}</span>
               <input
                 type="date"
                 value={startsAt}
                 onChange={(e) => setStartsAt(e.target.value)}
-                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                className="h-12 w-full rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-3.5 text-[15px] text-[#dbe7f2] outline-none [color-scheme:dark] focus:border-sky-300/60"
               />
             </label>
-            <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              {t("evt_end")}
+            <label className="block">
+              <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">{t("evt_end")}</span>
               <input
                 type="date"
                 value={endsAt}
                 onChange={(e) => setEndsAt(e.target.value)}
-                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                className="h-12 w-full rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-3.5 text-[15px] text-[#dbe7f2] outline-none [color-scheme:dark] focus:border-sky-300/60"
               />
             </label>
           </div>
-          <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            {prizeMode === "split" ? t("evt_prize_first_label") : t("evt_prize_label")}
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={prizeEuros}
-              onChange={(e) => setPrizeEuros(e.target.value)}
-              placeholder="0"
-              className="w-40 rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
-            />
-          </label>
 
-          <div className="flex flex-col gap-2 text-sm text-zinc-300">
-            {t("evt_prize_split_label")}
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="prizeMode"
-                  checked={prizeMode === "winner_takes_all"}
-                  onChange={() => setPrizeMode("winner_takes_all")}
-                />
-                {t("evt_winner_takes_all_radio")}
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="prizeMode"
-                  checked={prizeMode === "split"}
-                  onChange={() => setPrizeMode("split")}
-                />
-                {t("evt_split_1_3")}
-              </label>
+          <div className="mb-4 border-t border-white/[0.06] pt-6 text-xs font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+            {t("evt_section_prize")}
+          </div>
+          <div className="mb-7 grid grid-cols-1 gap-5 sm:grid-cols-[240px_1fr]">
+            <label className="block">
+              <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">
+                {prizeMode === "split" ? t("evt_prize_first_label") : t("evt_prize_label")}
+              </span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={prizeEuros}
+                onChange={(e) => setPrizeEuros(e.target.value)}
+                placeholder="0"
+                className="h-12 w-full rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-4 text-[15px] text-[#dbe7f2] outline-none placeholder:text-zinc-500 focus:border-sky-300/60"
+              />
+            </label>
+            <div>
+              <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">{t("evt_prize_split_label")}</span>
+              <div className="flex gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setPrizeMode("winner_takes_all")}
+                  className={`flex h-12 flex-1 items-center gap-2.5 rounded-[9px] border px-4 text-sm font-semibold ${
+                    prizeMode === "winner_takes_all"
+                      ? "border-sky-300/60 bg-sky-400/[0.18] text-white"
+                      : "border-white/[0.08] bg-[#0d141c] text-[#9fb2c2]"
+                  }`}
+                >
+                  <span
+                    className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border-2 ${
+                      prizeMode === "winner_takes_all" ? "border-sky-300" : "border-zinc-600"
+                    }`}
+                  >
+                    {prizeMode === "winner_takes_all" && <span className="h-2 w-2 rounded-full bg-sky-300" />}
+                  </span>
+                  {t("evt_winner_takes_all_radio")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrizeMode("split")}
+                  className={`flex h-12 flex-1 items-center gap-2.5 rounded-[9px] border px-4 text-sm font-semibold ${
+                    prizeMode === "split"
+                      ? "border-sky-300/60 bg-sky-400/[0.18] text-white"
+                      : "border-white/[0.08] bg-[#0d141c] text-[#9fb2c2]"
+                  }`}
+                >
+                  <span
+                    className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border-2 ${
+                      prizeMode === "split" ? "border-sky-300" : "border-zinc-600"
+                    }`}
+                  >
+                    {prizeMode === "split" && <span className="h-2 w-2 rounded-full bg-sky-300" />}
+                  </span>
+                  {t("evt_split_1_3")}
+                </button>
+              </div>
             </div>
           </div>
 
           {prizeMode === "split" && (
-            <div className="grid grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1 text-sm text-zinc-300">
-                {t("evt_prize_second_label")}
+            <div className="-mt-2 mb-7 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">{t("evt_prize_second_label")}</span>
                 <input
                   type="number"
                   min="0"
@@ -386,11 +442,11 @@ export function EventsPage() {
                   value={prizeSecondEuros}
                   onChange={(e) => setPrizeSecondEuros(e.target.value)}
                   placeholder="0"
-                  className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                  className="h-12 w-full rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-4 text-[15px] text-[#dbe7f2] outline-none placeholder:text-zinc-500 focus:border-sky-300/60"
                 />
               </label>
-              <label className="flex flex-col gap-1 text-sm text-zinc-300">
-                {t("evt_prize_third_label")}
+              <label className="block">
+                <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">{t("evt_prize_third_label")}</span>
                 <input
                   type="number"
                   min="0"
@@ -398,78 +454,121 @@ export function EventsPage() {
                   value={prizeThirdEuros}
                   onChange={(e) => setPrizeThirdEuros(e.target.value)}
                   placeholder="0"
-                  className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                  className="h-12 w-full rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-4 text-[15px] text-[#dbe7f2] outline-none placeholder:text-zinc-500 focus:border-sky-300/60"
                 />
               </label>
             </div>
           )}
 
+          <div className="mb-4 border-t border-white/[0.06] pt-6 text-xs font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+            {t("evt_section_participation")}
+          </div>
+
           {eventKind === "tournament" && (
-            <div className="flex flex-col gap-2 text-sm text-zinc-300">
-              {t("evt_tournament_format_label")}
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    name="format"
-                    checked={format === "knockout"}
-                    onChange={() => setFormat("knockout")}
-                  />
+            <div className="mb-5">
+              <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">{t("evt_tournament_format_label")}</span>
+              <div className="flex gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setFormat("knockout")}
+                  className={`flex h-12 flex-1 items-center gap-2.5 rounded-[9px] border px-4 text-sm font-semibold ${
+                    format === "knockout"
+                      ? "border-sky-300/60 bg-sky-400/[0.18] text-white"
+                      : "border-white/[0.08] bg-[#0d141c] text-[#9fb2c2]"
+                  }`}
+                >
+                  <span
+                    className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border-2 ${
+                      format === "knockout" ? "border-sky-300" : "border-zinc-600"
+                    }`}
+                  >
+                    {format === "knockout" && <span className="h-2 w-2 rounded-full bg-sky-300" />}
+                  </span>
                   {t("evt_knockout_radio")}
-                </label>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    name="format"
-                    checked={format === "all"}
-                    onChange={() => setFormat("all")}
-                  />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormat("all")}
+                  className={`flex h-12 flex-1 items-center gap-2.5 rounded-[9px] border px-4 text-sm font-semibold ${
+                    format === "all"
+                      ? "border-sky-300/60 bg-sky-400/[0.18] text-white"
+                      : "border-white/[0.08] bg-[#0d141c] text-[#9fb2c2]"
+                  }`}
+                >
+                  <span
+                    className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border-2 ${
+                      format === "all" ? "border-sky-300" : "border-zinc-600"
+                    }`}
+                  >
+                    {format === "all" && <span className="h-2 w-2 rounded-full bg-sky-300" />}
+                  </span>
                   {t("evt_open_list_radio")}
-                </label>
+                </button>
               </div>
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              {t("evt_max_entries_label")}
+          <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">{t("evt_max_entries_label")}</span>
               <input
                 type="number"
                 min="1"
                 value={maxEntries}
                 onChange={(e) => setMaxEntries(e.target.value)}
                 placeholder={t("evt_unlimited_placeholder")}
-                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                className="h-12 w-full rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-4 text-[15px] text-[#dbe7f2] outline-none placeholder:text-zinc-500 focus:border-sky-300/60"
               />
             </label>
-            <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              {t("evt_team_size_label")}
+            <label className="block">
+              <span className="mb-2 block text-sm font-semibold text-[#c7d5e0]">{t("evt_team_size_label")}</span>
               <input
                 type="number"
                 min="1"
                 value={teamSize}
                 onChange={(e) => setTeamSize(e.target.value)}
                 placeholder={t("evt_solo_placeholder")}
-                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                className="h-12 w-full rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-4 text-[15px] text-[#dbe7f2] outline-none placeholder:text-zinc-500 focus:border-sky-300/60"
               />
             </label>
           </div>
 
-          <label className="flex items-center gap-2 text-sm text-zinc-300">
-            <input
-              type="checkbox"
-              checked={isPrivate}
-              onChange={(e) => setIsPrivate(e.target.checked)}
-            />
-            {t("evt_private_checkbox")}
-          </label>
-
           <button
-            type="submit"
-            className="self-end rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
+            type="button"
+            onClick={() => setIsPrivate((v) => !v)}
+            className="mb-8 flex items-center gap-3"
           >
-            {t("evt_publish")}
+            <span
+              className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md border ${
+                isPrivate ? "border-sky-300/60 bg-gradient-to-b from-sky-400 to-sky-600" : "border-white/[0.15] bg-[#0d141c]"
+              }`}
+            >
+              {isPrivate && (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              )}
+            </span>
+            <span className="text-sm font-semibold text-[#c7d5e0]">
+              {t("evt_private_checkbox")}
+            </span>
           </button>
+
+          <div className="flex items-center justify-end gap-3.5 border-t border-white/[0.06] pt-6">
+            <button
+              type="button"
+              onClick={resetHostForm}
+              className="rounded-[9px] border border-white/10 bg-white/5 px-6 py-3 text-[15px] font-bold text-[#c7d5e0] hover:bg-white/10 hover:text-white"
+            >
+              {t("dialog_cancel")}
+            </button>
+            <button
+              type="submit"
+              className="rounded-[9px] bg-gradient-to-b from-sky-400 to-sky-600 px-7 py-3 text-[15px] font-bold text-white shadow-[0_8px_22px_rgba(40,120,200,0.4)] hover:from-sky-300 hover:to-sky-500"
+            >
+              {t("evt_publish")}
+            </button>
+          </div>
         </form>
       )}
 
@@ -588,17 +687,6 @@ export function EventsPage() {
           </div>
         </div>
       </div>
-
-      {createdJoinCode && (
-        <div className="flex items-center justify-between rounded bg-emerald-900/30 px-4 py-3 text-sm text-emerald-300">
-          <span>
-            {t("evt_created_join_code_prefix")} <span className="font-mono text-base font-bold">{createdJoinCode}</span> {t("evt_created_join_code_suffix")}
-          </span>
-          <button onClick={() => setCreatedJoinCode(null)} className="font-bold">
-            ✕
-          </button>
-        </div>
-      )}
 
       {loading ? (
         <p className="text-sm text-zinc-500">{t("evt_loading")}</p>
