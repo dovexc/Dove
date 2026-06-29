@@ -52,6 +52,7 @@ interface CatalogState {
   detailReviews: GameReview[];
   detailChangelog: GameVersionNote[];
   detailLoading: boolean;
+  checkoutGame: CatalogGame | null;
   fetchCatalog: () => Promise<void>;
   fetchLibrary: () => Promise<void>;
   fetchWishlist: () => Promise<void>;
@@ -60,6 +61,8 @@ interface CatalogState {
   fetchStorageUsage: () => Promise<void>;
   publishGame: (game: NewCatalogGame) => Promise<void>;
   purchaseGame: (gameId: number) => Promise<void>;
+  openCheckout: (game: CatalogGame) => void;
+  closeCheckout: () => void;
   uploadGameFile: (gameId: number, file: File, version: string) => Promise<void>;
   revokeOwnership: (gameId: number) => Promise<void>;
   fetchPendingGames: () => Promise<void>;
@@ -97,6 +100,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   detailReviews: [],
   detailChangelog: [],
   detailLoading: false,
+  checkoutGame: null,
 
   fetchCatalog: async () => {
     set({ loading: true, error: null });
@@ -199,12 +203,16 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       await get().fetchLibrary();
       await get().fetchWishlist();
       await ensureInLocalLibrary(game);
+      set({ checkoutGame: null });
     } catch (e) {
       set({ error: String(e) });
     } finally {
       set({ purchasingId: null });
     }
   },
+
+  openCheckout: (game) => set({ checkoutGame: game, error: null }),
+  closeCheckout: () => set({ checkoutGame: null }),
 
   fetchStorageUsage: async () => {
     const headers = getAuthHeader();

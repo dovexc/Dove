@@ -144,7 +144,7 @@ export function StoreView() {
   const wishlistOnly = useCatalogStore((s) => s.wishlistOnly);
   const setWishlistOnly = useCatalogStore((s) => s.setWishlistOnly);
   const publishGame = useCatalogStore((s) => s.publishGame);
-  const purchaseGame = useCatalogStore((s) => s.purchaseGame);
+  const openCheckout = useCatalogStore((s) => s.openCheckout);
   const uploadGameFile = useCatalogStore((s) => s.uploadGameFile);
   const storageUsage = useCatalogStore((s) => s.storageUsage);
   const fetchStorageUsage = useCatalogStore((s) => s.fetchStorageUsage);
@@ -300,14 +300,13 @@ export function StoreView() {
       <button
         onClick={(e) => {
           e.stopPropagation();
-          purchaseGame(game.id);
+          openCheckout(game);
         }}
-        disabled={purchasingId === game.id}
-        className={`rounded font-semibold text-white bg-sky-600 hover:bg-sky-500 disabled:opacity-50 ${
+        className={`rounded font-semibold text-white bg-sky-600 hover:bg-sky-500 ${
           size === "lg" ? "px-5 py-2.5 text-sm" : "px-3 py-1 text-xs"
         }`}
       >
-        {purchasingId === game.id ? "..." : t("store_buy")}
+        {t("store_buy")}
       </button>
     );
   }
@@ -711,7 +710,7 @@ export function StoreView() {
           owned={ownedIds.has(detailGame.id)}
           isPublisher={authUser?.id === detailGame.publisher_user_id}
           purchasing={purchasingId === detailGame.id}
-          onPurchase={() => purchaseGame(detailGame.id)}
+          onPurchase={() => openCheckout(detailGame)}
         />
       )}
 

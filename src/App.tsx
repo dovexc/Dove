@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLibraryStore, registerGameEventListeners } from "./store";
 import { useAuthStore } from "./authStore";
+import { useCatalogStore } from "./catalogStore";
 import { GameCard } from "./components/GameCard";
 import { GameDetail } from "./components/GameDetail";
 import { AddGameDialog } from "./components/AddGameDialog";
@@ -12,6 +13,7 @@ import { LibraryHome } from "./components/LibraryHome";
 import { GameContextMenu } from "./components/GameContextMenu";
 import { StoreView } from "./components/store/StoreView";
 import { LoginDialog } from "./components/store/LoginDialog";
+import { CheckoutDialog } from "./components/store/CheckoutDialog";
 import { ProfilePage } from "./components/profile/ProfilePage";
 import { DownloadBar } from "./components/downloads/DownloadBar";
 import { DownloadsPage } from "./components/downloads/DownloadsPage";
@@ -131,6 +133,7 @@ function App() {
   const editingGame = games.find((g) => g.id === editingGameId) ?? null;
   const deletingGame = games.find((g) => g.id === deletingGameId) ?? null;
   const removingAccountGame = games.find((g) => g.id === removingAccountGameId) ?? null;
+  const checkoutGame = useCatalogStore((s) => s.checkoutGame);
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
@@ -377,6 +380,7 @@ function App() {
       {removingAccountGame && <RemoveFromAccountDialog game={removingAccountGame} />}
       {isSteamImportOpen && <SteamImportDialog />}
       {isLoginOpen && <LoginDialog onClose={() => setIsLoginOpen(false)} />}
+      {checkoutGame && <CheckoutDialog game={checkoutGame} />}
       <GameContextMenu />
     </div>
   );
