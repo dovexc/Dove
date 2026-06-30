@@ -12,9 +12,10 @@ use crate::models::{
     AuthResponse, BracketEntry, CatalogGame, CloudSave, DailyStat, EventBracket, EventMatch,
     EventTeam, GameEvent, GameReview, GameScreenshot, GameVersionNote, ImageUpload, LoginRequest,
     NewCatalogGame, NewEventTeam, NewGameEvent, NewGameReview, NewGameVersionNote, NewWalletTopup,
-    Notification, Order, ProfileScreenshot, PublicProfile, PublisherGameStats,
-    PublisherGameStatsDetail, RatingBucket, RegisterRequest, SetBadgeRequest, SetMatchWinner,
-    SetPlayingRequest, TagRanking, UpdateCatalogGame, UpdateProfileRequest, User, WalletTopup,
+    Notification, NewUserReport, Order, ProfileScreenshot, PublicProfile, PublisherGameStats,
+    PublisherGameStatsDetail, RatingBucket, RegisterRequest, ReportedUserSummary, SetBadgeRequest,
+    SetLanguageRequest, SetMatchWinner, SetPlayingRequest, SourceCount, TagRanking, UnbanRequest,
+    UpdateCatalogGame, UpdateProfileRequest, User, UserReport, WalletTopup,
 };
 use crate::state::AppState;
 use crate::storage::Storage;
@@ -45,13 +46,15 @@ fn row_to_user(row: &PgRow) -> Result<User, sqlx::Error> {
         equipped_badge: equipped_badge_key
             .and_then(|k| Badge::from_key(&k, equipped_badge_earned_at.unwrap_or_default())),
         wallet_balance_cents: row.try_get(11)?,
+        is_banned: row.try_get(12)?,
+        language: row.try_get(13)?,
     })
 }
 
 const USER_COLUMNS: &str = "id, email, display_name, avatar_url, background_url, bio, \
     created_at::TEXT, is_profile_hidden, is_admin, users.equipped_badge, \
     (SELECT earned_at::TEXT FROM user_badges WHERE user_id = users.id AND badge_key = users.equipped_badge), \
-    wallet_balance_cents";
+    wallet_balance_cents, is_banned, language";
 
 async fn fetch_user(pool: &PgPool, user_id: i64) -> Result<User, sqlx::Error> {
     let row = sqlx::query(&format!("SELECT {USER_COLUMNS} FROM users WHERE id = $1"))
@@ -131,14 +134,20 @@ pub async fn register(
     Json(req): Json<RegisterRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
     let password_hash = hash_password(&req.password).map_err(internal_error)?;
+    let language = match req.language.as_deref() {
+        Some("de") => "de",
+        _ => "en",
+    };
 
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO users (email, password_hash, display_name, storage_quota_bytes) VALUES ($1, $2, $3, $4) RETURNING id",
+        "INSERT INTO users (email, password_hash, display_name, storage_quota_bytes, language) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(&req.email)
     .bind(&password_hash)
     .bind(&req.display_name)
     .bind(state.default_quota_bytes)
+    .bind(language)
     .fetch_one(&state.db)
     .await
     .map_err(|e| (StatusCode::CONFLICT, format!("E-Mail bereits registriert: {e}")))?;
@@ -147,6 +156,9 @@ pub async fn register(
     let user = fetch_user(&state.db, id).await.map_err(internal_error)?;
 
     let token = create_token(id, &state.jwt_secret).map_err(internal_error)?;
+
+    let (subject, html) = crate::email::welcome_email(&user.language, &user.display_name);
+    crate::email::send_email(&state, &user.email, &subject, html).await;
 
     Ok(Json(AuthResponse { token, user }))
 }
@@ -157,16 +169,20 @@ pub async fn login(
 ) -> Result<Json<AuthResponse>, ApiError> {
     let unauthorized = || (StatusCode::UNAUTHORIZED, "Ungültige Anmeldedaten".to_string());
 
-    let row = sqlx::query("SELECT id, password_hash FROM users WHERE email = $1")
+    let row = sqlx::query("SELECT id, password_hash, is_banned FROM users WHERE email = $1")
         .bind(&req.email)
         .fetch_one(&state.db)
         .await
         .map_err(|_| unauthorized())?;
     let id: i64 = row.try_get(0).map_err(internal_error)?;
     let password_hash: String = row.try_get(1).map_err(internal_error)?;
+    let is_banned: bool = row.try_get(2).map_err(internal_error)?;
 
     if !verify_password(&req.password, &password_hash) {
         return Err(unauthorized());
+    }
+    if is_banned {
+        return Err((StatusCode::FORBIDDEN, "Account gesperrt".to_string()));
     }
 
     sync_admin_flag(&state.db, id, &req.email, &state).await;
@@ -218,6 +234,28 @@ pub async fn update_profile(
     }
 
     fetch_user(&state.db, user_id).await.map(Json).map_err(internal_error)
+}
+
+/// Syncs the frontend's `i18nStore` language to the server — used to pick
+/// which language transactional emails (welcome, purchase, wishlist sale,
+/// ban) go out in.
+pub async fn set_language(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Json(req): Json<SetLanguageRequest>,
+) -> Result<StatusCode, ApiError> {
+    let language = match req.language.as_str() {
+        "en" => "en",
+        "de" => "de",
+        _ => return Err((StatusCode::BAD_REQUEST, "Ungültige Sprache".to_string())),
+    };
+    sqlx::query("UPDATE users SET language = $1 WHERE id = $2")
+        .bind(language)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// All badges a user has earned — public, like a Discord profile's badge
@@ -568,7 +606,20 @@ pub async fn get_user_profile(
         && user.id != current_user_id
         && !are_friends(&state.db, current_user_id, user_id).await
     {
-        return Err(not_found());
+        // Moderators need to be able to look at a reported account's
+        // profile regardless of its privacy setting — otherwise the
+        // accounts most likely to hide behind a private profile would be
+        // the ones immune to the "open reported account" link in
+        // moderation.
+        let viewer_is_admin: bool =
+            sqlx::query_scalar("SELECT is_admin FROM users WHERE id = $1")
+                .bind(current_user_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap_or(false);
+        if !viewer_is_admin {
+            return Err(not_found());
+        }
     }
 
     let screenshot_rows = sqlx::query(&format!(
@@ -1225,6 +1276,417 @@ pub async fn demote_user(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Lets any signed-in user flag another account for moderation review —
+/// the report itself doesn't take any action, it just surfaces in
+/// `list_user_reports` for an admin to act on.
+const MAX_REPORT_IMAGES: usize = 4;
+
+pub async fn report_user(
+    State(state): State<AppState>,
+    AuthUser(reporter_id): AuthUser,
+    Path(reported_user_id): Path<i64>,
+    Json(body): Json<NewUserReport>,
+) -> Result<StatusCode, ApiError> {
+    let reason = body.reason.trim();
+    if reason.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Bitte gib einen Grund an".to_string()));
+    }
+    if reported_user_id == reporter_id {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Du kannst dich nicht selbst melden".to_string(),
+        ));
+    }
+    if body.images.len() > MAX_REPORT_IMAGES {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("Maximal {MAX_REPORT_IMAGES} Bilder pro Meldung"),
+        ));
+    }
+
+    let report_id: i64 = sqlx::query_scalar(
+        "INSERT INTO user_reports (reporter_user_id, reported_user_id, reason) VALUES ($1, $2, $3) \
+         RETURNING id",
+    )
+    .bind(reporter_id)
+    .bind(reported_user_id)
+    .bind(reason)
+    .fetch_one(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    for image in &body.images {
+        let image_url = save_data_url_image(&state.storage, image).await?;
+        sqlx::query("INSERT INTO user_report_images (report_id, image_url) VALUES ($1, $2)")
+            .bind(report_id)
+            .bind(image_url)
+            .execute(&state.db)
+            .await
+            .map_err(internal_error)?;
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn unban_user(
+    State(state): State<AppState>,
+    AdminUser(_admin_id): AdminUser,
+    Path(target_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let result = sqlx::query("UPDATE users SET is_banned = FALSE WHERE id = $1")
+        .bind(target_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+    if result.rows_affected() == 0 {
+        return Err((StatusCode::NOT_FOUND, "Nutzer nicht gefunden".to_string()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn row_to_user_report(row: &PgRow) -> Result<UserReport, sqlx::Error> {
+    Ok(UserReport {
+        id: row.try_get(0)?,
+        reason: row.try_get(1)?,
+        created_at: row.try_get(2)?,
+        reporter: ReportedUserSummary {
+            id: row.try_get(3)?,
+            display_name: row.try_get(4)?,
+            email: row.try_get(5)?,
+        },
+        reported: ReportedUserSummary {
+            id: row.try_get(6)?,
+            display_name: row.try_get(7)?,
+            email: row.try_get(8)?,
+        },
+        images: Vec::new(),
+    })
+}
+
+/// Open reports, newest first — an admin works through these the same way
+/// they work through `list_pending_games`.
+pub async fn list_user_reports(
+    State(state): State<AppState>,
+    AdminUser(_admin_id): AdminUser,
+) -> Result<Json<Vec<UserReport>>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT ur.id, ur.reason, ur.created_at::TEXT, \
+            reporter.id, reporter.display_name, reporter.email, \
+            reported.id, reported.display_name, reported.email \
+         FROM user_reports ur \
+         JOIN users reporter ON reporter.id = ur.reporter_user_id \
+         JOIN users reported ON reported.id = ur.reported_user_id \
+         WHERE ur.status = 'pending' \
+         ORDER BY ur.created_at DESC",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let mut reports: Vec<UserReport> =
+        rows.iter().filter_map(|r| row_to_user_report(r).ok()).collect();
+
+    // Separate query rather than a JOIN — keeps the array-aggregation out of
+    // SQL (this codebase prefers grouping child rows in Rust, see
+    // `tag_rankings` in `get_publisher_game_stats_detail`).
+    let report_ids: Vec<i64> = reports.iter().map(|r| r.id).collect();
+    let image_rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT report_id, image_url FROM user_report_images WHERE report_id = ANY($1) \
+         ORDER BY created_at ASC",
+    )
+    .bind(&report_ids)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let mut images_by_report: std::collections::HashMap<i64, Vec<String>> =
+        std::collections::HashMap::new();
+    for (report_id, image_url) in image_rows {
+        images_by_report.entry(report_id).or_default().push(image_url);
+    }
+    for report in &mut reports {
+        if let Some(images) = images_by_report.remove(&report.id) {
+            report.images = images;
+        }
+    }
+
+    Ok(Json(reports))
+}
+
+pub async fn dismiss_user_report(
+    State(state): State<AppState>,
+    AdminUser(admin_id): AdminUser,
+    Path(report_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let result = sqlx::query(
+        "UPDATE user_reports SET status = 'dismissed', resolved_at = now(), resolved_by_user_id = $1 \
+         WHERE id = $2 AND status = 'pending'",
+    )
+    .bind(admin_id)
+    .bind(report_id)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
+    if result.rows_affected() == 0 {
+        return Err((StatusCode::NOT_FOUND, "Meldung nicht gefunden".to_string()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Bans the reported account and resolves every other pending report
+/// against the same user too — otherwise they'd linger in the queue for an
+/// account that's already banned.
+pub async fn ban_user_from_report(
+    State(state): State<AppState>,
+    AdminUser(admin_id): AdminUser,
+    Path(report_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let reported_user_id: i64 = sqlx::query_scalar(
+        "SELECT reported_user_id FROM user_reports WHERE id = $1",
+    )
+    .bind(report_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(internal_error)?
+    .ok_or((StatusCode::NOT_FOUND, "Meldung nicht gefunden".to_string()))?;
+
+    sqlx::query("UPDATE users SET is_banned = TRUE WHERE id = $1")
+        .bind(reported_user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+
+    sqlx::query(
+        "UPDATE user_reports SET status = 'actioned', resolved_at = now(), resolved_by_user_id = $1 \
+         WHERE reported_user_id = $2 AND status = 'pending'",
+    )
+    .bind(admin_id)
+    .bind(reported_user_id)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    send_ban_notification(&state, reported_user_id).await;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Generates a fresh unban-request token for `user_id` and emails them the
+/// link to use it — shared by every path that can ban an account.
+async fn send_ban_notification(state: &AppState, user_id: i64) {
+    let token = uuid::Uuid::new_v4().to_string();
+    let inserted = sqlx::query(
+        "INSERT INTO unban_requests (user_id, token) VALUES ($1, $2)",
+    )
+    .bind(user_id)
+    .bind(&token)
+    .execute(&state.db)
+    .await
+    .is_ok();
+    if !inserted {
+        return;
+    }
+
+    if let Ok((email, display_name, language)) = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT email, display_name, language FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await
+    {
+        let unban_url = format!("{}/unban?token={token}", state.public_base_url);
+        let (subject, html) =
+            crate::email::ban_notification_email(&language, &display_name, &unban_url);
+        crate::email::send_email(state, &email, &subject, html).await;
+    }
+}
+
+fn unban_page_html(content: &str) -> String {
+    format!(
+        "<!DOCTYPE html><html lang=\"de\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <title>Dove – Entbannungsantrag</title>\
+         <style>body{{font-family:sans-serif;max-width:480px;margin:60px auto;padding:0 20px;color:#1a1a1a}}\
+         textarea{{width:100%;min-height:120px;padding:8px;font-family:inherit;font-size:14px;box-sizing:border-box}}\
+         button{{background:#1d4ed8;color:#fff;border:none;padding:10px 20px;border-radius:4px;cursor:pointer;font-size:14px}}\
+         button:disabled{{opacity:.5}}</style></head><body>\
+         <h2>Dove – Entbannungsantrag</h2>{content}</body></html>"
+    )
+}
+
+fn unban_form_html(token: &str) -> String {
+    unban_page_html(&format!(
+        "<div id=\"form-wrap\">\
+           <p>Wenn du glaubst, dass dein Account zu Unrecht gesperrt wurde, beschreibe hier kurz warum:</p>\
+           <textarea id=\"msg\" placeholder=\"Begründung...\"></textarea><br><br>\
+           <button id=\"submit-btn\" onclick=\"submitRequest()\">Antrag senden</button>\
+           <p id=\"error\" style=\"color:#c00\"></p>\
+         </div>\
+         <script>\
+         async function submitRequest() {{\
+           var btn = document.getElementById('submit-btn');\
+           var msg = document.getElementById('msg').value;\
+           var err = document.getElementById('error');\
+           err.textContent = '';\
+           btn.disabled = true;\
+           try {{\
+             var res = await fetch('/unban', {{\
+               method: 'POST',\
+               headers: {{'Content-Type': 'application/json'}},\
+               body: JSON.stringify({{token: '{token}', message: msg}})\
+             }});\
+             if (!res.ok) {{ err.textContent = await res.text(); btn.disabled = false; return; }}\
+             document.getElementById('form-wrap').innerHTML = '<p>Danke, dein Antrag wurde eingereicht und wird geprüft.</p>';\
+           }} catch (e) {{ err.textContent = 'Netzwerkfehler, bitte später erneut versuchen.'; btn.disabled = false; }}\
+         }}\
+         </script>"
+    ))
+}
+
+#[derive(serde::Deserialize)]
+pub struct UnbanTokenQuery {
+    pub token: String,
+}
+
+/// Public, unauthenticated page — a banned user can't log into the app to
+/// reach anything behind `AuthUser`, so this has to live outside the JSON
+/// API entirely.
+pub async fn unban_page(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<UnbanTokenQuery>,
+) -> axum::response::Html<String> {
+    let status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM unban_requests WHERE token = $1")
+            .bind(&query.token)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None);
+
+    let body = match status.as_deref() {
+        None => unban_page_html("<p>Dieser Link ist ungültig oder abgelaufen.</p>"),
+        Some("pending") => {
+            unban_page_html("<p>Dein Entbannungsantrag wurde bereits eingereicht und wird geprüft.</p>")
+        }
+        Some("approved") => {
+            unban_page_html("<p>Dein Account wurde bereits wieder entsperrt. Du kannst dich jetzt einloggen.</p>")
+        }
+        Some("denied") => unban_page_html("<p>Dein Entbannungsantrag wurde abgelehnt.</p>"),
+        Some(_) => unban_form_html(&query.token),
+    };
+    axum::response::Html(body)
+}
+
+#[derive(serde::Deserialize)]
+pub struct SubmitUnbanRequest {
+    pub token: String,
+    pub message: String,
+}
+
+pub async fn submit_unban_request(
+    State(state): State<AppState>,
+    Json(body): Json<SubmitUnbanRequest>,
+) -> Result<StatusCode, ApiError> {
+    let message = body.message.trim();
+    if message.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Bitte gib eine Begründung an".to_string()));
+    }
+
+    let result = sqlx::query(
+        "UPDATE unban_requests SET message = $1, status = 'pending', submitted_at = now() \
+         WHERE token = $2 AND status = 'awaiting_user'",
+    )
+    .bind(message)
+    .bind(&body.token)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
+    if result.rows_affected() == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Ungültiger oder bereits verwendeter Link".to_string(),
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn row_to_unban_request(row: &PgRow) -> Result<UnbanRequest, sqlx::Error> {
+    Ok(UnbanRequest {
+        id: row.try_get(0)?,
+        message: row.try_get(1)?,
+        created_at: row.try_get(2)?,
+        user: ReportedUserSummary {
+            id: row.try_get(3)?,
+            display_name: row.try_get(4)?,
+            email: row.try_get(5)?,
+        },
+    })
+}
+
+pub async fn list_unban_requests(
+    State(state): State<AppState>,
+    AdminUser(_admin_id): AdminUser,
+) -> Result<Json<Vec<UnbanRequest>>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT ur.id, ur.message, ur.submitted_at::TEXT, u.id, u.display_name, u.email \
+         FROM unban_requests ur JOIN users u ON u.id = ur.user_id \
+         WHERE ur.status = 'pending' ORDER BY ur.submitted_at DESC",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let requests = rows.iter().filter_map(|r| row_to_unban_request(r).ok()).collect();
+    Ok(Json(requests))
+}
+
+pub async fn approve_unban_request(
+    State(state): State<AppState>,
+    AdminUser(admin_id): AdminUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let user_id: i64 = sqlx::query_scalar(
+        "SELECT user_id FROM unban_requests WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(internal_error)?
+    .ok_or((StatusCode::NOT_FOUND, "Antrag nicht gefunden".to_string()))?;
+
+    sqlx::query("UPDATE users SET is_banned = FALSE WHERE id = $1")
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+    sqlx::query(
+        "UPDATE unban_requests SET status = 'approved', resolved_at = now(), resolved_by_user_id = $1 \
+         WHERE id = $2",
+    )
+    .bind(admin_id)
+    .bind(id)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn deny_unban_request(
+    State(state): State<AppState>,
+    AdminUser(admin_id): AdminUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let result = sqlx::query(
+        "UPDATE unban_requests SET status = 'denied', resolved_at = now(), resolved_by_user_id = $1 \
+         WHERE id = $2 AND status = 'pending'",
+    )
+    .bind(admin_id)
+    .bind(id)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
+    if result.rows_affected() == 0 {
+        return Err((StatusCode::NOT_FOUND, "Antrag nicht gefunden".to_string()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Lists games awaiting moderation, oldest first so the queue is worked
 /// through in order.
 pub async fn list_pending_games(
@@ -1330,11 +1792,13 @@ pub async fn update_game(
     Path(game_id): Path<i64>,
     Json(req): Json<UpdateCatalogGame>,
 ) -> Result<Json<CatalogGame>, ApiError> {
-    let publisher_id: i64 = sqlx::query_scalar("SELECT publisher_user_id FROM catalog_games WHERE id = $1")
-        .bind(game_id)
-        .fetch_one(&state.db)
-        .await
-        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+    let (publisher_id, previous_sale_price_cents): (i64, Option<i64>) = sqlx::query_as(
+        "SELECT publisher_user_id, sale_price_cents FROM catalog_games WHERE id = $1",
+    )
+    .bind(game_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
     if publisher_id != user_id {
         return Err((
             StatusCode::FORBIDDEN,
@@ -1363,7 +1827,44 @@ pub async fn update_game(
     .await
     .map_err(internal_error)?;
 
-    fetch_game(&state.db, game_id).await.map(Json).map_err(internal_error)
+    let game = fetch_game(&state.db, game_id).await.map_err(internal_error)?;
+
+    // Only notify on a *new* offer (no sale -> sale) — otherwise an
+    // unrelated edit (e.g. a typo fix) while a sale is already running
+    // would re-spam everyone who has the game wishlisted.
+    if previous_sale_price_cents.is_none() {
+        if let Some(sale_price_cents) = req.sale_price_cents {
+            let wishlisters: Vec<(i64, String, String, String)> = sqlx::query_as(
+                "SELECT u.id, u.email, u.display_name, u.language FROM wishlist_items wi \
+                 JOIN users u ON u.id = wi.user_id WHERE wi.catalog_game_id = $1",
+            )
+            .bind(game_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
+
+            for (wishlister_id, email, display_name, language) in wishlisters {
+                let (subject, html) = crate::email::wishlist_sale_email(
+                    &language,
+                    &display_name,
+                    &game.title,
+                    sale_price_cents,
+                );
+                crate::email::send_email(&state, &email, &subject, html).await;
+                create_notification(
+                    &state.db,
+                    wishlister_id,
+                    "wishlist_sale",
+                    &format!("{} ist jetzt im Angebot!", game.title),
+                    None,
+                    None,
+                )
+                .await;
+            }
+        }
+    }
+
+    Ok(Json(game))
 }
 
 const ORDER_COLUMNS: &str = "orders.id, orders.user_id, orders.catalog_game_id, \
@@ -1473,6 +1974,22 @@ pub async fn purchase_game(
 
     tx.commit().await.map_err(internal_error)?;
 
+    if let Ok((email, display_name, language)) = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT email, display_name, language FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await
+    {
+        let (subject, html) = crate::email::purchase_confirmation_email(
+            &language,
+            &display_name,
+            &game.title,
+            effective_price,
+        );
+        crate::email::send_email(&state, &email, &subject, html).await;
+    }
+
     Ok(Json(game))
 }
 
@@ -1580,20 +2097,96 @@ pub async fn list_wishlist(
     Ok(Json(games))
 }
 
+#[derive(serde::Deserialize)]
+pub struct ViewQuery {
+    pub source: Option<String>,
+}
+
+const VIEW_SOURCES: &[&str] = &["search", "recommendation", "wishlist", "catalog"];
+
 /// Logs that the player looked at a game's store page — feeds
 /// `list_recommendations` below. Upserts rather than appending so this
 /// stays a small "most recently viewed" set instead of an unbounded log.
+/// `source` records where in the UI the click came from (search, a
+/// recommendation card, the wishlist, or plain catalog browsing) for the
+/// publisher-analytics traffic-source breakdown; unrecognized/missing
+/// values fall back to "catalog" rather than erroring, since this is a
+/// best-effort analytics signal, not a strict input.
 pub async fn record_game_view(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
+    axum::extract::Query(query): axum::extract::Query<ViewQuery>,
 ) -> Result<StatusCode, ApiError> {
+    let source = query
+        .source
+        .as_deref()
+        .filter(|s| VIEW_SOURCES.contains(s))
+        .unwrap_or("catalog");
     sqlx::query(
-        "INSERT INTO game_views (user_id, catalog_game_id, viewed_at) VALUES ($1, $2, now()) \
-         ON CONFLICT (user_id, catalog_game_id) DO UPDATE SET viewed_at = now()",
+        "INSERT INTO game_views (user_id, catalog_game_id, viewed_at, source) VALUES ($1, $2, now(), $3) \
+         ON CONFLICT (user_id, catalog_game_id) DO UPDATE SET viewed_at = now(), source = excluded.source",
     )
     .bind(user_id)
     .bind(game_id)
+    .bind(source)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(serde::Deserialize)]
+pub struct PlaytimeReport {
+    pub seconds: i64,
+}
+
+/// Best-effort periodic playtime heartbeat from the desktop client (see
+/// `spawn_playtime_heartbeat` in `src-tauri/src/commands.rs`) — feeds the
+/// "average playtime" column in publisher analytics. Appends rather than
+/// upserts so the existing `from`/`to` date-range filtering in
+/// `list_my_publisher_stats` works unchanged.
+pub async fn report_playtime(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+    Json(body): Json<PlaytimeReport>,
+) -> Result<StatusCode, ApiError> {
+    sqlx::query(
+        "INSERT INTO game_playtime_events (user_id, catalog_game_id, seconds) VALUES ($1, $2, $3)",
+    )
+    .bind(user_id)
+    .bind(game_id)
+    .bind(body.seconds)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(serde::Deserialize)]
+pub struct InstallEventReport {
+    pub event_type: String,
+}
+
+/// Best-effort install/uninstall signal from the desktop client (local
+/// install state never otherwise reaches the server) — feeds the
+/// installs/uninstalls columns in publisher analytics.
+pub async fn report_install_event(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+    Json(body): Json<InstallEventReport>,
+) -> Result<StatusCode, ApiError> {
+    if body.event_type != "install" && body.event_type != "uninstall" {
+        return Err((StatusCode::BAD_REQUEST, "Ungültiger event_type".to_string()));
+    }
+    sqlx::query(
+        "INSERT INTO game_install_events (user_id, catalog_game_id, event_type) VALUES ($1, $2, $3)",
+    )
+    .bind(user_id)
+    .bind(game_id)
+    .bind(body.event_type)
     .execute(&state.db)
     .await
     .map_err(internal_error)?;
@@ -1717,6 +2310,9 @@ fn row_to_publisher_game_stats(row: &PgRow) -> Result<PublisherGameStats, sqlx::
         view_count: row.try_get(7)?,
         avg_rating: row.try_get(8)?,
         review_count: row.try_get(9)?,
+        avg_playtime_seconds: row.try_get(10)?,
+        installs_count: row.try_get(11)?,
+        uninstalls_count: row.try_get(12)?,
     })
 }
 
@@ -1764,7 +2360,19 @@ pub async fn list_my_publisher_stats(
                 AND game_reviews.created_at >= $2::date AND game_reviews.created_at < $3::date + 1) AS avg_rating, \
             (SELECT COUNT(*) FROM game_reviews \
                 WHERE game_reviews.catalog_game_id = catalog_games.id \
-                AND game_reviews.created_at >= $2::date AND game_reviews.created_at < $3::date + 1) AS review_count \
+                AND game_reviews.created_at >= $2::date AND game_reviews.created_at < $3::date + 1) AS review_count, \
+            (SELECT AVG(per_user.total)::float8 FROM ( \
+                SELECT user_id, SUM(seconds) AS total FROM game_playtime_events \
+                WHERE game_playtime_events.catalog_game_id = catalog_games.id \
+                AND game_playtime_events.created_at >= $2::date AND game_playtime_events.created_at < $3::date + 1 \
+                GROUP BY user_id \
+            ) per_user) AS avg_playtime_seconds, \
+            (SELECT COUNT(*) FROM game_install_events \
+                WHERE game_install_events.catalog_game_id = catalog_games.id AND game_install_events.event_type = 'install' \
+                AND game_install_events.created_at >= $2::date AND game_install_events.created_at < $3::date + 1) AS installs_count, \
+            (SELECT COUNT(*) FROM game_install_events \
+                WHERE game_install_events.catalog_game_id = catalog_games.id AND game_install_events.event_type = 'uninstall' \
+                AND game_install_events.created_at >= $2::date AND game_install_events.created_at < $3::date + 1) AS uninstalls_count \
          FROM catalog_games \
          WHERE catalog_games.publisher_user_id = $1 \
          ORDER BY catalog_games.created_at DESC",
@@ -1800,13 +2408,29 @@ pub async fn get_publisher_game_stats_detail(
         ));
     }
 
-    let (units_sold, revenue_cents, wishlist_count, view_count): (i64, i64, i64, i64) = sqlx::query_as(
+    let (
+        units_sold,
+        revenue_cents,
+        wishlist_count,
+        view_count,
+        avg_playtime_seconds,
+        installs_count,
+        uninstalls_count,
+    ): (i64, i64, i64, i64, Option<f64>, i64, i64) = sqlx::query_as(
         "SELECT \
             (SELECT COUNT(*) FROM orders WHERE orders.catalog_game_id = $1 AND orders.status = 'paid'), \
             (SELECT COALESCE(SUM(amount_cents), 0)::BIGINT FROM orders \
                 WHERE orders.catalog_game_id = $1 AND orders.status = 'paid'), \
             (SELECT COUNT(*) FROM wishlist_items WHERE wishlist_items.catalog_game_id = $1), \
-            (SELECT COUNT(*) FROM game_views WHERE game_views.catalog_game_id = $1)",
+            (SELECT COUNT(*) FROM game_views WHERE game_views.catalog_game_id = $1), \
+            (SELECT AVG(per_user.total)::float8 FROM ( \
+                SELECT user_id, SUM(seconds) AS total FROM game_playtime_events \
+                WHERE game_playtime_events.catalog_game_id = $1 GROUP BY user_id \
+            ) per_user), \
+            (SELECT COUNT(*) FROM game_install_events \
+                WHERE game_install_events.catalog_game_id = $1 AND game_install_events.event_type = 'install'), \
+            (SELECT COUNT(*) FROM game_install_events \
+                WHERE game_install_events.catalog_game_id = $1 AND game_install_events.event_type = 'uninstall')",
     )
     .bind(game_id)
     .fetch_one(&state.db)
@@ -1824,7 +2448,21 @@ pub async fn get_publisher_game_stats_detail(
         view_count,
         avg_rating: game.avg_rating,
         review_count: game.review_count,
+        avg_playtime_seconds,
+        installs_count,
+        uninstalls_count,
     };
+
+    let views_by_source: Vec<SourceCount> = sqlx::query_as(
+        "SELECT source, COUNT(*) FROM game_views WHERE catalog_game_id = $1 GROUP BY source",
+    )
+    .bind(game_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?
+    .into_iter()
+    .map(|(source, count): (String, i64)| SourceCount { source, count })
+    .collect();
 
     let daily_rows: Vec<(String, i64, i64)> = sqlx::query_as(
         "SELECT to_char(d::date, 'YYYY-MM-DD'), COUNT(orders.id), COALESCE(SUM(orders.amount_cents), 0)::BIGINT \
@@ -1890,7 +2528,7 @@ pub async fn get_publisher_game_stats_detail(
         tag_rankings.push(TagRanking { tag: tag.clone(), rank, total });
     }
 
-    Ok(Json(PublisherGameStatsDetail { stats, daily, rating_distribution, tag_rankings }))
+    Ok(Json(PublisherGameStatsDetail { stats, daily, rating_distribution, tag_rankings, views_by_source }))
 }
 
 pub async fn add_to_wishlist(

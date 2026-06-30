@@ -1,6 +1,7 @@
 mod auth;
 mod badges;
 mod db;
+mod email;
 mod handlers;
 #[cfg(test)]
 mod handler_tests;
@@ -151,6 +152,18 @@ async fn main() {
         .filter(|e| !e.is_empty())
         .collect();
 
+    let resend_api_key = std::env::var("RESEND_API_KEY").ok();
+    if resend_api_key.is_none() {
+        tracing::warn!(
+            "RESEND_API_KEY ist nicht gesetzt — E-Mails (Registrierung, Käufe, Wunschlisten-Angebote, \
+             Bann) werden nur geloggt, nicht verschickt."
+        );
+    }
+    let email_from = std::env::var("DOVE_EMAIL_FROM")
+        .unwrap_or_else(|_| "Dove <onboarding@resend.dev>".to_string());
+    let public_base_url = std::env::var("DOVE_PUBLIC_BASE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:4000".to_string());
+
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://dove:dove_dev_password@localhost:5432/dove".to_string());
     let pool = db::init(&database_url).await;
@@ -166,6 +179,9 @@ async fn main() {
             Duration::from_secs(AUTH_RATE_LIMIT_WINDOW_SECS),
         )),
         admin_emails,
+        resend_api_key,
+        email_from,
+        public_base_url,
     };
 
     let cors = CorsLayer::new()
@@ -213,6 +229,10 @@ async fn main() {
         .route("/api/me/badge", axum::routing::patch(handlers::set_equipped_badge))
         .route("/api/users/:id/badges", get(handlers::list_user_badges))
         .route("/api/me/password", post(handlers::change_password))
+        .route(
+            "/api/me/language",
+            axum::routing::patch(handlers::set_language),
+        )
         .route("/api/me/avatar", post(handlers::upload_avatar))
         .route("/api/me/background", post(handlers::upload_background))
         .route(
@@ -337,6 +357,33 @@ async fn main() {
         .route("/api/admin/users", get(handlers::list_users_for_admin))
         .route("/api/users/:id/promote", post(handlers::promote_user))
         .route("/api/users/:id/demote", post(handlers::demote_user))
+        .route("/api/users/:id/unban", post(handlers::unban_user))
+        .route("/api/users/:id/report", post(handlers::report_user))
+        .route("/api/admin/reports", get(handlers::list_user_reports))
+        .route(
+            "/api/admin/reports/:id/dismiss",
+            post(handlers::dismiss_user_report),
+        )
+        .route(
+            "/api/admin/reports/:id/ban",
+            post(handlers::ban_user_from_report),
+        )
+        .route(
+            "/api/admin/unban-requests",
+            get(handlers::list_unban_requests),
+        )
+        .route(
+            "/api/admin/unban-requests/:id/approve",
+            post(handlers::approve_unban_request),
+        )
+        .route(
+            "/api/admin/unban-requests/:id/deny",
+            post(handlers::deny_unban_request),
+        )
+        .route(
+            "/unban",
+            get(handlers::unban_page).post(handlers::submit_unban_request),
+        )
         .route(
             "/api/games/:id/purchase",
             post(handlers::purchase_game).delete(handlers::revoke_ownership),
@@ -355,6 +402,11 @@ async fn main() {
             post(handlers::add_to_wishlist).delete(handlers::remove_from_wishlist),
         )
         .route("/api/games/:id/view", post(handlers::record_game_view))
+        .route("/api/me/games/:id/playtime", post(handlers::report_playtime))
+        .route(
+            "/api/games/:id/install-event",
+            post(handlers::report_install_event),
+        )
         .route("/api/me/recommendations", get(handlers::list_recommendations))
         .route(
             "/api/me/publisher/stats",

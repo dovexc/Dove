@@ -88,7 +88,10 @@ interface CatalogState {
   rejectGame: (gameId: number) => Promise<void>;
   clearError: () => void;
   setWishlistOnly: (value: boolean) => void;
-  openGameDetail: (game: CatalogGame) => Promise<void>;
+  openGameDetail: (
+    game: CatalogGame,
+    source?: "search" | "recommendation" | "wishlist" | "catalog"
+  ) => Promise<void>;
   closeGameDetail: () => void;
   refreshDetailReviews: (gameId: number) => Promise<void>;
   submitReview: (gameId: number, rating: number, body: string | null) => Promise<void>;
@@ -432,7 +435,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   clearError: () => set({ error: null }),
   setWishlistOnly: (value) => set({ wishlistOnly: value }),
 
-  openGameDetail: async (game) => {
+  openGameDetail: async (game, source = "catalog") => {
     set({
       detailGame: game,
       detailScreenshots: [],
@@ -453,7 +456,10 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
 
       const headers = getAuthHeader();
       if (headers.Authorization) {
-        fetch(`${API_BASE}/api/games/${game.id}/view`, { method: "POST", headers }).catch(() => {});
+        fetch(`${API_BASE}/api/games/${game.id}/view?source=${source}`, {
+          method: "POST",
+          headers,
+        }).catch(() => {});
       }
     } catch (e) {
       set({ error: String(e), detailLoading: false });

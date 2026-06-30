@@ -5,7 +5,7 @@ export type Language = "de" | "en";
 const STORAGE_KEY = "dove_language";
 
 function getStoredLanguage(): Language {
-  return localStorage.getItem(STORAGE_KEY) === "en" ? "en" : "de";
+  return localStorage.getItem(STORAGE_KEY) === "de" ? "de" : "en";
 }
 
 interface I18nState {

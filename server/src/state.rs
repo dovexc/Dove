@@ -22,6 +22,13 @@ pub struct AppState {
     /// Lowercased emails granted moderator access on login/register — a
     /// one-way bootstrap (see `sync_admin_flag`), not a live role source.
     pub admin_emails: Vec<String>,
+    /// `None` means outbound email is disabled — `email::send_email` logs
+    /// instead of sending, so the server runs fine without a Resend account.
+    pub resend_api_key: Option<String>,
+    pub email_from: String,
+    /// Origin used to build links embedded in emails (e.g. the unban-request
+    /// link) — `https://api.dovexc.com` in production.
+    pub public_base_url: String,
 }
 
 #[cfg(test)]
@@ -40,6 +47,9 @@ impl AppState {
             default_quota_bytes: 5 * 1024 * 1024 * 1024,
             clamd_address: None,
             admin_emails: Vec::new(),
+            resend_api_key: None,
+            email_from: "Dove <onboarding@resend.dev>".to_string(),
+            public_base_url: "http://127.0.0.1:4000".to_string(),
         }
     }
 }

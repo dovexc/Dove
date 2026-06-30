@@ -11,6 +11,12 @@ function formatPrice(priceCents: number, t: (key: TranslationKey) => string): st
   return priceCents === 0 ? t("price_free") : `${(priceCents / 100).toFixed(2)} €`;
 }
 
+// Unlike a game's listing price, 0 wallet balance means "0,00 €" — never
+// "kostenlos" — so this always renders the amount.
+function formatBalance(amountCents: number): string {
+  return `${(amountCents / 100).toFixed(2)} €`;
+}
+
 interface Props {
   game: CatalogGame;
 }
@@ -85,14 +91,20 @@ export function CheckoutDialog({ game }: Props) {
         </div>
 
         {isPaid && (
-          <div
-            className={`flex items-center justify-between rounded px-3 py-2 text-sm ${
+          <button
+            type="button"
+            onClick={() => setShowTopUp(true)}
+            title={t("wallet_topup_open")}
+            className={`flex items-center justify-between rounded px-3 py-2 text-sm hover:brightness-110 ${
               insufficientFunds ? "bg-red-900/30 text-red-300" : "bg-zinc-800/60 text-zinc-300"
             }`}
           >
             <span>{t("wallet_balance")}</span>
-            <span className="font-semibold">{formatPrice(walletBalanceCents, t)}</span>
-          </div>
+            <span className="flex items-center gap-2 font-semibold">
+              {formatBalance(walletBalanceCents)}
+              <span className="text-xs font-normal underline">{t("wallet_topup_open")}</span>
+            </span>
+          </button>
         )}
 
         <div className="flex flex-col gap-2">

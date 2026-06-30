@@ -20,6 +20,48 @@ pub struct User {
     /// here the balance is actually spendable today instead of just a
     /// future-Stripe placeholder.
     pub wallet_balance_cents: i64,
+    pub is_banned: bool,
+    /// "de" or "en" — which language to send this user's transactional
+    /// emails in. Mirrors the frontend's `i18nStore`, synced via
+    /// `PATCH /api/me/language`.
+    pub language: String,
+}
+
+/// Minimal user info embedded in a `UserReport` for display in moderation —
+/// deliberately not the full `User` struct (no need for wallet/admin/etc.).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ReportedUserSummary {
+    pub id: i64,
+    pub display_name: String,
+    pub email: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UserReport {
+    pub id: i64,
+    pub reason: String,
+    pub created_at: String,
+    pub reporter: ReportedUserSummary,
+    pub reported: ReportedUserSummary,
+    pub images: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UnbanRequest {
+    pub id: i64,
+    pub message: Option<String>,
+    pub created_at: String,
+    pub user: ReportedUserSummary,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewUserReport {
+    pub reason: String,
+    /// Evidence screenshots as `data:image/...;base64,...` URLs, same
+    /// convention as `ImageUpload` — capped at `MAX_REPORT_IMAGES` in the
+    /// handler.
+    #[serde(default)]
+    pub images: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -76,6 +118,16 @@ pub struct RegisterRequest {
     pub email: String,
     pub password: String,
     pub display_name: String,
+    /// Whatever the frontend's language switch was set to at signup —
+    /// optional/loosely validated since it only affects email wording, not
+    /// app behavior.
+    #[serde(default)]
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetLanguageRequest {
+    pub language: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -459,6 +511,9 @@ pub struct PublisherGameStats {
     pub view_count: i64,
     pub avg_rating: Option<f64>,
     pub review_count: i64,
+    pub avg_playtime_seconds: Option<f64>,
+    pub installs_count: i64,
+    pub uninstalls_count: i64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -486,10 +541,18 @@ pub struct TagRanking {
     pub total: i64,
 }
 
+/// One entry per distinct `game_views.source` value recorded for the game.
+#[derive(Debug, Serialize, Clone)]
+pub struct SourceCount {
+    pub source: String,
+    pub count: i64,
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct PublisherGameStatsDetail {
     pub stats: PublisherGameStats,
     pub daily: Vec<DailyStat>,
     pub rating_distribution: Vec<RatingBucket>,
     pub tag_rankings: Vec<TagRanking>,
+    pub views_by_source: Vec<SourceCount>,
 }

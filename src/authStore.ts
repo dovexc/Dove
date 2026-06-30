@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { useI18nStore } from "./i18nStore";
 import type { Badge, ProfileScreenshot, StoreUser, WalletTopup } from "./types";
 
 // Set VITE_API_BASE at build time (e.g. in a `.env.production`) to point a
@@ -59,7 +60,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const response = await fetch(`${API_BASE}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, display_name: displayName }),
+        body: JSON.stringify({
+          email,
+          password,
+          display_name: displayName,
+          language: useI18nStore.getState().language,
+        }),
       });
       if (!response.ok) throw new Error(await parseErrorMessage(response));
       const data = await response.json();

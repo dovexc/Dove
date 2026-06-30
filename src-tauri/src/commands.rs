@@ -231,6 +231,8 @@ pub fn uninstall_game(state: State<AppState>, id: i64) -> Result<Game, String> {
         .map_err(|e| e.to_string())?;
     }
 
+    report_install_event(&state.auth_token, Some(catalog_game_id), "uninstall");
+
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let running = state.running.lock().map_err(|e| e.to_string())?;
     conn.query_row(
@@ -408,6 +410,8 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
     let app_handle = app.clone();
     let auth_token = state.auth_token.clone();
 
+    spawn_playtime_heartbeat(running_set.clone(), auth_token.clone(), id, catalog_game_id);
+
     std::thread::spawn(move || {
         let _ = child.wait();
         let ended_at = Utc::now();
@@ -485,6 +489,7 @@ fn watch_process_under_dir(
         );
     }
     app.emit("game-started", id).ok();
+    spawn_playtime_heartbeat(running_set.clone(), auth_token.clone(), id, catalog_game_id);
 
     loop {
         std::thread::sleep(std::time::Duration::from_secs(3));
@@ -773,6 +778,79 @@ fn set_remote_playing_status(
     {
         eprintln!("Spielstatus konnte nicht aktualisiert werden: {e}");
     }
+}
+
+/// Best-effort playtime report for the publisher-analytics "average
+/// playtime" stat — fire-and-forget like `set_remote_playing_status`
+/// above, since this is purely an analytics signal, not a critical path.
+fn report_playtime_seconds(
+    auth_token: &Arc<Mutex<Option<String>>>,
+    catalog_game_id: Option<i64>,
+    seconds: u64,
+) {
+    let Some(catalog_game_id) = catalog_game_id else {
+        return;
+    };
+    let Some(token) = auth_token.lock().ok().and_then(|t| t.clone()) else {
+        return;
+    };
+    let body = serde_json::json!({ "seconds": seconds });
+    if let Err(e) = ureq::post(&format!("{STORE_API_BASE}/api/me/games/{catalog_game_id}/playtime"))
+        .set("Authorization", &format!("Bearer {token}"))
+        .send_json(body)
+    {
+        eprintln!("Spielzeit konnte nicht gemeldet werden: {e}");
+    }
+}
+
+/// Best-effort install/uninstall report — local install state otherwise
+/// never reaches the server, but publisher analytics wants to show it.
+fn report_install_event(
+    auth_token: &Arc<Mutex<Option<String>>>,
+    catalog_game_id: Option<i64>,
+    event_type: &str,
+) {
+    let Some(catalog_game_id) = catalog_game_id else {
+        return;
+    };
+    let Some(token) = auth_token.lock().ok().and_then(|t| t.clone()) else {
+        return;
+    };
+    let body = serde_json::json!({ "event_type": event_type });
+    if let Err(e) =
+        ureq::post(&format!("{STORE_API_BASE}/api/games/{catalog_game_id}/install-event"))
+            .set("Authorization", &format!("Bearer {token}"))
+            .send_json(body)
+    {
+        eprintln!("Install-Event konnte nicht gemeldet werden: {e}");
+    }
+}
+
+/// Periodically reports playtime for a running game in 5-minute increments
+/// while it stays in `running`, self-terminating once the launch-tracking
+/// thread removes it (game exited). The final partial interval below 5
+/// minutes is not reported — an accepted simplification for a best-effort
+/// analytics signal (see `report_playtime_seconds`).
+fn spawn_playtime_heartbeat(
+    running: Arc<Mutex<HashSet<i64>>>,
+    auth_token: Arc<Mutex<Option<String>>>,
+    id: i64,
+    catalog_game_id: Option<i64>,
+) {
+    if catalog_game_id.is_none() {
+        return;
+    }
+    std::thread::spawn(move || {
+        const INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
+        loop {
+            std::thread::sleep(INTERVAL);
+            let still_running = running.lock().map(|r| r.contains(&id)).unwrap_or(false);
+            if !still_running {
+                break;
+            }
+            report_playtime_seconds(&auth_token, catalog_game_id, INTERVAL.as_secs());
+        }
+    });
 }
 
 /// Walks a directory recursively and collects every macOS `.app` bundle
@@ -1252,6 +1330,8 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
             install_dir.display()
         ));
     }
+
+    report_install_event(&state.auth_token, Some(catalog_game_id), "install");
 
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let running = state.running.lock().map_err(|e| e.to_string())?;

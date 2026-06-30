@@ -2,6 +2,7 @@ import { useState } from "react";
 import { API_BASE } from "../../authStore";
 import type { PublicProfile } from "../../types";
 import { PublicWishlistView } from "./PublicWishlistView";
+import { ReportUserDialog } from "./ReportUserDialog";
 import { useT } from "../../translations";
 
 export type FriendStatus = "none" | "friends" | "pending_outgoing" | "pending_incoming";
@@ -36,6 +37,7 @@ export function PublicProfileView({
   const backgroundUrl = resolveUrl(profile.background_url);
   const avatarUrl = resolveUrl(profile.avatar_url);
   const [showWishlist, setShowWishlist] = useState(false);
+  const [showReportDialog, setShowReportDialog] = useState(false);
 
   function renderFriendButton() {
     if (!friendStatus) return null;
@@ -146,6 +148,12 @@ export function PublicProfileView({
               {t("menu_wishlist")}
             </button>
             {renderFriendButton()}
+            <button
+              onClick={() => setShowReportDialog(true)}
+              className="rounded-md border border-white/10 bg-white/5 px-3.5 py-1.5 text-[13px] font-bold text-red-300 hover:bg-red-900/30"
+            >
+              {t("report_user_button")}
+            </button>
           </div>
         </div>
 
@@ -191,6 +199,9 @@ export function PublicProfileView({
           games={profile.wishlist}
           onBack={() => setShowWishlist(false)}
         />
+      )}
+      {showReportDialog && (
+        <ReportUserDialog userId={profile.id} onClose={() => setShowReportDialog(false)} />
       )}
     </div>
   );

@@ -3,13 +3,14 @@ import { useCatalogStore } from "../../catalogStore";
 import { API_BASE, getAuthHeader, useAuthStore } from "../../authStore";
 import { useT } from "../../translations";
 import type { TranslationKey } from "../../translations";
-import type { StoreUser } from "../../types";
+import type { PublicProfile, StoreUser, UnbanRequest, UserReport } from "../../types";
+import { PublicProfileView } from "../profile/PublicProfileView";
 
 interface Props {
   onClose: () => void;
 }
 
-type Tab = "spiele" | "nutzer";
+type Tab = "spiele" | "nutzer" | "meldungen" | "entbannung";
 
 function formatPrice(priceCents: number, t: (key: TranslationKey) => string): string {
   return priceCents === 0 ? t("price_free") : `${(priceCents / 100).toFixed(2)} €`;
@@ -79,6 +80,25 @@ function UsersTab() {
     }
   }
 
+  async function unban(userId: number) {
+    setPendingId(userId);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/users/${userId}/unban`, {
+        method: "POST",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response, t));
+      setResults((prev) =>
+        prev.map((u) => (u.id === userId ? { ...u, is_banned: false } : u))
+      );
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPendingId(null);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <input
@@ -104,9 +124,25 @@ function UsersTab() {
               className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-3"
             >
               <div>
-                <div className="text-sm font-bold text-zinc-100">{user.display_name}</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-zinc-100">{user.display_name}</span>
+                  {user.is_banned && (
+                    <span className="rounded border border-red-400/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-300">
+                      {t("adm_banned_label")}
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs text-zinc-500">{user.email}</div>
               </div>
+              {user.is_banned && (
+                <button
+                  onClick={() => unban(user.id)}
+                  disabled={pendingId === user.id}
+                  className="shrink-0 rounded border border-emerald-400/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+                >
+                  {t("adm_unban")}
+                </button>
+              )}
               {user.is_admin ? (
                 <button
                   onClick={() => setAdmin(user.id, false)}
@@ -137,9 +173,247 @@ function UsersTab() {
   );
 }
 
+function ReportsTab({ onCountChange }: { onCountChange: (n: number) => void }) {
+  const t = useT();
+  const [reports, setReports] = useState<UserReport[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [pendingId, setPendingId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [viewingProfile, setViewingProfile] = useState<PublicProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [enlargedImage, setEnlargedImage] = useState<string | null>(null);
+
+  async function openProfile(userId: number) {
+    setProfileLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/users/${userId}`, {
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response, t));
+      setViewingProfile(await response.json());
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setProfileLoading(false);
+    }
+  }
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/admin/reports`, {
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response, t));
+      const data: UserReport[] = await response.json();
+      setReports(data);
+      onCountChange(data.length);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function act(reportId: number, action: "dismiss" | "ban") {
+    if (action === "ban" && !window.confirm(t("adm_ban_confirm"))) return;
+    setPendingId(reportId);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/admin/reports/${reportId}/${action}`, {
+        method: "POST",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response, t));
+      const remaining = reports.filter((r) => r.id !== reportId);
+      setReports(remaining);
+      onCountChange(remaining.length);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPendingId(null);
+    }
+  }
+
+  if (loading) return <p className="text-sm text-zinc-500">{t("fr_loading")}</p>;
+
+  return (
+    <div className="flex flex-col gap-3">
+      {error && <p className="text-sm text-red-400">{error}</p>}
+      {reports.length === 0 ? (
+        <p className="text-sm text-zinc-500">{t("adm_no_pending_reports")}</p>
+      ) : (
+        reports.map((report) => (
+          <div
+            key={report.id}
+            className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
+          >
+            <div className="text-xs text-zinc-500">
+              {t("adm_report_reporter_prefix")} {report.reporter.display_name} (
+              {report.reporter.email}) · {new Date(report.created_at).toLocaleString("de-DE")}
+            </div>
+            <button
+              onClick={() => openProfile(report.reported.id)}
+              disabled={profileLoading}
+              className="self-start text-sm font-bold text-sky-400 hover:underline disabled:opacity-50"
+            >
+              {t("adm_report_reported_prefix")} {report.reported.display_name} (
+              {report.reported.email})
+            </button>
+            <p className="text-sm text-zinc-300">{report.reason}</p>
+            {report.images.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {report.images.map((src) => (
+                  <button key={src} type="button" onClick={() => setEnlargedImage(src)}>
+                    <img
+                      src={src}
+                      alt=""
+                      className="h-20 w-20 rounded border border-zinc-700 object-cover hover:opacity-80"
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 border-t border-zinc-800 pt-3">
+              <button
+                onClick={() => act(report.id, "dismiss")}
+                disabled={pendingId === report.id}
+                className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
+              >
+                {t("adm_dismiss")}
+              </button>
+              <button
+                onClick={() => act(report.id, "ban")}
+                disabled={pendingId === report.id}
+                className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+              >
+                {t("adm_ban")}
+              </button>
+            </div>
+          </div>
+        ))
+      )}
+
+      {enlargedImage && (
+        <div
+          className="fixed inset-0 z-[95] flex items-center justify-center bg-black/80 p-8"
+          onClick={() => setEnlargedImage(null)}
+        >
+          <img src={enlargedImage} alt="" className="max-h-full max-w-full rounded" />
+        </div>
+      )}
+
+      {viewingProfile && (
+        <PublicProfileView profile={viewingProfile} onClose={() => setViewingProfile(null)} />
+      )}
+    </div>
+  );
+}
+
+function UnbanRequestsTab({ onCountChange }: { onCountChange: (n: number) => void }) {
+  const t = useT();
+  const [requests, setRequests] = useState<UnbanRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [pendingId, setPendingId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/admin/unban-requests`, {
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response, t));
+      const data: UnbanRequest[] = await response.json();
+      setRequests(data);
+      onCountChange(data.length);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function act(requestId: number, action: "approve" | "deny") {
+    setPendingId(requestId);
+    setError(null);
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/admin/unban-requests/${requestId}/${action}`,
+        { method: "POST", headers: getAuthHeader() }
+      );
+      if (!response.ok) throw new Error(await parseErrorMessage(response, t));
+      const remaining = requests.filter((r) => r.id !== requestId);
+      setRequests(remaining);
+      onCountChange(remaining.length);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPendingId(null);
+    }
+  }
+
+  if (loading) return <p className="text-sm text-zinc-500">{t("fr_loading")}</p>;
+
+  return (
+    <div className="flex flex-col gap-3">
+      {error && <p className="text-sm text-red-400">{error}</p>}
+      {requests.length === 0 ? (
+        <p className="text-sm text-zinc-500">{t("adm_no_pending_unban_requests")}</p>
+      ) : (
+        requests.map((req) => (
+          <div
+            key={req.id}
+            className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
+          >
+            <div className="text-sm font-bold text-zinc-100">
+              {req.user.display_name} ({req.user.email})
+            </div>
+            <p className="text-xs text-zinc-500">
+              {new Date(req.created_at).toLocaleString("de-DE")}
+            </p>
+            <p className="text-sm text-zinc-300">{req.message}</p>
+            <div className="flex justify-end gap-2 border-t border-zinc-800 pt-3">
+              <button
+                onClick={() => act(req.id, "deny")}
+                disabled={pendingId === req.id}
+                className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-red-300 hover:bg-red-900/40 disabled:opacity-50"
+              >
+                {t("adm_unban_deny")}
+              </button>
+              <button
+                onClick={() => act(req.id, "approve")}
+                disabled={pendingId === req.id}
+                className="rounded bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {t("adm_unban_approve")}
+              </button>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 export function AdminModerationView({ onClose }: Props) {
   const t = useT();
   const [tab, setTab] = useState<Tab>("spiele");
+  const [reportCount, setReportCount] = useState(0);
+  const [unbanRequestCount, setUnbanRequestCount] = useState(0);
 
   const pendingGames = useCatalogStore((s) => s.pendingGames);
   const loadingPendingGames = useCatalogStore((s) => s.loadingPendingGames);
@@ -174,6 +448,8 @@ export function AdminModerationView({ onClose }: Props) {
             [
               ["spiele", t("adm_tab_pending_games").replace("{n}", String(pendingGames.length))],
               ["nutzer", t("adm_tab_user_management")],
+              ["meldungen", t("adm_tab_reports").replace("{n}", String(reportCount))],
+              ["entbannung", t("adm_tab_unban_requests").replace("{n}", String(unbanRequestCount))],
             ] as [Tab, string][]
           ).map(([key, label]) => (
             <button
@@ -254,6 +530,8 @@ export function AdminModerationView({ onClose }: Props) {
         )}
 
         {tab === "nutzer" && <UsersTab />}
+        {tab === "meldungen" && <ReportsTab onCountChange={setReportCount} />}
+        {tab === "entbannung" && <UnbanRequestsTab onCountChange={setUnbanRequestCount} />}
       </div>
     </div>
   );

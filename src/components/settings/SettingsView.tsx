@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useAuthStore } from "../../authStore";
+import { API_BASE, getAuthHeader, useAuthStore } from "../../authStore";
 import { useLibraryStore } from "../../store";
 import { formatSize } from "../../utils";
 import { useI18nStore } from "../../i18nStore";
@@ -10,7 +10,6 @@ import { OrderHistoryDialog } from "./OrderHistoryDialog";
 import { TournamentPayoutsDialog } from "./TournamentPayoutsDialog";
 import { DeleteAccountDialog } from "./DeleteAccountDialog";
 import { WalletHistoryDialog } from "./WalletHistoryDialog";
-import { WalletTopUpDialog } from "../store/WalletTopUpDialog";
 
 interface Props {
   onClose: () => void;
@@ -26,6 +25,16 @@ export function SettingsView({ onClose, onOpenGame }: Props) {
   const t = useT();
   const language = useI18nStore((s) => s.language);
   const setLanguage = useI18nStore((s) => s.setLanguage);
+
+  function handleLanguageChange(lang: "de" | "en") {
+    setLanguage(lang);
+    if (!useAuthStore.getState().token) return;
+    fetch(`${API_BASE}/api/me/language`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...getAuthHeader() },
+      body: JSON.stringify({ language: lang }),
+    }).catch(() => {});
+  }
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const changePassword = useAuthStore((s) => s.changePassword);
@@ -47,7 +56,6 @@ export function SettingsView({ onClose, onOpenGame }: Props) {
   const [showPayouts, setShowPayouts] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [showWalletHistory, setShowWalletHistory] = useState(false);
-  const [showWalletTopUp, setShowWalletTopUp] = useState(false);
 
   useEffect(() => {
     invoke<string>("get_install_dir")
@@ -131,20 +139,12 @@ export function SettingsView({ onClose, onOpenGame }: Props) {
                   {(((user?.wallet_balance_cents ?? 0) / 100).toFixed(2))} €
                 </p>
               </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setShowWalletHistory(true)}
-                  className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
-                >
-                  {t("settings_wallet_history_open")}
-                </button>
-                <button
-                  onClick={() => setShowWalletTopUp(true)}
-                  className="rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
-                >
-                  {t("wallet_topup_open")}
-                </button>
-              </div>
+              <button
+                onClick={() => setShowWalletHistory(true)}
+                className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
+              >
+                {t("settings_wallet_history_open")}
+              </button>
             </div>
 
             <div className="flex items-center justify-between border-t border-zinc-800 pt-4">
@@ -306,7 +306,7 @@ export function SettingsView({ onClose, onOpenGame }: Props) {
               {LANGUAGES.map((l) => (
                 <button
                   key={l.id}
-                  onClick={() => setLanguage(l.id)}
+                  onClick={() => handleLanguageChange(l.id)}
                   className={`rounded px-3.5 py-1.5 text-sm font-semibold ${
                     language === l.id
                       ? "bg-sky-600 text-white"
@@ -333,9 +333,6 @@ export function SettingsView({ onClose, onOpenGame }: Props) {
       {showPayouts && <TournamentPayoutsDialog onClose={() => setShowPayouts(false)} />}
       {showWalletHistory && (
         <WalletHistoryDialog onClose={() => setShowWalletHistory(false)} />
-      )}
-      {showWalletTopUp && (
-        <WalletTopUpDialog onClose={() => setShowWalletTopUp(false)} />
       )}
       {showDeleteAccount && (
         <DeleteAccountDialog onClose={() => setShowDeleteAccount(false)} />

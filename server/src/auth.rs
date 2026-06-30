@@ -95,12 +95,23 @@ impl FromRequestParts<AppState> for AuthUser {
             .map_err(|_| (StatusCode::UNAUTHORIZED, "Ungültiges Token".to_string()))?;
 
         // Every authenticated request counts as activity — cheap presence
-        // tracking without a dedicated heartbeat endpoint. Best-effort: a
-        // failure here shouldn't block the actual request.
-        let _ = sqlx::query("UPDATE users SET last_seen_at = now() WHERE id = $1")
-            .bind(user_id)
-            .execute(&state.db)
-            .await;
+        // tracking without a dedicated heartbeat endpoint. Also doubles as
+        // the ban check: `RETURNING is_banned` costs nothing extra over the
+        // plain UPDATE this replaced. A query failure fails open (treated
+        // as not-banned) — consistent with the original best-effort intent
+        // of the presence tracking; this isn't a security boundary against
+        // a malicious DB, just a UX gate against banned accounts.
+        let is_banned: bool = sqlx::query_scalar(
+            "UPDATE users SET last_seen_at = now() WHERE id = $1 RETURNING is_banned",
+        )
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(false);
+
+        if is_banned {
+            return Err((StatusCode::FORBIDDEN, "Account gesperrt".to_string()));
+        }
 
         Ok(AuthUser(user_id))
     }

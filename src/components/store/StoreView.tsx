@@ -560,7 +560,7 @@ export function StoreView() {
                     return (
                       <div
                         key={game.id}
-                        onClick={() => openGameDetail(game)}
+                        onClick={() => openGameDetail(game, "recommendation")}
                         className="group flex w-56 shrink-0 cursor-pointer flex-col overflow-hidden rounded-lg border border-white/5 bg-[#141c26] shadow-lg transition-transform hover:-translate-y-1"
                       >
                         <div
@@ -682,7 +682,7 @@ export function StoreView() {
                   return (
                     <div
                       key={game.id}
-                      onClick={() => openGameDetail(game)}
+                      onClick={() => openGameDetail(game, search.trim() ? "search" : "catalog")}
                       className="group flex cursor-pointer flex-col overflow-hidden rounded-lg border border-white/5 bg-[#141c26] shadow-lg transition-transform hover:-translate-y-1"
                     >
                       <div

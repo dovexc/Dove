@@ -2,8 +2,16 @@ import { useEffect, useState } from "react";
 import { API_BASE } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
 import { useT } from "../../translations";
+import type { TranslationKey } from "../../translations";
 import type { CatalogGame } from "../../types";
 import { EditCatalogGameDialog } from "./EditCatalogGameDialog";
+
+const SOURCE_KEY: Record<string, TranslationKey> = {
+  search: "analytics_source_search",
+  recommendation: "analytics_source_recommendation",
+  wishlist: "analytics_source_wishlist",
+  catalog: "analytics_source_catalog",
+};
 
 // Unlike a game's listing price, 0 revenue means "no sales" — never
 // "free" — so this always renders the amount.
@@ -46,6 +54,9 @@ export function PublisherGameDetailDialog({ gameId, onClose }: Props) {
   const maxRevenue = detail ? Math.max(...detail.daily.map((d) => d.revenue_cents), 1) : 1;
   const maxRatingCount = detail
     ? Math.max(...detail.rating_distribution.map((r) => r.count), 1)
+    : 1;
+  const maxSourceCount = detail
+    ? Math.max(...detail.views_by_source.map((s) => s.count), 1)
     : 1;
 
   return (
@@ -131,6 +142,33 @@ export function PublisherGameDetailDialog({ gameId, onClose }: Props) {
                   );
                 })}
               </div>
+            </section>
+
+            {/* Traffic-Quelle */}
+            <section>
+              <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
+                {t("analytics_views_by_source")}
+              </h3>
+              {detail.views_by_source.length === 0 ? (
+                <p className="text-sm text-zinc-500">{t("analytics_views_by_source_empty")}</p>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {detail.views_by_source.map((s) => (
+                    <div key={s.source} className="flex items-center gap-3">
+                      <span className="w-28 shrink-0 text-xs text-zinc-400">
+                        {t(SOURCE_KEY[s.source] ?? "analytics_source_catalog")}
+                      </span>
+                      <div className="h-4 flex-1 overflow-hidden rounded bg-zinc-800">
+                        <div
+                          className="h-full rounded bg-sky-500"
+                          style={{ width: `${(s.count / maxSourceCount) * 100}%` }}
+                        />
+                      </div>
+                      <span className="w-8 shrink-0 text-right text-xs text-zinc-300">{s.count}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
 
             {/* Bewertungsverteilung */}

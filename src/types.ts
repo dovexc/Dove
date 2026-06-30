@@ -67,6 +67,30 @@ export interface StoreUser {
   is_admin: boolean;
   equipped_badge: Badge | null;
   wallet_balance_cents: number;
+  is_banned: boolean;
+  language: "de" | "en";
+}
+
+export interface ReportedUserSummary {
+  id: number;
+  display_name: string;
+  email: string;
+}
+
+export interface UserReport {
+  id: number;
+  reason: string;
+  created_at: string;
+  reporter: ReportedUserSummary;
+  reported: ReportedUserSummary;
+  images: string[];
+}
+
+export interface UnbanRequest {
+  id: number;
+  message: string | null;
+  created_at: string;
+  user: ReportedUserSummary;
 }
 
 export interface WalletTopup {
@@ -164,6 +188,9 @@ export interface PublisherGameStats {
   view_count: number;
   avg_rating: number | null;
   review_count: number;
+  avg_playtime_seconds: number | null;
+  installs_count: number;
+  uninstalls_count: number;
 }
 
 export interface DailyStat {
@@ -183,11 +210,17 @@ export interface TagRanking {
   total: number;
 }
 
+export interface SourceCount {
+  source: string;
+  count: number;
+}
+
 export interface PublisherGameStatsDetail {
   stats: PublisherGameStats;
   daily: DailyStat[];
   rating_distribution: RatingBucket[];
   tag_rankings: TagRanking[];
+  views_by_source: SourceCount[];
 }
 
 export interface NewCatalogGame {
