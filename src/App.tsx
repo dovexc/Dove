@@ -27,6 +27,7 @@ import { AdminModerationView } from "./components/admin/AdminModerationView";
 import { WishlistPage } from "./components/store/WishlistPage";
 import { EventsPage } from "./components/events/EventsPage";
 import { NotificationsBell } from "./components/NotificationsBell";
+import { UpdateChecker } from "./components/UpdateChecker";
 import { useEventsStore } from "./eventsStore";
 import { useT } from "./translations";
 
@@ -408,6 +409,7 @@ function App() {
       {checkoutGame && <CheckoutDialog game={checkoutGame} />}
       {showWalletTopUp && <WalletTopUpDialog onClose={() => setShowWalletTopUp(false)} />}
       <GameContextMenu />
+      <UpdateChecker />
     </div>
   );
 }

@@ -192,6 +192,12 @@ const translations = {
     del_also_delete_files: "Spieldateien zusätzlich von der Festplatte löschen",
     del_delete_files_warning: "Löscht den gesamten Ordner der Executable unwiderruflich:",
     del_remove: "Entfernen",
+
+    app_update_title: "Update verfügbar",
+    app_update_body: "Eine neue Version von Dove ist verfügbar.",
+    app_update_install: "Jetzt installieren",
+    app_update_later: "Später",
+    app_update_downloading: "Wird installiert…",
     del_remove_and_delete: "Entfernen & Dateien löschen",
 
     racc_title: "Komplett vom Account löschen",
@@ -717,6 +723,12 @@ const translations = {
     del_also_delete_files: "Also delete game files from disk",
     del_delete_files_warning: "Permanently deletes the entire executable's folder:",
     del_remove: "Remove",
+
+    app_update_title: "Update available",
+    app_update_body: "A new version of Dove is available.",
+    app_update_install: "Install now",
+    app_update_later: "Later",
+    app_update_downloading: "Installing…",
     del_remove_and_delete: "Remove & delete files",
 
     racc_title: "Remove completely from account",

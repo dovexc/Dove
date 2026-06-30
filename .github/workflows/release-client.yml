@@ -1,0 +1,71 @@
+name: Release client
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build Tauri app (NSIS + signed updater artifacts)
+        run: npm run tauri build -- --bundles nsis
+
+      - name: Publish installer + update manifest to R2
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.DOVE_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.DOVE_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://${{ secrets.DOVE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          BUCKET="${{ secrets.DOVE_R2_BUCKET }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle/nsis"
+          VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+
+          # Tauri v2's NSIS updater artifact is the signed setup.exe itself
+          # (no separate .nsis.zip) — confirmed by a local test build.
+          SETUP_EXE=$(ls "$BUNDLE_DIR"/*-setup.exe)
+          SIG_FILE=$(ls "$BUNDLE_DIR"/*-setup.exe.sig)
+
+          aws s3 cp "$SETUP_EXE" "s3://$BUCKET/updates/windows-x86_64/$(basename "$SETUP_EXE")" --endpoint-url "$ENDPOINT"
+
+          SIGNATURE="$(cat "$SIG_FILE")"
+          PUB_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+          cat > latest.json <<EOF
+          {
+            "version": "$VERSION",
+            "notes": "",
+            "pub_date": "$PUB_DATE",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "$SIGNATURE",
+                "url": "https://cdn.dovexc.com/updates/windows-x86_64/$(basename "$SETUP_EXE")"
+              }
+            }
+          }
+          EOF
+
+          aws s3 cp latest.json "s3://$BUCKET/updates/latest.json" --endpoint-url "$ENDPOINT"
