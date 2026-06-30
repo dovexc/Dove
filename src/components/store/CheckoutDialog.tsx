@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { useAuthStore } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
 import { useT } from "../../translations";
 import type { TranslationKey } from "../../translations";
 import type { CatalogGame } from "../../types";
+import { WalletTopUpDialog } from "./WalletTopUpDialog";
 
 function formatPrice(priceCents: number, t: (key: TranslationKey) => string): string {
   return priceCents === 0 ? t("price_free") : `${(priceCents / 100).toFixed(2)} €`;
@@ -18,12 +20,16 @@ export function CheckoutDialog({ game }: Props) {
   const purchaseGame = useCatalogStore((s) => s.purchaseGame);
   const purchasingId = useCatalogStore((s) => s.purchasingId);
   const error = useCatalogStore((s) => s.error);
+  const authUser = useAuthStore((s) => s.user);
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [agreeWithdrawal, setAgreeWithdrawal] = useState(false);
+  const [showTopUp, setShowTopUp] = useState(false);
 
   const isPaid = game.price_cents > 0;
   const submitting = purchasingId === game.id;
   const canConfirm = isPaid ? agreeTerms && agreeWithdrawal : agreeTerms;
+  const walletBalanceCents = authUser?.wallet_balance_cents ?? 0;
+  const insufficientFunds = isPaid && walletBalanceCents < game.price_cents;
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4">
@@ -63,6 +69,17 @@ export function CheckoutDialog({ game }: Props) {
           </div>
           <p className="mt-1 text-xs text-zinc-500">{t("checkout_vat_note")}</p>
         </div>
+
+        {isPaid && (
+          <div
+            className={`flex items-center justify-between rounded px-3 py-2 text-sm ${
+              insufficientFunds ? "bg-red-900/30 text-red-300" : "bg-zinc-800/60 text-zinc-300"
+            }`}
+          >
+            <span>{t("wallet_balance")}</span>
+            <span className="font-semibold">{formatPrice(walletBalanceCents, t)}</span>
+          </div>
+        )}
 
         <div className="flex flex-col gap-2">
           <span className="text-sm font-semibold text-zinc-300">{t("checkout_payment_method")}</span>
@@ -107,16 +124,28 @@ export function CheckoutDialog({ game }: Props) {
           >
             {t("dialog_cancel")}
           </button>
-          <button
-            type="button"
-            onClick={() => purchaseGame(game.id)}
-            disabled={!canConfirm || submitting}
-            className="rounded bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
-          >
-            {submitting ? t("checkout_processing") : isPaid ? t("checkout_confirm_paid") : t("checkout_confirm_free")}
-          </button>
+          {insufficientFunds ? (
+            <button
+              type="button"
+              onClick={() => setShowTopUp(true)}
+              className="rounded bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-sky-500"
+            >
+              {t("wallet_topup_open")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => purchaseGame(game.id)}
+              disabled={!canConfirm || submitting}
+              className="rounded bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+            >
+              {submitting ? t("checkout_processing") : isPaid ? t("checkout_confirm_paid") : t("checkout_confirm_free")}
+            </button>
+          )}
         </div>
       </div>
+
+      {showTopUp && <WalletTopUpDialog onClose={() => setShowTopUp(false)} />}
     </div>
   );
 }

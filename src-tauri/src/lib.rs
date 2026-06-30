@@ -43,6 +43,7 @@ pub fn run() {
             commands::set_auth_session,
             commands::get_install_dir,
             commands::set_install_dir,
+            commands::write_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

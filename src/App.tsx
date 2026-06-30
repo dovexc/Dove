@@ -14,6 +14,8 @@ import { GameContextMenu } from "./components/GameContextMenu";
 import { StoreView } from "./components/store/StoreView";
 import { LoginDialog } from "./components/store/LoginDialog";
 import { CheckoutDialog } from "./components/store/CheckoutDialog";
+import { WalletTopUpDialog } from "./components/store/WalletTopUpDialog";
+import { PublisherAnalyticsPage } from "./components/store/PublisherAnalyticsPage";
 import { ProfilePage } from "./components/profile/ProfilePage";
 import { DownloadBar } from "./components/downloads/DownloadBar";
 import { DownloadsPage } from "./components/downloads/DownloadsPage";
@@ -44,8 +46,10 @@ function App() {
     | "settings"
     | "moderation"
     | "wishlist"
+    | "analytics"
   >("library");
   const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [showWalletTopUp, setShowWalletTopUp] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
     return stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH ? stored : 288;
@@ -100,7 +104,7 @@ function App() {
   const openSteamImport = useLibraryStore((s) => s.openSteamImport);
   const clearError = useLibraryStore((s) => s.clearError);
 
-  const accountOnlyTabs = ["profile", "friends", "settings", "moderation", "wishlist"];
+  const accountOnlyTabs = ["profile", "friends", "settings", "moderation", "wishlist", "analytics"];
   useEffect(() => {
     if (!authToken && accountOnlyTabs.includes(activeTab)) {
       setActiveTab("library");
@@ -240,6 +244,15 @@ function App() {
             </>
           )}
           {authToken && authUser ? (
+            <button
+              onClick={() => setShowWalletTopUp(true)}
+              title={t("wallet_topup_open")}
+              className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
+            >
+              {(((authUser.wallet_balance_cents ?? 0) / 100).toFixed(2))} €
+            </button>
+          ) : null}
+          {authToken && authUser ? (
             <NotificationsBell
               onOpenEvent={(eventId) => {
                 setActiveTab("events");
@@ -259,6 +272,7 @@ function App() {
               onOpenSettings={() => setActiveTab("settings")}
               onOpenModeration={() => setActiveTab("moderation")}
               onOpenWishlist={() => setActiveTab("wishlist")}
+              onOpenAnalytics={() => setActiveTab("analytics")}
               onLogout={logout}
             />
           ) : (
@@ -373,6 +387,10 @@ function App() {
         <div className="flex-1 overflow-hidden">
           <AdminModerationView onClose={() => setActiveTab("library")} />
         </div>
+      ) : activeTab === "analytics" ? (
+        <div className="flex-1 overflow-hidden">
+          <PublisherAnalyticsPage onClose={() => setActiveTab("library")} />
+        </div>
       ) : (
         <div className="flex-1 overflow-hidden">
           <WishlistPage onClose={() => setActiveTab("library")} />
@@ -388,6 +406,7 @@ function App() {
       {isSteamImportOpen && <SteamImportDialog />}
       {isLoginOpen && <LoginDialog onClose={() => setIsLoginOpen(false)} />}
       {checkoutGame && <CheckoutDialog game={checkoutGame} />}
+      {showWalletTopUp && <WalletTopUpDialog onClose={() => setShowWalletTopUp(false)} />}
       <GameContextMenu />
     </div>
   );

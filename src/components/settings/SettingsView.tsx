@@ -9,6 +9,8 @@ import { useT } from "../../translations";
 import { OrderHistoryDialog } from "./OrderHistoryDialog";
 import { TournamentPayoutsDialog } from "./TournamentPayoutsDialog";
 import { DeleteAccountDialog } from "./DeleteAccountDialog";
+import { WalletHistoryDialog } from "./WalletHistoryDialog";
+import { WalletTopUpDialog } from "../store/WalletTopUpDialog";
 
 interface Props {
   onClose: () => void;
@@ -44,6 +46,8 @@ export function SettingsView({ onClose, onOpenGame }: Props) {
   const [showOrderHistory, setShowOrderHistory] = useState(false);
   const [showPayouts, setShowPayouts] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
+  const [showWalletHistory, setShowWalletHistory] = useState(false);
+  const [showWalletTopUp, setShowWalletTopUp] = useState(false);
 
   useEffect(() => {
     invoke<string>("get_install_dir")
@@ -118,6 +122,29 @@ export function SettingsView({ onClose, onOpenGame }: Props) {
               >
                 {t("settings_logout")}
               </button>
+            </div>
+
+            <div className="flex items-center justify-between border-t border-zinc-800 pt-4">
+              <div>
+                <p className="text-sm font-medium text-zinc-200">{t("wallet_balance")}</p>
+                <p className="mt-0.5 text-xs text-zinc-500">
+                  {(((user?.wallet_balance_cents ?? 0) / 100).toFixed(2))} €
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowWalletHistory(true)}
+                  className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
+                >
+                  {t("settings_wallet_history_open")}
+                </button>
+                <button
+                  onClick={() => setShowWalletTopUp(true)}
+                  className="rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
+                >
+                  {t("wallet_topup_open")}
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center justify-between border-t border-zinc-800 pt-4">
@@ -304,6 +331,12 @@ export function SettingsView({ onClose, onOpenGame }: Props) {
         />
       )}
       {showPayouts && <TournamentPayoutsDialog onClose={() => setShowPayouts(false)} />}
+      {showWalletHistory && (
+        <WalletHistoryDialog onClose={() => setShowWalletHistory(false)} />
+      )}
+      {showWalletTopUp && (
+        <WalletTopUpDialog onClose={() => setShowWalletTopUp(false)} />
+      )}
       {showDeleteAccount && (
         <DeleteAccountDialog onClose={() => setShowDeleteAccount(false)} />
       )}

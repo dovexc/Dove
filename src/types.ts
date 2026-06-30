@@ -66,6 +66,14 @@ export interface StoreUser {
   is_profile_hidden: boolean;
   is_admin: boolean;
   equipped_badge: Badge | null;
+  wallet_balance_cents: number;
+}
+
+export interface WalletTopup {
+  id: number;
+  user_id: number;
+  amount_cents: number;
+  created_at: string;
 }
 
 export interface ProfileScreenshot {
@@ -128,6 +136,43 @@ export interface CatalogGame {
   save_path_hint: string | null;
   avg_rating: number | null;
   review_count: number;
+}
+
+export interface PublisherGameStats {
+  catalog_game_id: number;
+  title: string;
+  status: "pending" | "approved" | "rejected";
+  price_cents: number;
+  units_sold: number;
+  revenue_cents: number;
+  wishlist_count: number;
+  view_count: number;
+  avg_rating: number | null;
+  review_count: number;
+}
+
+export interface DailyStat {
+  date: string;
+  units_sold: number;
+  revenue_cents: number;
+}
+
+export interface RatingBucket {
+  stars: number;
+  count: number;
+}
+
+export interface TagRanking {
+  tag: string;
+  rank: number;
+  total: number;
+}
+
+export interface PublisherGameStatsDetail {
+  stats: PublisherGameStats;
+  daily: DailyStat[];
+  rating_distribution: RatingBucket[];
+  tag_rankings: TagRanking[];
 }
 
 export interface NewCatalogGame {

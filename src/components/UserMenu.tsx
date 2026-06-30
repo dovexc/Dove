@@ -11,6 +11,7 @@ interface Props {
   onOpenSettings: () => void;
   onOpenModeration?: () => void;
   onOpenWishlist: () => void;
+  onOpenAnalytics: () => void;
   onLogout: () => void;
 }
 
@@ -28,6 +29,7 @@ export function UserMenu({
   onOpenSettings,
   onOpenModeration,
   onOpenWishlist,
+  onOpenAnalytics,
   onLogout,
 }: Props) {
   const t = useT();
@@ -96,6 +98,15 @@ export function UserMenu({
             className="block w-full px-3 py-2 text-left text-zinc-200 hover:bg-zinc-800"
           >
             {t("menu_wishlist")}
+          </button>
+          <button
+            onClick={() => {
+              setOpen(false);
+              onOpenAnalytics();
+            }}
+            className="block w-full px-3 py-2 text-left text-zinc-200 hover:bg-zinc-800"
+          >
+            {t("menu_analytics")}
           </button>
           {isAdmin && onOpenModeration && (
             <button

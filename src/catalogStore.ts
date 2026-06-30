@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { API_BASE, getAuthHeader } from "./authStore";
+import { API_BASE, getAuthHeader, useAuthStore } from "./authStore";
 import { useLibraryStore } from "./store";
 import type {
   CatalogGame,
@@ -8,6 +8,8 @@ import type {
   GameVersionNote,
   NewCatalogGame,
   Order,
+  PublisherGameStats,
+  PublisherGameStatsDetail,
   StorageUsage,
 } from "./types";
 
@@ -56,6 +58,16 @@ interface CatalogState {
   checkoutGame: CatalogGame | null;
   orders: Order[];
   ordersLoading: boolean;
+  recommendations: CatalogGame[];
+  recommendationsLoading: boolean;
+  fetchRecommendations: () => Promise<void>;
+  publisherStats: PublisherGameStats[];
+  publisherStatsLoading: boolean;
+  fetchPublisherStats: (range?: { from?: string; to?: string }) => Promise<void>;
+  publisherGameDetail: PublisherGameStatsDetail | null;
+  publisherGameDetailLoading: boolean;
+  fetchPublisherGameDetail: (gameId: number) => Promise<void>;
+  closePublisherGameDetail: () => void;
   fetchOrders: () => Promise<void>;
   fetchCatalog: () => Promise<void>;
   fetchLibrary: () => Promise<void>;
@@ -107,6 +119,69 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   checkoutGame: null,
   orders: [],
   ordersLoading: false,
+  recommendations: [],
+  recommendationsLoading: false,
+  publisherStats: [],
+  publisherStatsLoading: false,
+  publisherGameDetail: null,
+  publisherGameDetailLoading: false,
+
+  fetchRecommendations: async () => {
+    const headers = getAuthHeader();
+    if (!headers.Authorization) {
+      set({ recommendations: [] });
+      return;
+    }
+    set({ recommendationsLoading: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/me/recommendations`, { headers });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const recommendations: CatalogGame[] = await response.json();
+      set({ recommendations, recommendationsLoading: false });
+    } catch (e) {
+      set({ error: String(e), recommendationsLoading: false });
+    }
+  },
+
+  fetchPublisherStats: async (range) => {
+    const headers = getAuthHeader();
+    if (!headers.Authorization) {
+      set({ publisherStats: [] });
+      return;
+    }
+    set({ publisherStatsLoading: true, error: null });
+    try {
+      const params = new URLSearchParams();
+      if (range?.from) params.set("from", range.from);
+      if (range?.to) params.set("to", range.to);
+      const query = params.toString();
+      const response = await fetch(
+        `${API_BASE}/api/me/publisher/stats${query ? `?${query}` : ""}`,
+        { headers }
+      );
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const publisherStats: PublisherGameStats[] = await response.json();
+      set({ publisherStats, publisherStatsLoading: false });
+    } catch (e) {
+      set({ error: String(e), publisherStatsLoading: false });
+    }
+  },
+
+  fetchPublisherGameDetail: async (gameId) => {
+    const headers = getAuthHeader();
+    if (!headers.Authorization) return;
+    set({ publisherGameDetailLoading: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/games/${gameId}/publisher-stats`, { headers });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const publisherGameDetail: PublisherGameStatsDetail = await response.json();
+      set({ publisherGameDetail, publisherGameDetailLoading: false });
+    } catch (e) {
+      set({ error: String(e), publisherGameDetailLoading: false });
+    }
+  },
+
+  closePublisherGameDetail: () => set({ publisherGameDetail: null }),
 
   fetchOrders: async () => {
     const headers = getAuthHeader();
@@ -221,11 +296,12 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
         method: "POST",
         headers: getAuthHeader(),
       });
-      if (!response.ok) throw new Error(`Fehler (${response.status})`);
+      if (!response.ok) throw new Error(await errorMessage(response));
       const game: CatalogGame = await response.json();
       await get().fetchLibrary();
       await get().fetchWishlist();
       await ensureInLocalLibrary(game);
+      await useAuthStore.getState().hydrateUser();
       set({ checkoutGame: null });
     } catch (e) {
       set({ error: String(e) });
@@ -354,6 +430,11 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       const detailReviews = reviewsRes.ok ? await reviewsRes.json() : [];
       const detailChangelog = changelogRes.ok ? await changelogRes.json() : [];
       set({ detailScreenshots, detailReviews, detailChangelog, detailLoading: false });
+
+      const headers = getAuthHeader();
+      if (headers.Authorization) {
+        fetch(`${API_BASE}/api/games/${game.id}/view`, { method: "POST", headers }).catch(() => {});
+      }
     } catch (e) {
       set({ error: String(e), detailLoading: false });
     }

@@ -13,6 +13,13 @@ pub struct User {
     pub is_profile_hidden: bool,
     pub is_admin: bool,
     pub equipped_badge: Option<Badge>,
+    /// Spendable in-app balance — used to pay for store purchases (see
+    /// `purchase_game`). No real payment provider is wired up yet, so
+    /// top-ups (`top_up_wallet`) are simulated rather than charging a card;
+    /// this is the same "no real provider yet" situation as `Order`, except
+    /// here the balance is actually spendable today instead of just a
+    /// future-Stripe placeholder.
+    pub wallet_balance_cents: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -396,4 +403,68 @@ pub struct EventMessage {
 #[derive(Debug, Deserialize)]
 pub struct NewEventMessage {
     pub body: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct WalletTopup {
+    pub id: i64,
+    pub user_id: i64,
+    pub amount_cents: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewWalletTopup {
+    pub amount_cents: i64,
+}
+
+/// One row of the publisher's "Basis Analytics" view — everything needed
+/// for both the per-game table and the overview totals (the frontend sums
+/// this array rather than the server computing a separate overview, since
+/// it's the same handful of numbers either way).
+#[derive(Debug, Serialize, Clone)]
+pub struct PublisherGameStats {
+    pub catalog_game_id: i64,
+    pub title: String,
+    pub status: String,
+    pub price_cents: i64,
+    pub units_sold: i64,
+    pub revenue_cents: i64,
+    pub wishlist_count: i64,
+    pub view_count: i64,
+    pub avg_rating: Option<f64>,
+    pub review_count: i64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct DailyStat {
+    pub date: String,
+    pub units_sold: i64,
+    pub revenue_cents: i64,
+}
+
+/// Always has exactly 5 entries (stars 1..=5, `count: 0` where there are no
+/// reviews at that rating) so the frontend can render all five bars without
+/// special-casing missing buckets.
+#[derive(Debug, Serialize, Clone)]
+pub struct RatingBucket {
+    pub stars: i64,
+    pub count: i64,
+}
+
+/// Where this game ranks by units sold among all approved games sharing a
+/// given tag — one entry per tag the game has.
+#[derive(Debug, Serialize, Clone)]
+pub struct TagRanking {
+    pub tag: String,
+    pub rank: i64,
+    pub total: i64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct PublisherGameStatsDetail {
+    pub stats: PublisherGameStats,
+    pub daily: Vec<DailyStat>,
+    pub rating_distribution: Vec<RatingBucket>,
+    pub tag_rankings: Vec<TagRanking>,
 }

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { Badge, ProfileScreenshot, StoreUser } from "./types";
+import type { Badge, ProfileScreenshot, StoreUser, WalletTopup } from "./types";
 
 // Set VITE_API_BASE at build time (e.g. in a `.env.production`) to point a
 // release build at the deployed backend instead of localhost.
@@ -12,6 +12,7 @@ interface AuthState {
   user: StoreUser | null;
   screenshots: ProfileScreenshot[];
   badges: Badge[];
+  walletTopups: WalletTopup[];
   error: string | null;
   loading: boolean;
   register: (email: string, password: string, displayName: string) => Promise<void>;
@@ -34,6 +35,8 @@ interface AuthState {
   setEquippedBadge: (badgeKey: string | null) => Promise<void>;
   exportMyData: () => Promise<void>;
   deleteAccount: (password: string) => Promise<boolean>;
+  topUpWallet: (amountCents: number) => Promise<void>;
+  fetchWalletTopups: () => Promise<void>;
 }
 
 async function parseErrorMessage(response: Response): Promise<string> {
@@ -46,6 +49,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   screenshots: [],
   badges: [],
+  walletTopups: [],
   error: null,
   loading: false,
 
@@ -89,7 +93,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: () => {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
-    set({ token: null, user: null, screenshots: [], badges: [] });
+    set({ token: null, user: null, screenshots: [], badges: [], walletTopups: [] });
   },
 
   hydrateUser: async () => {
@@ -339,6 +343,43 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch (e) {
       set({ error: String(e), loading: false });
       return false;
+    }
+  },
+
+  topUpWallet: async (amountCents) => {
+    const token = get().token;
+    if (!token) return;
+    set({ loading: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/me/wallet/topup`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ amount_cents: amountCents }),
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      const user = await response.json();
+      set({ user, loading: false });
+      await get().fetchWalletTopups();
+    } catch (e) {
+      set({ error: String(e), loading: false });
+    }
+  },
+
+  fetchWalletTopups: async () => {
+    const token = get().token;
+    if (!token) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/me/wallet/topups`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      const walletTopups: WalletTopup[] = await response.json();
+      set({ walletTopups });
+    } catch (e) {
+      set({ error: String(e) });
     }
   },
 }));

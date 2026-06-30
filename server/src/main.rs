@@ -339,6 +339,8 @@ async fn main() {
             post(handlers::purchase_game).delete(handlers::revoke_ownership),
         )
         .route("/api/me/orders", get(handlers::list_my_orders))
+        .route("/api/me/wallet/topup", post(handlers::top_up_wallet))
+        .route("/api/me/wallet/topups", get(handlers::list_my_wallet_topups))
         .route(
             "/api/me/tournament-payouts",
             get(handlers::list_my_tournament_payouts),
@@ -348,6 +350,16 @@ async fn main() {
         .route(
             "/api/games/:id/wishlist",
             post(handlers::add_to_wishlist).delete(handlers::remove_from_wishlist),
+        )
+        .route("/api/games/:id/view", post(handlers::record_game_view))
+        .route("/api/me/recommendations", get(handlers::list_recommendations))
+        .route(
+            "/api/me/publisher/stats",
+            get(handlers::list_my_publisher_stats),
+        )
+        .route(
+            "/api/games/:id/publisher-stats",
+            get(handlers::get_publisher_game_stats_detail),
         )
         .route("/api/me/storage", get(handlers::get_storage_usage))
         .route(

@@ -150,6 +150,9 @@ export function StoreView() {
   const fetchStorageUsage = useCatalogStore((s) => s.fetchStorageUsage);
   const detailGame = useCatalogStore((s) => s.detailGame);
   const openGameDetail = useCatalogStore((s) => s.openGameDetail);
+  const recommendations = useCatalogStore((s) => s.recommendations);
+  const recommendationsLoading = useCatalogStore((s) => s.recommendationsLoading);
+  const fetchRecommendations = useCatalogStore((s) => s.fetchRecommendations);
   const token = useAuthStore((s) => s.token);
   const authUser = useAuthStore((s) => s.user);
 
@@ -237,6 +240,10 @@ export function StoreView() {
   useEffect(() => {
     fetchStorageUsage();
   }, [fetchStorageUsage, token]);
+
+  useEffect(() => {
+    fetchRecommendations();
+  }, [fetchRecommendations, token]);
 
   async function handlePublish(e: React.FormEvent) {
     e.preventDefault();
@@ -534,6 +541,69 @@ export function StoreView() {
                       }}
                     />
                   ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {token && (recommendationsLoading || recommendations.length > 0) && (
+            <section className="flex flex-col gap-4">
+              <h2 className="text-xl font-extrabold tracking-tight text-zinc-100">
+                {t("store_recommended")}
+              </h2>
+              {recommendationsLoading ? (
+                <p className="text-sm text-zinc-500">{t("store_loading")}</p>
+              ) : (
+                <div className="flex gap-4 overflow-x-auto pb-2">
+                  {recommendations.map((game) => {
+                    const owned = ownedIds.has(game.id);
+                    const tags = parseTags(game.tags);
+                    return (
+                      <div
+                        key={game.id}
+                        onClick={() => openGameDetail(game)}
+                        className="group flex w-56 shrink-0 cursor-pointer flex-col overflow-hidden rounded-lg border border-white/5 bg-[#141c26] shadow-lg transition-transform hover:-translate-y-1"
+                      >
+                        <div
+                          className="relative aspect-[3/4] w-full"
+                          style={{
+                            background: game.cover_url
+                              ? `url(${game.cover_url}) center/cover`
+                              : coverGradient(game.id),
+                          }}
+                        >
+                          <div
+                            className="absolute inset-0"
+                            style={{
+                              background:
+                                "linear-gradient(180deg, rgba(0,0,0,0) 45%, rgba(0,0,0,.55) 100%)",
+                            }}
+                          />
+                          {tags.length > 0 && (
+                            <div className="absolute left-3 top-3 flex flex-wrap gap-1">
+                              {tags.slice(0, 2).map((tag) => (
+                                <span
+                                  key={tag}
+                                  className="rounded bg-black/40 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-white/80"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <span className="absolute bottom-3 left-3 right-3 text-base font-black leading-tight text-white drop-shadow-lg">
+                            {game.title}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 p-3">
+                          <span className="text-sm font-bold text-zinc-100">
+                            {formatPrice(game.price_cents, t)}
+                          </span>
+                          {renderPurchaseControl(game, owned, "sm")}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </section>

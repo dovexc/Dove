@@ -9,11 +9,12 @@ use std::io::Read;
 use crate::auth::{create_token, hash_password, user_id_from_headers, verify_password, AdminUser, AuthUser};
 use crate::badges::{find_badge, Badge};
 use crate::models::{
-    AuthResponse, BracketEntry, CatalogGame, CloudSave, EventBracket, EventMatch, EventTeam,
-    GameEvent, GameReview, GameScreenshot, GameVersionNote, ImageUpload, LoginRequest,
-    NewCatalogGame, NewEventTeam, NewGameEvent, NewGameReview, NewGameVersionNote, Notification, Order,
-    ProfileScreenshot, PublicProfile, RegisterRequest, SetBadgeRequest, SetMatchWinner,
-    SetPlayingRequest, UpdateProfileRequest, User,
+    AuthResponse, BracketEntry, CatalogGame, CloudSave, DailyStat, EventBracket, EventMatch,
+    EventTeam, GameEvent, GameReview, GameScreenshot, GameVersionNote, ImageUpload, LoginRequest,
+    NewCatalogGame, NewEventTeam, NewGameEvent, NewGameReview, NewGameVersionNote, NewWalletTopup,
+    Notification, Order, ProfileScreenshot, PublicProfile, PublisherGameStats,
+    PublisherGameStatsDetail, RatingBucket, RegisterRequest, SetBadgeRequest, SetMatchWinner,
+    SetPlayingRequest, TagRanking, UpdateProfileRequest, User, WalletTopup,
 };
 use crate::state::AppState;
 use crate::storage::Storage;
@@ -43,12 +44,14 @@ fn row_to_user(row: &PgRow) -> Result<User, sqlx::Error> {
         is_admin: row.try_get(8)?,
         equipped_badge: equipped_badge_key
             .and_then(|k| Badge::from_key(&k, equipped_badge_earned_at.unwrap_or_default())),
+        wallet_balance_cents: row.try_get(11)?,
     })
 }
 
 const USER_COLUMNS: &str = "id, email, display_name, avatar_url, background_url, bio, \
     created_at::TEXT, is_profile_hidden, is_admin, users.equipped_badge, \
-    (SELECT earned_at::TEXT FROM user_badges WHERE user_id = users.id AND badge_key = users.equipped_badge)";
+    (SELECT earned_at::TEXT FROM user_badges WHERE user_id = users.id AND badge_key = users.equipped_badge), \
+    wallet_balance_cents";
 
 async fn fetch_user(pool: &PgPool, user_id: i64) -> Result<User, sqlx::Error> {
     let row = sqlx::query(&format!("SELECT {USER_COLUMNS} FROM users WHERE id = $1"))
@@ -1357,9 +1360,33 @@ pub async fn purchase_game(
         .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
 
-    // No payment provider is wired up yet, so every order is settled as
-    // `paid` immediately — see the `Order` doc comment for how this is
-    // meant to change once Stripe is in place.
+    // No real payment provider is wired up yet — `purchase_game` instead
+    // settles against the player's wallet balance (see the `User` doc
+    // comment), which itself is only ever topped up via the simulated
+    // `top_up_wallet` flow. `FOR UPDATE` locks the row for the rest of the
+    // transaction so two concurrent purchases can't both read a stale
+    // balance and double-spend it.
+    let mut tx = state.db.begin().await.map_err(internal_error)?;
+
+    if game.price_cents > 0 {
+        let balance: i64 =
+            sqlx::query_scalar("SELECT wallet_balance_cents FROM users WHERE id = $1 FOR UPDATE")
+                .bind(user_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(internal_error)?;
+        if balance < game.price_cents {
+            return Err((StatusCode::PAYMENT_REQUIRED, "Nicht genügend Guthaben".to_string()));
+        }
+
+        sqlx::query("UPDATE users SET wallet_balance_cents = wallet_balance_cents - $1 WHERE id = $2")
+            .bind(game.price_cents)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(internal_error)?;
+    }
+
     sqlx::query(
         "INSERT INTO orders (user_id, catalog_game_id, amount_cents, status) \
          VALUES ($1, $2, $3, 'paid')",
@@ -1367,7 +1394,7 @@ pub async fn purchase_game(
     .bind(user_id)
     .bind(game_id)
     .bind(game.price_cents)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await
     .map_err(internal_error)?;
 
@@ -1377,7 +1404,7 @@ pub async fn purchase_game(
     )
     .bind(user_id)
     .bind(game_id)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await
     .map_err(internal_error)?;
 
@@ -1385,10 +1412,68 @@ pub async fn purchase_game(
     let _ = sqlx::query("DELETE FROM wishlist_items WHERE user_id = $1 AND catalog_game_id = $2")
         .bind(user_id)
         .bind(game_id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await;
 
+    tx.commit().await.map_err(internal_error)?;
+
     Ok(Json(game))
+}
+
+/// Cap on a single top-up — there's no real payment provider behind this
+/// (see the `User` doc comment), so this is a guard rail against the
+/// balance being inflated without limit rather than a real spending cap.
+const MAX_TOPUP_CENTS: i64 = 20_000;
+
+pub async fn top_up_wallet(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Json(req): Json<NewWalletTopup>,
+) -> Result<Json<User>, ApiError> {
+    if req.amount_cents <= 0 || req.amount_cents > MAX_TOPUP_CENTS {
+        return Err((StatusCode::BAD_REQUEST, "Ungültiger Betrag".to_string()));
+    }
+
+    sqlx::query("INSERT INTO wallet_topups (user_id, amount_cents) VALUES ($1, $2)")
+        .bind(user_id)
+        .bind(req.amount_cents)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+
+    sqlx::query("UPDATE users SET wallet_balance_cents = wallet_balance_cents + $1 WHERE id = $2")
+        .bind(req.amount_cents)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+
+    fetch_user(&state.db, user_id).await.map(Json).map_err(internal_error)
+}
+
+fn row_to_wallet_topup(row: &PgRow) -> Result<WalletTopup, sqlx::Error> {
+    Ok(WalletTopup {
+        id: row.try_get(0)?,
+        user_id: row.try_get(1)?,
+        amount_cents: row.try_get(2)?,
+        created_at: row.try_get(3)?,
+    })
+}
+
+pub async fn list_my_wallet_topups(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<Json<Vec<WalletTopup>>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT id, user_id, amount_cents, created_at::TEXT FROM wallet_topups \
+         WHERE user_id = $1 ORDER BY created_at DESC",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let topups = rows.iter().filter_map(|r| row_to_wallet_topup(r).ok()).collect();
+    Ok(Json(topups))
 }
 
 pub async fn revoke_ownership(
@@ -1437,6 +1522,319 @@ pub async fn list_wishlist(
     .map_err(internal_error)?;
     let games = rows.iter().filter_map(|r| row_to_game(r).ok()).collect();
     Ok(Json(games))
+}
+
+/// Logs that the player looked at a game's store page — feeds
+/// `list_recommendations` below. Upserts rather than appending so this
+/// stays a small "most recently viewed" set instead of an unbounded log.
+pub async fn record_game_view(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    sqlx::query(
+        "INSERT INTO game_views (user_id, catalog_game_id, viewed_at) VALUES ($1, $2, now()) \
+         ON CONFLICT (user_id, catalog_game_id) DO UPDATE SET viewed_at = now()",
+    )
+    .bind(user_id)
+    .bind(game_id)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+const RECENT_VIEWS_LIMIT: i64 = 8;
+const RECOMMENDATIONS_LIMIT: usize = 12;
+
+fn tag_set(tags: &Option<String>) -> Vec<String> {
+    tags.as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+/// Recommends unowned catalog games by tag overlap with three signals:
+/// owned games, the wishlist, and the last `RECENT_VIEWS_LIMIT` games the
+/// player looked at — each occurrence of a tag across that pool adds one
+/// point, candidate games are scored by summing the weight of their own
+/// tags, highest first. With no signal yet (new account), or once a real
+/// signal exists but a candidate shares nothing with it, this falls back to
+/// rating-ordered approved games so the section is never just empty.
+pub async fn list_recommendations(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<Json<Vec<CatalogGame>>, ApiError> {
+    let owned_tags: Vec<(Option<String>,)> = sqlx::query_as(
+        "SELECT catalog_games.tags FROM ownerships \
+         JOIN catalog_games ON catalog_games.id = ownerships.catalog_game_id \
+         WHERE ownerships.user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    let wishlist_tags: Vec<(Option<String>,)> = sqlx::query_as(
+        "SELECT catalog_games.tags FROM wishlist_items \
+         JOIN catalog_games ON catalog_games.id = wishlist_items.catalog_game_id \
+         WHERE wishlist_items.user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    let viewed_tags: Vec<(Option<String>,)> = sqlx::query_as(
+        "SELECT catalog_games.tags FROM game_views \
+         JOIN catalog_games ON catalog_games.id = game_views.catalog_game_id \
+         WHERE game_views.user_id = $1 ORDER BY game_views.viewed_at DESC LIMIT $2",
+    )
+    .bind(user_id)
+    .bind(RECENT_VIEWS_LIMIT)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    let mut tag_weight: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for (tags,) in owned_tags.iter().chain(wishlist_tags.iter()).chain(viewed_tags.iter()) {
+        for tag in tag_set(tags) {
+            *tag_weight.entry(tag).or_insert(0) += 1;
+        }
+    }
+
+    let candidate_rows = sqlx::query(&format!(
+        "SELECT {GAME_COLUMNS} FROM catalog_games \
+         WHERE status = 'approved' \
+         AND id NOT IN (SELECT catalog_game_id FROM ownerships WHERE user_id = $1) \
+         ORDER BY created_at DESC"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let candidates: Vec<CatalogGame> =
+        candidate_rows.iter().filter_map(|r| row_to_game(r).ok()).collect();
+
+    let mut scored: Vec<(i64, CatalogGame)> = candidates
+        .into_iter()
+        .map(|game| {
+            let score: i64 = tag_set(&game.tags)
+                .iter()
+                .map(|tag| *tag_weight.get(tag).unwrap_or(&0))
+                .sum();
+            (score, game)
+        })
+        .collect();
+
+    // Once there's an actual signal, drop the zero-overlap games entirely —
+    // otherwise they'd all tie at the bottom and dilute the list.
+    if tag_weight.values().any(|&w| w > 0) {
+        scored.retain(|(score, _)| *score > 0);
+    }
+    scored.sort_by(|a, b| {
+        b.0.cmp(&a.0).then(
+            b.1.avg_rating
+                .unwrap_or(0.0)
+                .partial_cmp(&a.1.avg_rating.unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
+
+    let recommendations: Vec<CatalogGame> =
+        scored.into_iter().take(RECOMMENDATIONS_LIMIT).map(|(_, game)| game).collect();
+
+    Ok(Json(recommendations))
+}
+
+fn row_to_publisher_game_stats(row: &PgRow) -> Result<PublisherGameStats, sqlx::Error> {
+    Ok(PublisherGameStats {
+        catalog_game_id: row.try_get(0)?,
+        title: row.try_get(1)?,
+        status: row.try_get(2)?,
+        price_cents: row.try_get(3)?,
+        units_sold: row.try_get(4)?,
+        revenue_cents: row.try_get(5)?,
+        wishlist_count: row.try_get(6)?,
+        view_count: row.try_get(7)?,
+        avg_rating: row.try_get(8)?,
+        review_count: row.try_get(9)?,
+    })
+}
+
+/// "Basis Analytics" for publishers — sales, revenue, wishlist adds, store
+/// page views and ratings per game they've published. The frontend sums
+/// this same array for the overview cards, so one query covers both.
+#[derive(serde::Deserialize)]
+pub struct PublisherStatsQuery {
+    /// Inclusive range bounds as "YYYY-MM-DD". Either or both may be
+    /// omitted, in which case that side is left open (all-time).
+    pub(crate) from: Option<String>,
+    pub(crate) to: Option<String>,
+}
+
+pub async fn list_my_publisher_stats(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    axum::extract::Query(query): axum::extract::Query<PublisherStatsQuery>,
+) -> Result<Json<Vec<PublisherGameStats>>, ApiError> {
+    // Every count/sum below is bound to the same [from, to] window so the
+    // whole row stays internally consistent — e.g. "units sold" and
+    // "revenue" for the period always agree. Defaulting to a wide-open
+    // range when a bound is omitted keeps this one static query instead of
+    // building SQL conditionally.
+    let from = query.from.unwrap_or_else(|| "1970-01-01".to_string());
+    let to = query.to.unwrap_or_else(|| "9999-12-31".to_string());
+
+    let rows = sqlx::query(
+        "SELECT catalog_games.id, catalog_games.title, catalog_games.status, \
+            catalog_games.price_cents, \
+            (SELECT COUNT(*) FROM orders \
+                WHERE orders.catalog_game_id = catalog_games.id AND orders.status = 'paid' \
+                AND orders.created_at >= $2::date AND orders.created_at < $3::date + 1) AS units_sold, \
+            (SELECT COALESCE(SUM(amount_cents), 0)::BIGINT FROM orders \
+                WHERE orders.catalog_game_id = catalog_games.id AND orders.status = 'paid' \
+                AND orders.created_at >= $2::date AND orders.created_at < $3::date + 1) AS revenue_cents, \
+            (SELECT COUNT(*) FROM wishlist_items \
+                WHERE wishlist_items.catalog_game_id = catalog_games.id \
+                AND wishlist_items.created_at >= $2::date AND wishlist_items.created_at < $3::date + 1) AS wishlist_count, \
+            (SELECT COUNT(*) FROM game_views \
+                WHERE game_views.catalog_game_id = catalog_games.id \
+                AND game_views.viewed_at >= $2::date AND game_views.viewed_at < $3::date + 1) AS view_count, \
+            (SELECT AVG(rating) FROM game_reviews \
+                WHERE game_reviews.catalog_game_id = catalog_games.id \
+                AND game_reviews.created_at >= $2::date AND game_reviews.created_at < $3::date + 1) AS avg_rating, \
+            (SELECT COUNT(*) FROM game_reviews \
+                WHERE game_reviews.catalog_game_id = catalog_games.id \
+                AND game_reviews.created_at >= $2::date AND game_reviews.created_at < $3::date + 1) AS review_count \
+         FROM catalog_games \
+         WHERE catalog_games.publisher_user_id = $1 \
+         ORDER BY catalog_games.created_at DESC",
+    )
+    .bind(user_id)
+    .bind(&from)
+    .bind(&to)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    let stats = rows.iter().filter_map(|r| row_to_publisher_game_stats(r).ok()).collect();
+    Ok(Json(stats))
+}
+
+/// Drill-down behind a row in the publisher analytics table: a 30-day
+/// sales/revenue trend, the views → wishlist → purchase funnel (the
+/// frontend computes percentages from the plain counts already in
+/// `stats`), the rating distribution, and where this game ranks by units
+/// sold among other approved games sharing each of its tags.
+pub async fn get_publisher_game_stats_detail(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+) -> Result<Json<PublisherGameStatsDetail>, ApiError> {
+    let game = fetch_game(&state.db, game_id)
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+    if game.publisher_user_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur der Publisher kann die Statistiken einsehen".to_string(),
+        ));
+    }
+
+    let (units_sold, revenue_cents, wishlist_count, view_count): (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT \
+            (SELECT COUNT(*) FROM orders WHERE orders.catalog_game_id = $1 AND orders.status = 'paid'), \
+            (SELECT COALESCE(SUM(amount_cents), 0)::BIGINT FROM orders \
+                WHERE orders.catalog_game_id = $1 AND orders.status = 'paid'), \
+            (SELECT COUNT(*) FROM wishlist_items WHERE wishlist_items.catalog_game_id = $1), \
+            (SELECT COUNT(*) FROM game_views WHERE game_views.catalog_game_id = $1)",
+    )
+    .bind(game_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    let stats = PublisherGameStats {
+        catalog_game_id: game.id,
+        title: game.title.clone(),
+        status: game.status.clone(),
+        price_cents: game.price_cents,
+        units_sold,
+        revenue_cents,
+        wishlist_count,
+        view_count,
+        avg_rating: game.avg_rating,
+        review_count: game.review_count,
+    };
+
+    let daily_rows: Vec<(String, i64, i64)> = sqlx::query_as(
+        "SELECT to_char(d::date, 'YYYY-MM-DD'), COUNT(orders.id), COALESCE(SUM(orders.amount_cents), 0)::BIGINT \
+         FROM generate_series( \
+                date_trunc('day', now()) - interval '29 days', \
+                date_trunc('day', now()), \
+                interval '1 day' \
+              ) AS d \
+         LEFT JOIN orders ON orders.catalog_game_id = $1 AND orders.status = 'paid' \
+            AND orders.created_at::date = d::date \
+         GROUP BY d::date ORDER BY d::date ASC",
+    )
+    .bind(game_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let daily = daily_rows
+        .into_iter()
+        .map(|(date, units_sold, revenue_cents)| DailyStat { date, units_sold, revenue_cents })
+        .collect();
+
+    let rating_rows: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT ROUND(rating)::BIGINT, COUNT(*) FROM game_reviews \
+         WHERE catalog_game_id = $1 GROUP BY 1",
+    )
+    .bind(game_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let rating_counts: std::collections::HashMap<i64, i64> = rating_rows.into_iter().collect();
+    let rating_distribution: Vec<RatingBucket> = (1..=5)
+        .map(|stars| RatingBucket { stars, count: *rating_counts.get(&stars).unwrap_or(&0) })
+        .collect();
+
+    // Tag matching happens in Rust (reusing `tag_set`, same as
+    // `list_recommendations`) rather than via SQL string matching, since
+    // tags are a raw comma-separated column, not normalized.
+    let all_games: Vec<(i64, Option<String>, i64)> = sqlx::query_as(
+        "SELECT catalog_games.id, catalog_games.tags, \
+            (SELECT COUNT(*) FROM orders \
+                WHERE orders.catalog_game_id = catalog_games.id AND orders.status = 'paid') \
+         FROM catalog_games WHERE status = 'approved'",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    let target_tags = tag_set(&game.tags);
+    let mut tag_rankings = Vec::with_capacity(target_tags.len());
+    for tag in &target_tags {
+        let mut group: Vec<(i64, i64)> = all_games
+            .iter()
+            .filter(|(_, tags, _)| tag_set(tags).contains(tag))
+            .map(|(id, _, units)| (*id, *units))
+            .collect();
+        group.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let total = group.len() as i64;
+        let rank = group
+            .iter()
+            .position(|(id, _)| *id == game_id)
+            .map(|p| p as i64 + 1)
+            .unwrap_or(0);
+        tag_rankings.push(TagRanking { tag: tag.clone(), rank, total });
+    }
+
+    Ok(Json(PublisherGameStatsDetail { stats, daily, rating_distribution, tag_rankings }))
 }
 
 pub async fn add_to_wishlist(

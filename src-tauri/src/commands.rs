@@ -1100,6 +1100,16 @@ pub fn set_install_dir(state: State<AppState>, path: String) -> Result<(), Strin
     Ok(())
 }
 
+/// Writes text to a path the user picked via a save dialog (e.g.
+/// `@tauri-apps/plugin-dialog`'s `save()`). Exists because the
+/// `<a download>` blob-URL trick that works in a real browser doesn't
+/// reliably trigger a download inside Tauri's webview — this writes the
+/// file directly instead.
+#[tauri::command]
+pub fn write_text_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content).map_err(|e| format!("Datei konnte nicht gespeichert werden: {e}"))
+}
+
 fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Result<Game, String> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
     {
