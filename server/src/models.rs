@@ -109,6 +109,12 @@ pub struct CatalogGame {
     pub save_path_hint: Option<String>,
     pub avg_rating: Option<f64>,
     pub review_count: i64,
+    /// Only populated when an offer is currently active (`sale_ends_at` is
+    /// still in the future) — computed in SQL, so callers never need to
+    /// check expiry themselves. An expired offer just reads as `None` here
+    /// without any cleanup job.
+    pub sale_price_cents: Option<i64>,
+    pub sale_ends_at: Option<String>,
 }
 
 /// Ledger entry for a game purchase. Today `purchase_game` creates and
@@ -155,6 +161,25 @@ pub struct NewCatalogGame {
     pub min_specs: Option<String>,
     pub recommended_specs: Option<String>,
     pub save_path_hint: Option<String>,
+}
+
+/// Full-replace edit payload — the publisher's edit dialog always sends the
+/// complete current state, so this isn't a partial patch (no need for the
+/// `Option<Option<T>>` dance that would otherwise be required to
+/// distinguish "leave unchanged" from "clear this field").
+/// `sale_price_cents`/`sale_ends_at` both `None` clears any active offer.
+#[derive(Debug, Deserialize)]
+pub struct UpdateCatalogGame {
+    pub title: String,
+    pub description: Option<String>,
+    pub cover_url: Option<String>,
+    pub tags: Option<String>,
+    pub min_specs: Option<String>,
+    pub recommended_specs: Option<String>,
+    pub save_path_hint: Option<String>,
+    pub price_cents: i64,
+    pub sale_price_cents: Option<i64>,
+    pub sale_ends_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]

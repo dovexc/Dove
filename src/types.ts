@@ -136,6 +136,21 @@ export interface CatalogGame {
   save_path_hint: string | null;
   avg_rating: number | null;
   review_count: number;
+  sale_price_cents: number | null;
+  sale_ends_at: string | null;
+}
+
+export interface UpdateCatalogGame {
+  title: string;
+  description: string | null;
+  cover_url: string | null;
+  tags: string | null;
+  min_specs: string | null;
+  recommended_specs: string | null;
+  save_path_hint: string | null;
+  price_cents: number;
+  sale_price_cents: number | null;
+  sale_ends_at: string | null;
 }
 
 export interface PublisherGameStats {

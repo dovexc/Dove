@@ -2,14 +2,10 @@ import { useMemo, useRef, useState } from "react";
 import { useAuthStore } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
 import { formatSize } from "../../utils";
+import { PriceTag, SaleBadge } from "./PriceTag";
 import { RatingPicker, Stars } from "./Stars";
 import { RichNotes } from "./RichNotes";
 import { useT } from "../../translations";
-import type { TranslationKey } from "../../translations";
-
-function formatPrice(priceCents: number, t: (key: TranslationKey) => string): string {
-  return priceCents === 0 ? t("price_free") : `${(priceCents / 100).toFixed(2)} €`;
-}
 
 function parseTags(tags: string | null): string[] {
   if (!tags) return [];
@@ -131,6 +127,9 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                 "linear-gradient(180deg, rgba(0,0,0,0) 40%, rgba(0,0,0,.75) 100%)",
             }}
           />
+          <div className="absolute right-6 top-6">
+            <SaleBadge priceCents={game.price_cents} salePriceCents={game.sale_price_cents} />
+          </div>
           <div className="absolute bottom-6 left-8 right-8">
             {tags.length > 0 && (
               <div className="mb-2 flex gap-3 text-sm font-semibold uppercase tracking-[3px] text-white/70">
@@ -405,7 +404,9 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
           </div>
 
           <aside className="flex flex-col gap-4 self-start rounded-lg border border-white/10 bg-[#10171f] p-5">
-            <span className="text-2xl font-bold text-sky-400">{formatPrice(game.price_cents, t)}</span>
+            <span className="text-2xl font-bold text-sky-400">
+              <PriceTag priceCents={game.price_cents} salePriceCents={game.sale_price_cents} t={t} />
+            </span>
             {owned ? (
               <span className="rounded bg-emerald-900/60 px-4 py-2 text-center text-sm font-semibold text-emerald-300">
                 {t("store_owned")}

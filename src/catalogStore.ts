@@ -11,6 +11,7 @@ import type {
   PublisherGameStats,
   PublisherGameStatsDetail,
   StorageUsage,
+  UpdateCatalogGame,
 } from "./types";
 
 async function errorMessage(response: Response): Promise<string> {
@@ -76,6 +77,7 @@ interface CatalogState {
   removeFromWishlist: (gameId: number) => Promise<void>;
   fetchStorageUsage: () => Promise<void>;
   publishGame: (game: NewCatalogGame) => Promise<void>;
+  updateGame: (gameId: number, fields: UpdateCatalogGame) => Promise<void>;
   purchaseGame: (gameId: number) => Promise<void>;
   openCheckout: (game: CatalogGame) => void;
   closeCheckout: () => void;
@@ -286,6 +288,24 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       await get().fetchCatalog();
     } catch (e) {
       set({ error: String(e) });
+    }
+  },
+
+  updateGame: async (gameId, fields) => {
+    set({ error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/games/${gameId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify(fields),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const updated: CatalogGame = await response.json();
+      if (get().detailGame?.id === gameId) set({ detailGame: updated });
+      await get().fetchCatalog();
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
     }
   },
 

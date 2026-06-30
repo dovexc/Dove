@@ -1,6 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { API_BASE } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
 import { useT } from "../../translations";
+import type { CatalogGame } from "../../types";
+import { EditCatalogGameDialog } from "./EditCatalogGameDialog";
 
 // Unlike a game's listing price, 0 revenue means "no sales" — never
 // "free" — so this always renders the amount.
@@ -23,10 +26,22 @@ export function PublisherGameDetailDialog({ gameId, onClose }: Props) {
   const detail = useCatalogStore((s) => s.publisherGameDetail);
   const loading = useCatalogStore((s) => s.publisherGameDetailLoading);
   const fetchPublisherGameDetail = useCatalogStore((s) => s.fetchPublisherGameDetail);
+  const [editGame, setEditGame] = useState<CatalogGame | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
 
   useEffect(() => {
     fetchPublisherGameDetail(gameId);
   }, [gameId, fetchPublisherGameDetail]);
+
+  async function handleOpenEdit() {
+    setEditLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/games/${gameId}`);
+      if (response.ok) setEditGame(await response.json());
+    } finally {
+      setEditLoading(false);
+    }
+  }
 
   const maxRevenue = detail ? Math.max(...detail.daily.map((d) => d.revenue_cents), 1) : 1;
   const maxRatingCount = detail
@@ -40,13 +55,22 @@ export function PublisherGameDetailDialog({ gameId, onClose }: Props) {
           <h2 className="text-lg font-bold text-zinc-100">
             {detail ? detail.stats.title : t("analytics_detail_title")}
           </h2>
-          <button
-            onClick={onClose}
-            className="text-zinc-500 hover:text-zinc-300"
-            aria-label={t("dialog_cancel")}
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleOpenEdit}
+              disabled={editLoading}
+              className="rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
+            >
+              {t("edit_game_open")}
+            </button>
+            <button
+              onClick={onClose}
+              className="text-zinc-500 hover:text-zinc-300"
+              aria-label={t("dialog_cancel")}
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {loading || !detail ? (
@@ -159,6 +183,16 @@ export function PublisherGameDetailDialog({ gameId, onClose }: Props) {
           </>
         )}
       </div>
+
+      {editGame && (
+        <EditCatalogGameDialog
+          game={editGame}
+          onClose={() => {
+            setEditGame(null);
+            fetchPublisherGameDetail(gameId);
+          }}
+        />
+      )}
     </div>
   );
 }

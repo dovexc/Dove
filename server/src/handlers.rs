@@ -14,7 +14,7 @@ use crate::models::{
     NewCatalogGame, NewEventTeam, NewGameEvent, NewGameReview, NewGameVersionNote, NewWalletTopup,
     Notification, Order, ProfileScreenshot, PublicProfile, PublisherGameStats,
     PublisherGameStatsDetail, RatingBucket, RegisterRequest, SetBadgeRequest, SetMatchWinner,
-    SetPlayingRequest, TagRanking, UpdateProfileRequest, User, WalletTopup,
+    SetPlayingRequest, TagRanking, UpdateCatalogGame, UpdateProfileRequest, User, WalletTopup,
 };
 use crate::state::AppState;
 use crate::storage::Storage;
@@ -876,6 +876,8 @@ fn row_to_game(row: &PgRow) -> Result<CatalogGame, sqlx::Error> {
         save_path_hint: row.try_get(14)?,
         avg_rating: row.try_get(15)?,
         review_count: row.try_get(16)?,
+        sale_price_cents: row.try_get(17)?,
+        sale_ends_at: row.try_get(18)?,
     })
 }
 
@@ -885,7 +887,11 @@ const GAME_COLUMNS: &str = "catalog_games.id, catalog_games.publisher_user_id, c
     catalog_games.version, catalog_games.tags, catalog_games.status, catalog_games.min_specs, \
     catalog_games.recommended_specs, catalog_games.save_path_hint, \
     (SELECT AVG(rating) FROM game_reviews WHERE catalog_game_id = catalog_games.id), \
-    (SELECT COUNT(*) FROM game_reviews WHERE catalog_game_id = catalog_games.id)";
+    (SELECT COUNT(*) FROM game_reviews WHERE catalog_game_id = catalog_games.id), \
+    CASE WHEN catalog_games.sale_price_cents IS NOT NULL AND catalog_games.sale_ends_at > now() \
+        THEN catalog_games.sale_price_cents ELSE NULL END, \
+    CASE WHEN catalog_games.sale_price_cents IS NOT NULL AND catalog_games.sale_ends_at > now() \
+        THEN catalog_games.sale_ends_at::TEXT ELSE NULL END";
 
 const GAME_SCREENSHOT_COLUMNS: &str = "id, catalog_game_id, image_url, created_at::TEXT";
 
@@ -1315,6 +1321,51 @@ pub async fn create_game(
     fetch_game(&state.db, id).await.map(Json).map_err(internal_error)
 }
 
+/// Full-replace edit of a published game — title/description/tags/specs,
+/// price, and the time-limited offer fields all in one request (see the
+/// `UpdateCatalogGame` doc comment for why this isn't a partial patch).
+pub async fn update_game(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+    Json(req): Json<UpdateCatalogGame>,
+) -> Result<Json<CatalogGame>, ApiError> {
+    let publisher_id: i64 = sqlx::query_scalar("SELECT publisher_user_id FROM catalog_games WHERE id = $1")
+        .bind(game_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+    if publisher_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur der Publisher kann dieses Spiel bearbeiten".to_string(),
+        ));
+    }
+
+    sqlx::query(
+        "UPDATE catalog_games SET title = $1, description = $2, cover_url = $3, tags = $4, \
+            min_specs = $5, recommended_specs = $6, save_path_hint = $7, price_cents = $8, \
+            sale_price_cents = $9, sale_ends_at = $10::timestamptz \
+         WHERE id = $11",
+    )
+    .bind(&req.title)
+    .bind(&req.description)
+    .bind(&req.cover_url)
+    .bind(&req.tags)
+    .bind(&req.min_specs)
+    .bind(&req.recommended_specs)
+    .bind(&req.save_path_hint)
+    .bind(req.price_cents)
+    .bind(req.sale_price_cents)
+    .bind(&req.sale_ends_at)
+    .bind(game_id)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    fetch_game(&state.db, game_id).await.map(Json).map_err(internal_error)
+}
+
 const ORDER_COLUMNS: &str = "orders.id, orders.user_id, orders.catalog_game_id, \
     catalog_games.title, orders.amount_cents, orders.status, orders.stripe_payment_intent_id, \
     orders.created_at::TEXT, orders.updated_at::TEXT";
@@ -1366,21 +1417,26 @@ pub async fn purchase_game(
     // `top_up_wallet` flow. `FOR UPDATE` locks the row for the rest of the
     // transaction so two concurrent purchases can't both read a stale
     // balance and double-spend it.
+    // `sale_price_cents` is only ever populated when the offer is still
+    // active (see `GAME_COLUMNS`), so this is the price actually charged —
+    // an expired offer falls back to `price_cents` with no extra check.
+    let effective_price = game.sale_price_cents.unwrap_or(game.price_cents);
+
     let mut tx = state.db.begin().await.map_err(internal_error)?;
 
-    if game.price_cents > 0 {
+    if effective_price > 0 {
         let balance: i64 =
             sqlx::query_scalar("SELECT wallet_balance_cents FROM users WHERE id = $1 FOR UPDATE")
                 .bind(user_id)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(internal_error)?;
-        if balance < game.price_cents {
+        if balance < effective_price {
             return Err((StatusCode::PAYMENT_REQUIRED, "Nicht genügend Guthaben".to_string()));
         }
 
         sqlx::query("UPDATE users SET wallet_balance_cents = wallet_balance_cents - $1 WHERE id = $2")
-            .bind(game.price_cents)
+            .bind(effective_price)
             .bind(user_id)
             .execute(&mut *tx)
             .await
@@ -1393,7 +1449,7 @@ pub async fn purchase_game(
     )
     .bind(user_id)
     .bind(game_id)
-    .bind(game.price_cents)
+    .bind(effective_price)
     .execute(&mut *tx)
     .await
     .map_err(internal_error)?;

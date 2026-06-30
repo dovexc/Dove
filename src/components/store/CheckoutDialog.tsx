@@ -4,6 +4,7 @@ import { useCatalogStore } from "../../catalogStore";
 import { useT } from "../../translations";
 import type { TranslationKey } from "../../translations";
 import type { CatalogGame } from "../../types";
+import { PriceTag } from "./PriceTag";
 import { WalletTopUpDialog } from "./WalletTopUpDialog";
 
 function formatPrice(priceCents: number, t: (key: TranslationKey) => string): string {
@@ -25,11 +26,16 @@ export function CheckoutDialog({ game }: Props) {
   const [agreeWithdrawal, setAgreeWithdrawal] = useState(false);
   const [showTopUp, setShowTopUp] = useState(false);
 
-  const isPaid = game.price_cents > 0;
+  // `purchase_game` on the server charges this same effective price (sale
+  // price while the offer is active, else the listing price) — keep these
+  // in lockstep so the checkout total always matches what's actually
+  // deducted from the wallet.
+  const effectivePriceCents = game.sale_price_cents ?? game.price_cents;
+  const isPaid = effectivePriceCents > 0;
   const submitting = purchasingId === game.id;
   const canConfirm = isPaid ? agreeTerms && agreeWithdrawal : agreeTerms;
   const walletBalanceCents = authUser?.wallet_balance_cents ?? 0;
-  const insufficientFunds = isPaid && walletBalanceCents < game.price_cents;
+  const insufficientFunds = isPaid && walletBalanceCents < effectivePriceCents;
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4">
@@ -55,7 +61,9 @@ export function CheckoutDialog({ game }: Props) {
             <div className="font-semibold text-zinc-100">{game.title}</div>
             <div className="text-xs text-zinc-500">{t("gdp_version")} {game.version}</div>
           </div>
-          <div className="text-right font-bold text-zinc-100">{formatPrice(game.price_cents, t)}</div>
+          <div className="text-right font-bold text-zinc-100">
+            <PriceTag priceCents={game.price_cents} salePriceCents={game.sale_price_cents} t={t} />
+          </div>
         </div>
 
         <div className="flex flex-col gap-1 border-t border-zinc-800 pt-3 text-sm text-zinc-400">
@@ -63,9 +71,15 @@ export function CheckoutDialog({ game }: Props) {
             <span>{t("checkout_subtotal")}</span>
             <span>{formatPrice(game.price_cents, t)}</span>
           </div>
+          {game.sale_price_cents != null && (
+            <div className="flex justify-between text-emerald-400">
+              <span>{t("checkout_discount")}</span>
+              <span>-{formatPrice(game.price_cents - game.sale_price_cents, t)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-base font-semibold text-zinc-100">
             <span>{t("checkout_total")}</span>
-            <span>{formatPrice(game.price_cents, t)}</span>
+            <span>{formatPrice(effectivePriceCents, t)}</span>
           </div>
           <p className="mt-1 text-xs text-zinc-500">{t("checkout_vat_note")}</p>
         </div>

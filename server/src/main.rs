@@ -304,7 +304,10 @@ async fn main() {
             "/api/games",
             get(handlers::list_games).post(handlers::create_game),
         )
-        .route("/api/games/:id", get(handlers::get_game))
+        .route(
+            "/api/games/:id",
+            get(handlers::get_game).patch(handlers::update_game),
+        )
         .route("/api/games/:id/manifest", get(handlers::get_game_manifest))
         .route(
             "/api/games/:id/screenshots",

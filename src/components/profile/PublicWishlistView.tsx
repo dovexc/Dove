@@ -2,15 +2,11 @@ import { useState } from "react";
 import { API_BASE } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
 import { GameDetailPage } from "../store/GameDetailPage";
+import { PriceTag } from "../store/PriceTag";
 import { Stars } from "../store/Stars";
 import { useAuthStore } from "../../authStore";
 import { useT } from "../../translations";
-import type { TranslationKey } from "../../translations";
 import type { CatalogGame } from "../../types";
-
-function formatPrice(priceCents: number, t: (key: TranslationKey) => string): string {
-  return priceCents === 0 ? t("price_free") : `${(priceCents / 100).toFixed(2)} €`;
-}
 
 interface Props {
   ownerName: string;
@@ -86,7 +82,7 @@ export function PublicWishlistView({ ownerName, games, onBack }: Props) {
                   )}
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-bold text-zinc-100">
-                      {formatPrice(game.price_cents, t)}
+                      <PriceTag priceCents={game.price_cents} salePriceCents={game.sale_price_cents} t={t} />
                     </span>
                     {!ownedIds.has(game.id) && (
                       <button

@@ -2,13 +2,9 @@ import { useEffect, useMemo } from "react";
 import { useAuthStore } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
 import { GameDetailPage } from "./GameDetailPage";
+import { PriceTag } from "./PriceTag";
 import { Stars } from "./Stars";
 import { useT } from "../../translations";
-import type { TranslationKey } from "../../translations";
-
-function formatPrice(priceCents: number, t: (key: TranslationKey) => string): string {
-  return priceCents === 0 ? t("price_free") : `${(priceCents / 100).toFixed(2)} €`;
-}
 
 interface Props {
   onClose: () => void;
@@ -104,7 +100,7 @@ export function WishlistPage({ onClose }: Props) {
                   )}
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-bold text-zinc-100">
-                      {formatPrice(game.price_cents, t)}
+                      <PriceTag priceCents={game.price_cents} salePriceCents={game.sale_price_cents} t={t} />
                     </span>
                     <button
                       onClick={(e) => {

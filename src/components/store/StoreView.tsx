@@ -4,9 +4,9 @@ import { useCatalogStore } from "../../catalogStore";
 import { formatSize } from "../../utils";
 import type { CatalogGame } from "../../types";
 import { GameDetailPage } from "./GameDetailPage";
+import { PriceTag, SaleBadge } from "./PriceTag";
 import { Stars } from "./Stars";
 import { useT } from "../../translations";
-import type { TranslationKey } from "../../translations";
 
 const COVER_GRADIENTS = [
   "linear-gradient(135deg,#2b5876,#4e4376)",
@@ -23,10 +23,6 @@ function coverGradient(id: number): string {
   return COVER_GRADIENTS[id % COVER_GRADIENTS.length];
 }
 
-function formatPrice(priceCents: number, t: (key: TranslationKey) => string): string {
-  return priceCents === 0 ? t("price_free") : `${(priceCents / 100).toFixed(2)} €`;
-}
-
 function parseTags(tags: string | null): string[] {
   if (!tags) return [];
   return tags
@@ -35,7 +31,7 @@ function parseTags(tags: string | null): string[] {
     .filter(Boolean);
 }
 
-function TagInput({
+export function TagInput({
   tags,
   onChange,
   suggestions,
@@ -499,6 +495,9 @@ export function StoreView() {
                         "radial-gradient(700px 380px at 22% 40%, rgba(0,0,0,0) 0%, rgba(0,0,0,.35) 100%)",
                     }}
                   />
+                  <div className="absolute right-5 top-5">
+                    <SaleBadge priceCents={hero.price_cents} salePriceCents={hero.sale_price_cents} />
+                  </div>
                   <div className="absolute left-10 bottom-10 right-10">
                     {parseTags(hero.tags).length > 0 && (
                       <div className="mb-2 flex gap-3 text-sm font-semibold uppercase tracking-[3px] text-white/70">
@@ -518,7 +517,7 @@ export function StoreView() {
                   </p>
                   <div className="mt-4 flex items-center justify-between gap-3">
                     <span className="text-base font-bold text-sky-400">
-                      {formatPrice(hero.price_cents, t)}
+                      <PriceTag priceCents={hero.price_cents} salePriceCents={hero.sale_price_cents} t={t} />
                     </span>
                     <div className="flex items-center gap-2">
                       {renderWishlistButton(hero, ownedIds.has(hero.id))}
@@ -579,6 +578,9 @@ export function StoreView() {
                                 "linear-gradient(180deg, rgba(0,0,0,0) 45%, rgba(0,0,0,.55) 100%)",
                             }}
                           />
+                          <div className="absolute right-3 top-3">
+                            <SaleBadge priceCents={game.price_cents} salePriceCents={game.sale_price_cents} />
+                          </div>
                           {tags.length > 0 && (
                             <div className="absolute left-3 top-3 flex flex-wrap gap-1">
                               {tags.slice(0, 2).map((tag) => (
@@ -597,7 +599,7 @@ export function StoreView() {
                         </div>
                         <div className="flex items-center justify-between gap-2 p-3">
                           <span className="text-sm font-bold text-zinc-100">
-                            {formatPrice(game.price_cents, t)}
+                            <PriceTag priceCents={game.price_cents} salePriceCents={game.sale_price_cents} t={t} />
                           </span>
                           {renderPurchaseControl(game, owned, "sm")}
                         </div>
@@ -699,11 +701,10 @@ export function StoreView() {
                               "linear-gradient(180deg, rgba(0,0,0,0) 45%, rgba(0,0,0,.55) 100%)",
                           }}
                         />
-                        {!owned && token && (
-                          <div className="absolute right-3 top-3">
-                            {renderWishlistButton(game, owned)}
-                          </div>
-                        )}
+                        <div className="absolute right-3 top-3 flex flex-col items-end gap-1.5">
+                          <SaleBadge priceCents={game.price_cents} salePriceCents={game.sale_price_cents} />
+                          {!owned && token && renderWishlistButton(game, owned)}
+                        </div>
                         {tags.length > 0 && (
                           <div className="absolute left-3 top-3 flex flex-wrap gap-1">
                             {tags.slice(0, 3).map((tag) => (
@@ -745,7 +746,7 @@ export function StoreView() {
                         )}
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-bold text-zinc-100">
-                            {formatPrice(game.price_cents, t)}
+                            <PriceTag priceCents={game.price_cents} salePriceCents={game.sale_price_cents} t={t} />
                           </span>
                           {game.status === "approved" && renderPurchaseControl(game, owned, "sm")}
                         </div>
