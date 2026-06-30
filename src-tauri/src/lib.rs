@@ -41,6 +41,8 @@ pub fn run() {
             commands::pause_download,
             commands::check_for_update,
             commands::set_auth_session,
+            commands::get_install_dir,
+            commands::set_install_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -33,6 +33,11 @@ pub fn init(app_data_dir: &PathBuf) -> Connection {
             sha256 TEXT NOT NULL,
             UNIQUE(game_id, relative_path)
         );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
         ",
     )
     .expect("failed to initialize schema");

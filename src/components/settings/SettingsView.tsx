@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { appDataDir, join } from "@tauri-apps/api/path";
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useAuthStore } from "../../authStore";
 import { useLibraryStore } from "../../store";
 import { formatSize } from "../../utils";
-import { ACCENT_PRESETS, applyAccent, getStoredAccent } from "../../theme";
-import type { AccentId } from "../../theme";
 import { useI18nStore } from "../../i18nStore";
 import { useT } from "../../translations";
 import { OrderHistoryDialog } from "./OrderHistoryDialog";
@@ -13,6 +12,7 @@ import { DeleteAccountDialog } from "./DeleteAccountDialog";
 
 interface Props {
   onClose: () => void;
+  onOpenGame: (catalogGameId: number) => void;
 }
 
 const LANGUAGES: { id: "de" | "en"; label: string }[] = [
@@ -20,7 +20,7 @@ const LANGUAGES: { id: "de" | "en"; label: string }[] = [
   { id: "en", label: "English" },
 ];
 
-export function SettingsView({ onClose }: Props) {
+export function SettingsView({ onClose, onOpenGame }: Props) {
   const t = useT();
   const language = useI18nStore((s) => s.language);
   const setLanguage = useI18nStore((s) => s.setLanguage);
@@ -35,7 +35,8 @@ export function SettingsView({ onClose }: Props) {
   const games = useLibraryStore((s) => s.games);
 
   const [installDir, setInstallDir] = useState<string | null>(null);
-  const [accent, setAccent] = useState<AccentId>(getStoredAccent());
+  const [installDirError, setInstallDirError] = useState<string | null>(null);
+  const [changingInstallDir, setChangingInstallDir] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -45,17 +46,31 @@ export function SettingsView({ onClose }: Props) {
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
 
   useEffect(() => {
-    appDataDir()
-      .then((dir) => join(dir, "installed"))
+    invoke<string>("get_install_dir")
       .then(setInstallDir)
       .catch(() => setInstallDir(null));
   }, []);
 
   const totalStorageBytes = games.reduce((sum, g) => sum + g.size_on_disk_bytes, 0);
 
-  function handleAccentChange(next: AccentId) {
-    setAccent(next);
-    applyAccent(next);
+  async function handleChangeInstallDir() {
+    const picked = await open({
+      directory: true,
+      multiple: false,
+      title: t("settings_install_dir_pick_title"),
+    });
+    if (typeof picked !== "string") return;
+
+    setInstallDirError(null);
+    setChangingInstallDir(true);
+    try {
+      await invoke("set_install_dir", { path: picked });
+      setInstallDir(picked);
+    } catch (e) {
+      setInstallDirError(String(e));
+    } finally {
+      setChangingInstallDir(false);
+    }
   }
 
   async function handleChangePassword(e: React.FormEvent) {
@@ -227,39 +242,29 @@ export function SettingsView({ onClose }: Props) {
           </h2>
           <div className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <div>
-              <p className="text-xs text-zinc-500">{t("settings_install_dir")}</p>
+              <div className="flex items-center justify-between gap-4">
+                <p className="text-xs text-zinc-500">{t("settings_install_dir")}</p>
+                <button
+                  onClick={handleChangeInstallDir}
+                  disabled={changingInstallDir}
+                  className="shrink-0 rounded bg-zinc-800 px-3 py-1.5 text-sm font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
+                >
+                  {t("settings_install_dir_change")}
+                </button>
+              </div>
               <p className="break-all text-sm text-zinc-200">
                 {installDir ?? t("settings_determining")}
               </p>
+              <p className="mt-1 text-xs text-zinc-500">{t("settings_install_dir_note")}</p>
+              {installDirError && (
+                <p className="mt-1 text-xs text-red-400">{installDirError}</p>
+              )}
             </div>
             <div className="border-t border-zinc-800 pt-3">
               <p className="text-xs text-zinc-500">{t("settings_storage_used")}</p>
               <p className="text-sm text-zinc-200">
                 {formatSize(totalStorageBytes)} ({games.length} {t("settings_games_in_library")})
               </p>
-            </div>
-          </div>
-        </section>
-
-        {/* Design */}
-        <section className="mb-8">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            {t("settings_design")}
-          </h2>
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-            <p className="mb-3 text-xs text-zinc-500">{t("settings_accent_color")}</p>
-            <div className="flex gap-3">
-              {ACCENT_PRESETS.map((preset) => (
-                <button
-                  key={preset.id}
-                  onClick={() => handleAccentChange(preset.id)}
-                  title={preset.label}
-                  className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ring-offset-zinc-900 ${
-                    accent === preset.id ? "ring-zinc-100" : "ring-transparent"
-                  }`}
-                  style={{ background: preset.swatch }}
-                />
-              ))}
             </div>
           </div>
         </section>
@@ -289,7 +294,15 @@ export function SettingsView({ onClose }: Props) {
         </section>
       </div>
 
-      {showOrderHistory && <OrderHistoryDialog onClose={() => setShowOrderHistory(false)} />}
+      {showOrderHistory && (
+        <OrderHistoryDialog
+          onClose={() => setShowOrderHistory(false)}
+          onOpenGame={(catalogGameId) => {
+            setShowOrderHistory(false);
+            onOpenGame(catalogGameId);
+          }}
+        />
+      )}
       {showPayouts && <TournamentPayoutsDialog onClose={() => setShowPayouts(false)} />}
       {showDeleteAccount && (
         <DeleteAccountDialog onClose={() => setShowDeleteAccount(false)} />

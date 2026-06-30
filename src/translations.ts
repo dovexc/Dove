@@ -60,11 +60,13 @@ const translations = {
       "Wenn aktiv, taucht dein Profil nicht mehr in der Nutzersuche auf und ist auch per Link nicht mehr abrufbar — außer für Nutzer, mit denen du bereits befreundet bist.",
     settings_app: "Anwendung",
     settings_install_dir: "Installationsordner",
+    settings_install_dir_change: "Ändern",
+    settings_install_dir_pick_title: "Installationsordner wählen",
+    settings_install_dir_note:
+      "Gilt nur für neue Installationen — bereits installierte Spiele bleiben an ihrem aktuellen Ort.",
     settings_determining: "Wird ermittelt...",
     settings_storage_used: "Speicherplatz durch Spiele belegt",
     settings_games_in_library: "Spiele in der Bibliothek",
-    settings_design: "Design",
-    settings_accent_color: "Akzentfarbe",
     settings_language: "Sprache",
 
     profile_edit: "Bearbeiten",
@@ -535,11 +537,13 @@ const translations = {
       "When enabled, your profile no longer shows up in user search and can't be opened via link either — except for users you're already friends with.",
     settings_app: "Application",
     settings_install_dir: "Install folder",
+    settings_install_dir_change: "Change",
+    settings_install_dir_pick_title: "Choose install folder",
+    settings_install_dir_note:
+      "Only applies to new installs — games already installed stay where they are.",
     settings_determining: "Detecting...",
     settings_storage_used: "Storage used by games",
     settings_games_in_library: "games in library",
-    settings_design: "Appearance",
-    settings_accent_color: "Accent color",
     settings_language: "Language",
 
     profile_edit: "Edit",

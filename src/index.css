@@ -1,42 +1,5 @@
 @import "tailwindcss";
 
-/*
-  Accent color theming: the app's UI uses Tailwind's "sky" palette
-  throughout (bg-sky-600, text-sky-400, ring-sky-500, ...). Overriding these
-  CSS variables re-colors every one of those utility classes app-wide
-  without touching individual components. The default block matches
-  Tailwind's own sky palette; [data-accent="..."] blocks override it.
-*/
-:root {
-  --color-sky-400: #38bdf8;
-  --color-sky-500: #0ea5e9;
-  --color-sky-600: #0284c7;
-}
-
-[data-accent="green"] {
-  --color-sky-400: #34d399;
-  --color-sky-500: #10b981;
-  --color-sky-600: #059669;
-}
-
-[data-accent="purple"] {
-  --color-sky-400: #a78bfa;
-  --color-sky-500: #8b5cf6;
-  --color-sky-600: #7c3aed;
-}
-
-[data-accent="red"] {
-  --color-sky-400: #f87171;
-  --color-sky-500: #ef4444;
-  --color-sky-600: #dc2626;
-}
-
-[data-accent="orange"] {
-  --color-sky-400: #fb923c;
-  --color-sky-500: #f97316;
-  --color-sky-600: #ea580c;
-}
-
 .prose-patch-notes h1 {
   font-size: 1.25rem;
   font-weight: 700;

@@ -2,8 +2,9 @@ use crate::models::{Game, NewGame, UpdateAvailable, UpdateGame};
 use crate::state::AppState;
 use crate::steam::SteamGame;
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1040,6 +1041,65 @@ fn download_one_file(
 /// what's already recorded locally are downloaded, and locally-known files
 /// removed from the new manifest are deleted — a delta update, not a full
 /// re-download, regardless of overall game size.
+const INSTALL_DIR_SETTING_KEY: &str = "install_dir";
+
+fn default_install_root(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("installed"))
+}
+
+/// Resolves the configured install root, falling back to the default
+/// `<app_data_dir>/installed` if the user has never overridden it.
+fn install_root(app: &AppHandle, conn: &Connection) -> Result<PathBuf, String> {
+    let custom: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![INSTALL_DIR_SETTING_KEY],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    match custom {
+        Some(dir) => Ok(PathBuf::from(dir)),
+        None => default_install_root(app),
+    }
+}
+
+#[tauri::command]
+pub fn get_install_dir(app: AppHandle, state: State<AppState>) -> Result<String, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let dir = install_root(&app, &conn)?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// Changes where future game installs are written to. Existing installs are
+/// left in place — this only takes effect for installs that happen after
+/// the change.
+#[tauri::command]
+pub fn set_install_dir(state: State<AppState>, path: String) -> Result<(), String> {
+    let dir = PathBuf::from(&path);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Ordner konnte nicht erstellt werden: {e}"))?;
+
+    let probe = dir.join(".dove_write_test");
+    std::fs::write(&probe, b"ok")
+        .map_err(|e| format!("Ordner ist nicht beschreibbar: {e}"))?;
+    let _ = std::fs::remove_file(&probe);
+
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![INSTALL_DIR_SETTING_KEY, path],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Result<Game, String> {
     let cancel_flag = Arc::new(AtomicBool::new(false));
     {
@@ -1069,17 +1129,12 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
         return Err("Für dieses Spiel wurde noch keine Datei vom Publisher hochgeladen".into());
     }
 
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let install_dir = app_data_dir.join("installed").join(id.to_string());
-    std::fs::create_dir_all(&install_dir).map_err(|e| e.to_string())?;
-
-    let local_hashes = {
+    let (install_root, local_hashes) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
-        local_installed_hashes(&conn, id)?
+        (install_root(&app, &conn)?, local_installed_hashes(&conn, id)?)
     };
+    let install_dir = install_root.join(id.to_string());
+    std::fs::create_dir_all(&install_dir).map_err(|e| e.to_string())?;
 
     let files_to_fetch: Vec<&RemoteManifestFile> = manifest
         .files

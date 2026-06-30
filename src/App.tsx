@@ -360,7 +360,14 @@ function App() {
         </div>
       ) : activeTab === "settings" ? (
         <div className="flex-1 overflow-hidden">
-          <SettingsView onClose={() => setActiveTab("library")} />
+          <SettingsView
+            onClose={() => setActiveTab("library")}
+            onOpenGame={(catalogGameId) => {
+              const libraryGame = games.find((g) => g.catalog_game_id === catalogGameId);
+              if (libraryGame) selectGame(libraryGame.id);
+              setActiveTab("library");
+            }}
+          />
         </div>
       ) : activeTab === "moderation" ? (
         <div className="flex-1 overflow-hidden">

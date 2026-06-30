@@ -30,9 +30,10 @@ const STATUS_CLASS: Record<Order["status"], string> = {
 
 interface Props {
   onClose: () => void;
+  onOpenGame: (catalogGameId: number) => void;
 }
 
-export function OrderHistoryDialog({ onClose }: Props) {
+export function OrderHistoryDialog({ onClose, onOpenGame }: Props) {
   const t = useT();
   const orders = useCatalogStore((s) => s.orders);
   const ordersLoading = useCatalogStore((s) => s.ordersLoading);
@@ -64,24 +65,27 @@ export function OrderHistoryDialog({ onClose }: Props) {
           ) : (
             <ul className="flex flex-col gap-2">
               {orders.map((order) => (
-                <li
-                  key={order.id}
-                  className="flex items-center justify-between gap-3 rounded border border-zinc-800 bg-zinc-800/40 px-3 py-2.5"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-zinc-100">
-                      {order.catalog_game_title}
-                    </p>
-                    <p className="text-xs text-zinc-500">{formatDate(order.created_at)}</p>
-                  </div>
-                  <span className="text-sm font-semibold text-zinc-200">
-                    {formatPrice(order.amount_cents, t)}
-                  </span>
-                  <span
-                    className={`rounded px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASS[order.status]}`}
+                <li key={order.id}>
+                  <button
+                    type="button"
+                    onClick={() => onOpenGame(order.catalog_game_id)}
+                    className="flex w-full items-center justify-between gap-3 rounded border border-zinc-800 bg-zinc-800/40 px-3 py-2.5 text-left hover:bg-zinc-800"
                   >
-                    {t(STATUS_KEY[order.status])}
-                  </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-zinc-100">
+                        {order.catalog_game_title}
+                      </p>
+                      <p className="text-xs text-zinc-500">{formatDate(order.created_at)}</p>
+                    </div>
+                    <span className="text-sm font-semibold text-zinc-200">
+                      {formatPrice(order.amount_cents, t)}
+                    </span>
+                    <span
+                      className={`rounded px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLASS[order.status]}`}
+                    >
+                      {t(STATUS_KEY[order.status])}
+                    </span>
+                  </button>
                 </li>
               ))}
             </ul>
