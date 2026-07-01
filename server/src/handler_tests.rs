@@ -22,6 +22,7 @@ async fn register_user(state: &AppState, email: &str, password: &str, name: &str
             email: email.to_string(),
             password: password.to_string(),
             display_name: name.to_string(),
+            language: None,
         }),
     )
     .await
