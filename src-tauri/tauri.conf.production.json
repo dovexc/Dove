@@ -1,0 +1,7 @@
+{
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost https://cdn.dovexc.com; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://api.dovexc.com https://cdn.dovexc.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'none'; worker-src 'none'"
+    }
+  }
+}

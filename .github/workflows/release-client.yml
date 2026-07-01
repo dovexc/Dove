@@ -29,7 +29,7 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app (NSIS + signed updater artifacts)
-        run: npm run tauri build -- --bundles nsis
+        run: npm run tauri build -- --bundles nsis --config src-tauri/tauri.conf.production.json
 
       - name: Publish installer + update manifest to R2
         shell: bash
