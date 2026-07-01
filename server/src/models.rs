@@ -396,6 +396,9 @@ pub struct GameAchievement {
     pub hidden: bool,
     pub unlocked: bool,
     pub unlocked_at: Option<String>,
+    /// Percentage of game owners who have unlocked this achievement.
+    /// `None` for hidden achievements or when there are no owners yet.
+    pub unlock_percentage: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]

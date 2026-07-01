@@ -272,6 +272,8 @@ export interface GameAchievement {
   hidden: boolean;
   unlocked: boolean;
   unlocked_at: string | null;
+  // `null` for hidden achievements or when no one owns the game yet.
+  unlock_percentage: number | null;
 }
 
 export interface GameEvent {

@@ -1270,7 +1270,12 @@ fn game_achievement_columns(viewer_placeholder: i32) -> String {
              AND user_achievement_unlocks.user_id = ${viewer_placeholder}) AS unlocked, \
          (SELECT unlocked_at::TEXT FROM user_achievement_unlocks \
              WHERE user_achievement_unlocks.game_achievement_id = game_achievements.id \
-             AND user_achievement_unlocks.user_id = ${viewer_placeholder}) AS unlocked_at"
+             AND user_achievement_unlocks.user_id = ${viewer_placeholder}) AS unlocked_at, \
+         (100.0 * (SELECT COUNT(*) FROM user_achievement_unlocks \
+             WHERE user_achievement_unlocks.game_achievement_id = game_achievements.id) \
+             / NULLIF((SELECT COUNT(*) FROM ownerships \
+             WHERE ownerships.catalog_game_id = game_achievements.catalog_game_id), 0) \
+         )::FLOAT8 AS unlock_percentage"
     )
 }
 
@@ -1294,6 +1299,7 @@ fn row_to_game_achievement(row: &PgRow) -> Result<GameAchievement, sqlx::Error> 
         hidden,
         unlocked,
         unlocked_at: row.try_get(8)?,
+        unlock_percentage: if hidden { None } else { row.try_get(9)? },
     })
 }
 
@@ -1314,6 +1320,7 @@ fn row_to_game_achievement_definition(row: &PgRow) -> Result<GameAchievement, sq
         hidden: row.try_get(6)?,
         unlocked: false,
         unlocked_at: None,
+        unlock_percentage: None,
     })
 }
 
@@ -1330,7 +1337,7 @@ pub async fn list_game_achievements(
     let rows = sqlx::query(&format!(
         "SELECT {columns} FROM game_achievements \
          WHERE game_achievements.catalog_game_id = $1 \
-         ORDER BY game_achievements.created_at ASC"
+         ORDER BY unlock_percentage DESC NULLS LAST, game_achievements.created_at ASC"
     ))
     .bind(game_id)
     .bind(current_user_id)

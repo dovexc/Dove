@@ -590,10 +590,15 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                   {achievements.map((a) => (
                     <div
                       key={a.id}
-                      className={`flex items-center gap-3 rounded-lg border border-zinc-800 p-3 ${
+                      className={`relative group flex items-center gap-3 rounded-lg border border-zinc-800 p-3 ${
                         a.unlocked ? "bg-zinc-900/60" : "bg-zinc-900/20 opacity-70"
                       }`}
                     >
+                      {!a.hidden && a.unlock_percentage !== null && (
+                        <div className="pointer-events-none absolute bottom-full left-0 z-10 mb-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-300 opacity-0 transition-opacity duration-150 group-hover:opacity-100 whitespace-nowrap">
+                          {a.unlock_percentage.toFixed(1)}% {t("gdp_achievement_global_percentage")}
+                        </div>
+                      )}
                       {a.icon_url ? (
                         <img src={a.icon_url} alt="" className="h-10 w-10 rounded object-cover" />
                       ) : (
