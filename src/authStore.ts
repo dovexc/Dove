@@ -8,6 +8,15 @@ import type { Badge, ProfileScreenshot, StoreUser, WalletTopup } from "./types";
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:4000";
 const TOKEN_STORAGE_KEY = "dove_store_token";
 
+function syncLanguage(token: string) {
+  const lang = useI18nStore.getState().language;
+  fetch(`${API_BASE}/api/me/language`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ language: lang }),
+  }).catch(() => {});
+}
+
 interface AuthState {
   token: string | null;
   user: StoreUser | null;
@@ -92,6 +101,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ token: data.token, user: data.user, loading: false });
       get().fetchScreenshots();
       get().fetchBadges();
+      syncLanguage(data.token);
     } catch (e) {
       set({ error: String(e), loading: false });
     }
@@ -121,6 +131,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ user });
       get().fetchScreenshots();
       get().fetchBadges();
+      syncLanguage(token);
     } catch {
       // Network/server error (e.g. backend not up yet) — keep the token and
       // retry on the next hydrate rather than logging the user out for an

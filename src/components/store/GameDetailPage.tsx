@@ -62,6 +62,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
   const screenshotInputRef = useRef<HTMLInputElement>(null);
   const [noteVersion, setNoteVersion] = useState(() => game?.version ?? "");
   const [noteText, setNoteText] = useState("");
+  const [reviewSort, setReviewSort] = useState<"newest" | "helpful">("newest");
   const [achKey, setAchKey] = useState("");
   const [achTitle, setAchTitle] = useState("");
   const [achDescription, setAchDescription] = useState("");
@@ -73,6 +74,15 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
     () => reviews.find((r) => r.user_id === authUser?.id) ?? null,
     [reviews, authUser]
   );
+
+  const sortedReviews = useMemo(() => {
+    if (reviewSort === "helpful") {
+      return [...reviews].sort(
+        (a, b) => (b.helpful_count - b.unhelpful_count) - (a.helpful_count - a.unhelpful_count)
+      );
+    }
+    return reviews;
+  }, [reviews, reviewSort]);
 
   if (!game) return null;
 
@@ -310,6 +320,16 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                 ) : (
                   <span className="text-sm text-zinc-500">{t("gdp_no_reviews")}</span>
                 )}
+                {reviews.length > 1 && (
+                  <select
+                    value={reviewSort}
+                    onChange={(e) => setReviewSort(e.target.value as "newest" | "helpful")}
+                    className="ml-auto rounded bg-zinc-800 px-2 py-1 text-xs text-zinc-300 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                  >
+                    <option value="newest">{t("gdp_sort_newest")}</option>
+                    <option value="helpful">{t("gdp_sort_helpful")}</option>
+                  </select>
+                )}
               </div>
 
               {owned && (
@@ -355,7 +375,7 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                 <p className="text-sm text-zinc-500">{t("gdp_be_first_review")}</p>
               ) : (
                 <div className="flex flex-col gap-4">
-                  {reviews.map((r) => (
+                  {sortedReviews.map((r) => (
                     <div key={r.id} className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-semibold text-zinc-200">

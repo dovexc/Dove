@@ -322,6 +322,8 @@ const translations = {
     gdp_edit: "Bearbeiten",
     gdp_helpful: "Hilfreich",
     gdp_not_helpful: "Nicht hilfreich",
+    gdp_sort_newest: "Neueste zuerst",
+    gdp_sort_helpful: "Hilfreichste zuerst",
     gdp_patch_notes: "Patch-Notes",
     gdp_version: "Version",
     gdp_changelog_placeholder:
@@ -896,6 +898,8 @@ const translations = {
     gdp_edit: "Edit",
     gdp_helpful: "Helpful",
     gdp_not_helpful: "Not helpful",
+    gdp_sort_newest: "Newest first",
+    gdp_sort_helpful: "Most helpful first",
     gdp_patch_notes: "Patch notes",
     gdp_version: "Version",
     gdp_changelog_placeholder:
