@@ -1990,6 +1990,27 @@ pub async fn purchase_game(
         crate::email::send_email(&state, &email, &subject, html).await;
     }
 
+    // Publisher-facing: tell them when this game crosses a round sales
+    // number. Uses the same `status = 'paid'` count as the publisher
+    // analytics endpoints, so it lines up with what they see there.
+    let sales_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM orders WHERE catalog_game_id = $1 AND status = 'paid'",
+    )
+    .bind(game_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+
+    if SALES_MILESTONES.contains(&sales_count) {
+        let message = if sales_count == 1 {
+            format!("🎉 \"{}\" wurde zum ersten Mal verkauft!", game.title)
+        } else {
+            format!("🎉 \"{}\" hat {sales_count} Verkäufe erreicht!", game.title)
+        };
+        create_notification(&state.db, game.publisher_user_id, "sales_milestone", &message, None, None)
+            .await;
+    }
+
     Ok(Json(game))
 }
 
@@ -3144,6 +3165,10 @@ pub async fn set_playing(
         .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+/// Copy counts that trigger a "sales_milestone" notification to a game's
+/// publisher, checked in `purchase_game` against the post-purchase total.
+const SALES_MILESTONES: &[i64] = &[1, 10, 25, 50, 100, 250, 500, 1000, 5000, 10000];
 
 /// Inserts a notification for `user_id`. Failures are logged, not
 /// propagated — a missed notification shouldn't roll back the friend

@@ -1071,3 +1071,62 @@ async fn export_my_data_includes_orders_and_library(pool: sqlx::PgPool) {
     assert_eq!(export["library"].as_array().unwrap().len(), 1);
     assert_eq!(export["profile"]["display_name"], "Alice");
 }
+
+#[sqlx::test]
+async fn sales_milestones_notify_the_publisher(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+
+    let game = create_game(
+        State(state.clone()),
+        AuthUser(publisher.id),
+        Json(NewCatalogGame {
+            title: "Pixel Knights".to_string(),
+            description: None,
+            cover_url: None,
+            tags: None,
+            min_specs: None,
+            recommended_specs: None,
+            save_path_hint: None,
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    let _ = purchase_game(State(state.clone()), AuthUser(alice.id), Path(game.id))
+        .await
+        .unwrap();
+
+    let notifications = list_notifications(State(state.clone()), AuthUser(publisher.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(notifications.len(), 1, "first sale should notify the publisher");
+    assert_eq!(notifications[0].kind, "sales_milestone");
+    assert!(notifications[0].message.contains("zum ersten Mal"));
+
+    // Sales 2 through 9 are not round numbers and shouldn't add another notification.
+    for _ in 2..10 {
+        let _ = purchase_game(State(state.clone()), AuthUser(alice.id), Path(game.id))
+            .await
+            .unwrap();
+    }
+    let notifications = list_notifications(State(state.clone()), AuthUser(publisher.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(notifications.len(), 1, "no milestone between the 2nd and 9th sale");
+
+    // The 10th sale crosses the next milestone.
+    let _ = purchase_game(State(state.clone()), AuthUser(alice.id), Path(game.id))
+        .await
+        .unwrap();
+    let notifications = list_notifications(State(state.clone()), AuthUser(publisher.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(notifications.len(), 2);
+    assert!(notifications[0].message.contains("10 Verkäufe"));
+}
