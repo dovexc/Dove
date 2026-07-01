@@ -391,12 +391,22 @@ pub struct GameReview {
     pub rating: f64,
     pub body: Option<String>,
     pub created_at: String,
+    pub helpful_count: i64,
+    pub unhelpful_count: i64,
+    /// The caller's own vote on this review, if any — `None` both when
+    /// they haven't voted and when the request is unauthenticated.
+    pub my_vote: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct NewGameReview {
     pub rating: f64,
     pub body: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReviewVoteRequest {
+    pub is_helpful: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]

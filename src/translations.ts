@@ -320,6 +320,8 @@ const translations = {
     gdp_loading_reviews: "Bewertungen werden geladen...",
     gdp_be_first_review: "Sei der Erste, der dieses Spiel bewertet.",
     gdp_edit: "Bearbeiten",
+    gdp_helpful: "Hilfreich",
+    gdp_not_helpful: "Nicht hilfreich",
     gdp_patch_notes: "Patch-Notes",
     gdp_version: "Version",
     gdp_changelog_placeholder:
@@ -882,6 +884,8 @@ const translations = {
     gdp_loading_reviews: "Loading reviews...",
     gdp_be_first_review: "Be the first to review this game.",
     gdp_edit: "Edit",
+    gdp_helpful: "Helpful",
+    gdp_not_helpful: "Not helpful",
     gdp_patch_notes: "Patch notes",
     gdp_version: "Version",
     gdp_changelog_placeholder:

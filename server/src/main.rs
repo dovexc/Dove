@@ -344,6 +344,10 @@ async fn main() {
                 .delete(handlers::delete_game_review),
         )
         .route(
+            "/api/reviews/:id/vote",
+            post(handlers::vote_on_review).delete(handlers::remove_review_vote),
+        )
+        .route(
             "/api/games/:id/changelog",
             get(handlers::list_version_notes).post(handlers::upsert_version_note),
         )

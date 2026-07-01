@@ -248,6 +248,9 @@ export interface GameReview {
   rating: number;
   body: string | null;
   created_at: string;
+  helpful_count: number;
+  unhelpful_count: number;
+  my_vote: boolean | null;
 }
 
 export interface GameVersionNote {

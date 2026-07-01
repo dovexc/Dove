@@ -13,8 +13,9 @@ use crate::models::{
     EventTeam, GameEvent, GameReview, GameScreenshot, GameVersionNote, ImageUpload, LoginRequest,
     NewCatalogGame, NewEventTeam, NewGameEvent, NewGameReview, NewGameVersionNote, NewWalletTopup,
     Notification, NewUserReport, Order, ProfileScreenshot, PublicProfile, PublisherGameStats,
-    PublisherGameStatsDetail, RatingBucket, RegisterRequest, ReportedUserSummary, SetBadgeRequest,
-    SetLanguageRequest, SetMatchWinner, SetPlayingRequest, SourceCount, TagRanking, UnbanRequest,
+    PublisherGameStatsDetail, RatingBucket, RegisterRequest, ReportedUserSummary, ReviewVoteRequest,
+    SetBadgeRequest, SetLanguageRequest, SetMatchWinner, SetPlayingRequest, SourceCount, TagRanking,
+    UnbanRequest,
     UpdateCatalogGame, UpdateProfileRequest, User, UserReport, WalletTopup,
 };
 use crate::state::AppState;
@@ -955,8 +956,22 @@ fn row_to_game_screenshot(row: &PgRow) -> Result<GameScreenshot, sqlx::Error> {
     })
 }
 
-const GAME_REVIEW_COLUMNS: &str = "game_reviews.id, game_reviews.catalog_game_id, game_reviews.user_id, \
-    users.display_name, game_reviews.rating, game_reviews.body, game_reviews.created_at::TEXT";
+/// `my_vote_placeholder` is the bind position of the caller's user id (-1
+/// when unauthenticated, never a real review author) — callers vary in how
+/// many params precede it, so the column list is built per-query rather
+/// than being a plain constant.
+fn game_review_columns(my_vote_placeholder: i32) -> String {
+    format!(
+        "game_reviews.id, game_reviews.catalog_game_id, game_reviews.user_id, \
+         users.display_name, game_reviews.rating, game_reviews.body, game_reviews.created_at::TEXT, \
+         (SELECT COUNT(*) FROM review_votes \
+             WHERE review_votes.review_id = game_reviews.id AND review_votes.is_helpful) AS helpful_count, \
+         (SELECT COUNT(*) FROM review_votes \
+             WHERE review_votes.review_id = game_reviews.id AND NOT review_votes.is_helpful) AS unhelpful_count, \
+         (SELECT is_helpful FROM review_votes \
+             WHERE review_votes.review_id = game_reviews.id AND review_votes.user_id = ${my_vote_placeholder}) AS my_vote"
+    )
+}
 
 fn row_to_game_review(row: &PgRow) -> Result<GameReview, sqlx::Error> {
     Ok(GameReview {
@@ -967,6 +982,9 @@ fn row_to_game_review(row: &PgRow) -> Result<GameReview, sqlx::Error> {
         rating: row.try_get(4)?,
         body: row.try_get(5)?,
         created_at: row.try_get(6)?,
+        helpful_count: row.try_get(7)?,
+        unhelpful_count: row.try_get(8)?,
+        my_vote: row.try_get(9)?,
     })
 }
 
@@ -1060,15 +1078,19 @@ pub async fn delete_game_screenshot(
 
 pub async fn list_game_reviews(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(game_id): Path<i64>,
 ) -> Result<Json<Vec<GameReview>>, ApiError> {
+    let current_user_id = user_id_from_headers(&headers, &state.jwt_secret).unwrap_or(-1);
+    let columns = game_review_columns(2);
     let rows = sqlx::query(&format!(
-        "SELECT {GAME_REVIEW_COLUMNS} FROM game_reviews \
+        "SELECT {columns} FROM game_reviews \
          JOIN users ON users.id = game_reviews.user_id \
          WHERE game_reviews.catalog_game_id = $1 \
          ORDER BY game_reviews.created_at DESC"
     ))
     .bind(game_id)
+    .bind(current_user_id)
     .fetch_all(&state.db)
     .await
     .map_err(internal_error)?;
@@ -1135,8 +1157,9 @@ pub async fn upsert_game_review(
         award_badge(&state.db, user_id, "first_review").await;
     }
 
+    let columns = game_review_columns(2);
     let row = sqlx::query(&format!(
-        "SELECT {GAME_REVIEW_COLUMNS} FROM game_reviews \
+        "SELECT {columns} FROM game_reviews \
          JOIN users ON users.id = game_reviews.user_id \
          WHERE game_reviews.catalog_game_id = $1 AND game_reviews.user_id = $2"
     ))
@@ -1153,6 +1176,17 @@ pub async fn delete_game_review(
     AuthUser(user_id): AuthUser,
     Path(game_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
+    // No FK cascade on review_votes — clear them first or the delete below
+    // fails with a foreign key violation once a review has any votes.
+    let _ = sqlx::query(
+        "DELETE FROM review_votes WHERE review_id IN \
+         (SELECT id FROM game_reviews WHERE catalog_game_id = $1 AND user_id = $2)",
+    )
+    .bind(game_id)
+    .bind(user_id)
+    .execute(&state.db)
+    .await;
+
     let result = sqlx::query("DELETE FROM game_reviews WHERE catalog_game_id = $1 AND user_id = $2")
         .bind(game_id)
         .bind(user_id)
@@ -1162,6 +1196,60 @@ pub async fn delete_game_review(
     if result.rows_affected() == 0 {
         return Err((StatusCode::NOT_FOUND, "Bewertung nicht gefunden".to_string()));
     }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Marks a review as helpful/unhelpful. Voting on your own review is
+/// rejected — same self-action guard as `cannot_friend_request_yourself`.
+/// Idempotent per caller: a repeat vote just flips `is_helpful` rather than
+/// stacking, via the `review_votes` unique constraint.
+pub async fn vote_on_review(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(review_id): Path<i64>,
+    Json(req): Json<ReviewVoteRequest>,
+) -> Result<StatusCode, ApiError> {
+    let review_author_id: i64 = sqlx::query_scalar("SELECT user_id FROM game_reviews WHERE id = $1")
+        .bind(review_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, "Bewertung nicht gefunden".to_string()))?;
+    if review_author_id == user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Du kannst nicht für deine eigene Bewertung abstimmen".to_string(),
+        ));
+    }
+
+    sqlx::query(
+        "INSERT INTO review_votes (review_id, user_id, is_helpful) VALUES ($1, $2, $3) \
+         ON CONFLICT (review_id, user_id) DO UPDATE SET \
+         is_helpful = excluded.is_helpful, created_at = now()",
+    )
+    .bind(review_id)
+    .bind(user_id)
+    .bind(req.is_helpful)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Removes the caller's vote — lets the frontend buttons toggle (click the
+/// already-active choice again to retract it) instead of only switching
+/// between helpful/unhelpful.
+pub async fn remove_review_vote(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(review_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    sqlx::query("DELETE FROM review_votes WHERE review_id = $1 AND user_id = $2")
+        .bind(review_id)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

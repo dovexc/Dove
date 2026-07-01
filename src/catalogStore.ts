@@ -96,6 +96,8 @@ interface CatalogState {
   refreshDetailReviews: (gameId: number) => Promise<void>;
   submitReview: (gameId: number, rating: number, body: string | null) => Promise<void>;
   deleteReview: (gameId: number) => Promise<void>;
+  voteOnReview: (gameId: number, reviewId: number, isHelpful: boolean) => Promise<void>;
+  removeReviewVote: (gameId: number, reviewId: number) => Promise<void>;
   addGameScreenshot: (gameId: number, dataUrl: string) => Promise<void>;
   deleteGameScreenshot: (gameId: number, screenshotId: number) => Promise<void>;
   refreshDetailChangelog: (gameId: number) => Promise<void>;
@@ -500,6 +502,35 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     set({ error: null });
     try {
       const response = await fetch(`${API_BASE}/api/games/${gameId}/reviews`, {
+        method: "DELETE",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      await get().refreshDetailReviews(gameId);
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  voteOnReview: async (gameId, reviewId, isHelpful) => {
+    set({ error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/reviews/${reviewId}/vote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify({ is_helpful: isHelpful }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      await get().refreshDetailReviews(gameId);
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  removeReviewVote: async (gameId, reviewId) => {
+    set({ error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/reviews/${reviewId}/vote`, {
         method: "DELETE",
         headers: getAuthHeader(),
       });

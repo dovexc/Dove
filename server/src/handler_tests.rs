@@ -1130,3 +1130,115 @@ async fn sales_milestones_notify_the_publisher(pool: sqlx::PgPool) {
     assert_eq!(notifications.len(), 2);
     assert!(notifications[0].message.contains("10 Verkäufe"));
 }
+
+#[sqlx::test]
+async fn review_votes_track_helpful_counts_and_reject_self_votes(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+    let bob = register_user(&state, "bob@test.de", "password123", "Bob").await;
+
+    let game = create_game(
+        State(state.clone()),
+        AuthUser(publisher.id),
+        Json(NewCatalogGame {
+            title: "Pixel Knights".to_string(),
+            description: None,
+            cover_url: None,
+            tags: None,
+            min_specs: None,
+            recommended_specs: None,
+            save_path_hint: None,
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    let _ = purchase_game(State(state.clone()), AuthUser(alice.id), Path(game.id))
+        .await
+        .unwrap();
+    let review = upsert_game_review(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Path(game.id),
+        Json(NewGameReview { rating: 4.5, body: Some("Ganz gut".to_string()) }),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    let self_vote = vote_on_review(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Path(review.id),
+        Json(ReviewVoteRequest { is_helpful: true }),
+    )
+    .await;
+    assert_eq!(self_vote.unwrap_err().0, StatusCode::FORBIDDEN, "can't vote on your own review");
+
+    vote_on_review(
+        State(state.clone()),
+        AuthUser(bob.id),
+        Path(review.id),
+        Json(ReviewVoteRequest { is_helpful: true }),
+    )
+    .await
+    .unwrap();
+
+    let reviews = list_game_reviews(State(state.clone()), bearer_headers(&state, bob.id), Path(game.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(reviews[0].helpful_count, 1);
+    assert_eq!(reviews[0].unhelpful_count, 0);
+    assert_eq!(reviews[0].my_vote, Some(true));
+
+    // Voting again with the opposite choice flips the existing vote rather than stacking.
+    vote_on_review(
+        State(state.clone()),
+        AuthUser(bob.id),
+        Path(review.id),
+        Json(ReviewVoteRequest { is_helpful: false }),
+    )
+    .await
+    .unwrap();
+    let reviews = list_game_reviews(State(state.clone()), bearer_headers(&state, bob.id), Path(game.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(reviews[0].helpful_count, 0);
+    assert_eq!(reviews[0].unhelpful_count, 1);
+    assert_eq!(reviews[0].my_vote, Some(false));
+
+    // Removing the vote clears both the count and the caller's own vote.
+    remove_review_vote(State(state.clone()), AuthUser(bob.id), Path(review.id))
+        .await
+        .unwrap();
+    let reviews = list_game_reviews(State(state.clone()), bearer_headers(&state, bob.id), Path(game.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(reviews[0].unhelpful_count, 0);
+    assert_eq!(reviews[0].my_vote, None);
+
+    // A logged-out viewer sees the counts but no my_vote.
+    let anon_reviews = list_game_reviews(State(state.clone()), HeaderMap::new(), Path(game.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(anon_reviews[0].my_vote, None);
+
+    // Deleting a review with an active vote on it must not fail on the
+    // review_votes foreign key.
+    vote_on_review(
+        State(state.clone()),
+        AuthUser(bob.id),
+        Path(review.id),
+        Json(ReviewVoteRequest { is_helpful: true }),
+    )
+    .await
+    .unwrap();
+    let deleted = delete_game_review(State(state.clone()), AuthUser(alice.id), Path(game.id)).await;
+    assert_eq!(deleted.unwrap(), StatusCode::NO_CONTENT);
+}

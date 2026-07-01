@@ -40,6 +40,8 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
   const closeGameDetail = useCatalogStore((s) => s.closeGameDetail);
   const submitReview = useCatalogStore((s) => s.submitReview);
   const deleteReview = useCatalogStore((s) => s.deleteReview);
+  const voteOnReview = useCatalogStore((s) => s.voteOnReview);
+  const removeReviewVote = useCatalogStore((s) => s.removeReviewVote);
   const addGameScreenshot = useCatalogStore((s) => s.addGameScreenshot);
   const deleteGameScreenshot = useCatalogStore((s) => s.deleteGameScreenshot);
   const wishlist = useCatalogStore((s) => s.wishlist);
@@ -86,6 +88,15 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
     if (!ownReview) return;
     setReviewRating(ownReview.rating);
     setReviewBody(ownReview.body ?? "");
+  }
+
+  async function handleVote(reviewId: number, currentVote: boolean | null, isHelpful: boolean) {
+    if (!game) return;
+    if (currentVote === isHelpful) {
+      await removeReviewVote(game.id, reviewId);
+    } else {
+      await voteOnReview(game.id, reviewId, isHelpful);
+    }
   }
 
   async function handleSubmitVersionNote(e: React.FormEvent) {
@@ -308,14 +319,46 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                       {r.body && (
                         <p className="mt-2 text-sm text-zinc-400">{r.body}</p>
                       )}
-                      {r.user_id === authUser?.id && (
-                        <button
-                          onClick={startEditOwnReview}
-                          className="mt-2 text-xs text-sky-400 hover:underline"
-                        >
-                          {t("gdp_edit")}
-                        </button>
-                      )}
+                      <div className="mt-2 flex items-center gap-3">
+                        {authUser && r.user_id !== authUser.id ? (
+                          <>
+                            <button
+                              onClick={() => handleVote(r.id, r.my_vote, true)}
+                              className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+                                r.my_vote === true
+                                  ? "bg-sky-600 text-white"
+                                  : "text-zinc-400 hover:bg-zinc-800"
+                              }`}
+                            >
+                              👍 {t("gdp_helpful")} ({r.helpful_count})
+                            </button>
+                            <button
+                              onClick={() => handleVote(r.id, r.my_vote, false)}
+                              className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+                                r.my_vote === false
+                                  ? "bg-red-600 text-white"
+                                  : "text-zinc-400 hover:bg-zinc-800"
+                              }`}
+                            >
+                              👎 {t("gdp_not_helpful")} ({r.unhelpful_count})
+                            </button>
+                          </>
+                        ) : (
+                          (r.helpful_count > 0 || r.unhelpful_count > 0) && (
+                            <span className="text-xs text-zinc-500">
+                              👍 {r.helpful_count} · 👎 {r.unhelpful_count}
+                            </span>
+                          )
+                        )}
+                        {r.user_id === authUser?.id && (
+                          <button
+                            onClick={startEditOwnReview}
+                            className="text-xs text-sky-400 hover:underline"
+                          >
+                            {t("gdp_edit")}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
