@@ -1242,3 +1242,122 @@ async fn review_votes_track_helpful_counts_and_reject_self_votes(pool: sqlx::PgP
     let deleted = delete_game_review(State(state.clone()), AuthUser(alice.id), Path(game.id)).await;
     assert_eq!(deleted.unwrap(), StatusCode::NO_CONTENT);
 }
+
+#[sqlx::test]
+async fn achievements_unlock_idempotently_and_redact_hidden_ones(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+    let bob = register_user(&state, "bob@test.de", "password123", "Bob").await;
+
+    let game = create_game(
+        State(state.clone()),
+        AuthUser(publisher.id),
+        Json(NewCatalogGame {
+            title: "Pixel Knights".to_string(),
+            description: None,
+            cover_url: None,
+            tags: None,
+            min_specs: None,
+            recommended_specs: None,
+            save_path_hint: None,
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    let achievement = upsert_game_achievement(
+        State(state.clone()),
+        AuthUser(publisher.id),
+        Path(game.id),
+        Json(NewGameAchievement {
+            key: "FIRST_WIN".to_string(),
+            title: "Erster Sieg".to_string(),
+            description: Some("Gewinne dein erstes Match".to_string()),
+            icon: None,
+            hidden: true,
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+    // The publisher's own view is never redacted, even for a hidden achievement.
+    assert_eq!(achievement.title.as_deref(), Some("Erster Sieg"));
+
+    // Unlocking requires ownership.
+    let denied = unlock_achievement(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Path((game.id, "FIRST_WIN".to_string())),
+    )
+    .await;
+    assert_eq!(denied.unwrap_err().0, StatusCode::FORBIDDEN);
+
+    let _ = purchase_game(State(state.clone()), AuthUser(alice.id), Path(game.id))
+        .await
+        .unwrap();
+
+    // A hidden achievement alice hasn't unlocked yet is redacted for her.
+    let achievements_before = list_game_achievements(State(state.clone()), bearer_headers(&state, alice.id), Path(game.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(achievements_before[0].title, None);
+    assert!(!achievements_before[0].unlocked);
+
+    unlock_achievement(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Path((game.id, "FIRST_WIN".to_string())),
+    )
+    .await
+    .unwrap();
+
+    let notifications = list_notifications(State(state.clone()), AuthUser(alice.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(notifications.len(), 1);
+    assert_eq!(notifications[0].kind, "achievement_unlocked");
+    assert!(notifications[0].message.contains("Erster Sieg"));
+
+    // Once unlocked, alice sees the real title and no longer "???".
+    let achievements_after = list_game_achievements(State(state.clone()), bearer_headers(&state, alice.id), Path(game.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(achievements_after[0].title.as_deref(), Some("Erster Sieg"));
+    assert!(achievements_after[0].unlocked);
+
+    // Unlocking again is idempotent — no duplicate notification.
+    unlock_achievement(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Path((game.id, "FIRST_WIN".to_string())),
+    )
+    .await
+    .unwrap();
+    let notifications = list_notifications(State(state.clone()), AuthUser(alice.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(notifications.len(), 1, "repeat unlock must not duplicate the notification");
+
+    // Bob never unlocked it — still redacted for him.
+    let bob_view = list_game_achievements(State(state.clone()), bearer_headers(&state, bob.id), Path(game.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(bob_view[0].title, None);
+
+    // Deleting an achievement with an active unlock on it must not fail on
+    // the user_achievement_unlocks foreign key.
+    let deleted = delete_game_achievement(
+        State(state.clone()),
+        AuthUser(publisher.id),
+        Path((game.id, achievement.id)),
+    )
+    .await;
+    assert_eq!(deleted.unwrap(), StatusCode::NO_CONTENT);
+}

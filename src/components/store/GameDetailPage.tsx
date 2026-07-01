@@ -50,6 +50,9 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
   const changelog = useCatalogStore((s) => s.detailChangelog);
   const submitVersionNote = useCatalogStore((s) => s.submitVersionNote);
   const deleteVersionNote = useCatalogStore((s) => s.deleteVersionNote);
+  const achievements = useCatalogStore((s) => s.detailAchievements);
+  const submitAchievement = useCatalogStore((s) => s.submitAchievement);
+  const deleteAchievement = useCatalogStore((s) => s.deleteAchievement);
   const authUser = useAuthStore((s) => s.user);
   const token = useAuthStore((s) => s.token);
 
@@ -59,6 +62,12 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
   const screenshotInputRef = useRef<HTMLInputElement>(null);
   const [noteVersion, setNoteVersion] = useState(() => game?.version ?? "");
   const [noteText, setNoteText] = useState("");
+  const [achKey, setAchKey] = useState("");
+  const [achTitle, setAchTitle] = useState("");
+  const [achDescription, setAchDescription] = useState("");
+  const [achIcon, setAchIcon] = useState<string | null>(null);
+  const [achHidden, setAchHidden] = useState(false);
+  const achievementIconInputRef = useRef<HTMLInputElement>(null);
 
   const ownReview = useMemo(
     () => reviews.find((r) => r.user_id === authUser?.id) ?? null,
@@ -109,6 +118,44 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
   function startEditVersionNote(note: { version: string; notes: string | null }) {
     setNoteVersion(note.version);
     setNoteText(note.notes ?? "");
+  }
+
+  async function handleAchievementIconChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setAchIcon(await fileToDataUrl(file));
+  }
+
+  async function handleSubmitAchievement(e: React.FormEvent) {
+    e.preventDefault();
+    if (!game || !achKey.trim() || !achTitle.trim()) return;
+    await submitAchievement(
+      game.id,
+      achKey.trim(),
+      achTitle.trim(),
+      achDescription.trim() || null,
+      achIcon,
+      achHidden
+    );
+    setAchKey("");
+    setAchTitle("");
+    setAchDescription("");
+    setAchIcon(null);
+    setAchHidden(false);
+  }
+
+  function startEditAchievement(achievement: {
+    key: string;
+    title: string | null;
+    description: string | null;
+    hidden: boolean;
+  }) {
+    setAchKey(achievement.key);
+    setAchTitle(achievement.title ?? "");
+    setAchDescription(achievement.description ?? "");
+    setAchIcon(null);
+    setAchHidden(achievement.hidden);
   }
 
   return (
@@ -433,6 +480,131 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                           </button>
                           <button
                             onClick={() => deleteVersionNote(game.id, note.id)}
+                            className="text-xs text-red-400 hover:underline"
+                          >
+                            {t("gdp_remove")}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section>
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-400">
+                {t("gdp_achievements")}
+              </h2>
+
+              {isPublisher && (
+                <form
+                  onSubmit={handleSubmitAchievement}
+                  className="mb-5 flex flex-col gap-2 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
+                >
+                  <div className="flex gap-2">
+                    <label className="flex flex-1 flex-col gap-1 text-sm text-zinc-300">
+                      {t("gdp_achievement_key")}
+                      <input
+                        value={achKey}
+                        onChange={(e) => setAchKey(e.target.value)}
+                        required
+                        placeholder="FIRST_WIN"
+                        className="rounded bg-zinc-800 px-3 py-1.5 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                      />
+                    </label>
+                    <label className="flex flex-1 flex-col gap-1 text-sm text-zinc-300">
+                      {t("gdp_achievement_title")}
+                      <input
+                        value={achTitle}
+                        onChange={(e) => setAchTitle(e.target.value)}
+                        required
+                        className="rounded bg-zinc-800 px-3 py-1.5 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                      />
+                    </label>
+                  </div>
+                  <textarea
+                    value={achDescription}
+                    onChange={(e) => setAchDescription(e.target.value)}
+                    rows={2}
+                    placeholder={t("gdp_achievement_description_placeholder")}
+                    className="rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+                  />
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => achievementIconInputRef.current?.click()}
+                      className="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+                    >
+                      {achIcon ? t("gdp_achievement_icon_selected") : t("gdp_achievement_add_icon")}
+                    </button>
+                    <input
+                      ref={achievementIconInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleAchievementIconChange}
+                    />
+                    <label className="flex items-center gap-1.5 text-xs text-zinc-400">
+                      <input
+                        type="checkbox"
+                        checked={achHidden}
+                        onChange={(e) => setAchHidden(e.target.checked)}
+                      />
+                      {t("gdp_achievement_hidden")}
+                    </label>
+                  </div>
+                  <button
+                    type="submit"
+                    className="self-end rounded bg-sky-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
+                  >
+                    {t("gdp_save_achievement")}
+                  </button>
+                </form>
+              )}
+
+              {achievements.length === 0 ? (
+                <p className="text-sm text-zinc-500">{t("gdp_no_achievements")}</p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {achievements.map((a) => (
+                    <div
+                      key={a.id}
+                      className={`flex items-center gap-3 rounded-lg border border-zinc-800 p-3 ${
+                        a.unlocked ? "bg-zinc-900/60" : "bg-zinc-900/20 opacity-70"
+                      }`}
+                    >
+                      {a.icon_url ? (
+                        <img src={a.icon_url} alt="" className="h-10 w-10 rounded object-cover" />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded bg-zinc-800 text-lg">
+                          {a.unlocked ? "🏆" : "🔒"}
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <span className="text-sm font-semibold text-zinc-200">
+                          {a.title ?? "???"}
+                        </span>
+                        {a.description && (
+                          <p className="text-xs text-zinc-500">{a.description}</p>
+                        )}
+                        {a.unlocked && a.unlocked_at && (
+                          <p className="text-xs text-emerald-400">
+                            {t("gdp_achievement_unlocked_on")}{" "}
+                            {new Date(a.unlocked_at).toLocaleDateString("de-DE")}
+                          </p>
+                        )}
+                      </div>
+                      {isPublisher && (
+                        <div className="flex gap-3">
+                          <button
+                            onClick={() => startEditAchievement(a)}
+                            className="text-xs text-sky-400 hover:underline"
+                          >
+                            {t("gdp_edit")}
+                          </button>
+                          <button
+                            onClick={() => deleteAchievement(game.id, a.id)}
                             className="text-xs text-red-400 hover:underline"
                           >
                             {t("gdp_remove")}

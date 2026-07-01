@@ -383,6 +383,34 @@ pub struct GameScreenshot {
 }
 
 #[derive(Debug, Serialize, Clone)]
+pub struct GameAchievement {
+    pub id: i64,
+    pub catalog_game_id: i64,
+    pub key: String,
+    /// `None` when `hidden` is true and the viewer hasn't unlocked it yet —
+    /// redacted server-side, same idea as an expired sale price, so the
+    /// client never has to be trusted to hide spoilers itself.
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub icon_url: Option<String>,
+    pub hidden: bool,
+    pub unlocked: bool,
+    pub unlocked_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewGameAchievement {
+    pub key: String,
+    pub title: String,
+    pub description: Option<String>,
+    /// `data:<mime>;base64,...` upload, same shape as `ImageUpload::image` —
+    /// `None` on an edit that isn't changing the icon.
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
 pub struct GameReview {
     pub id: i64,
     pub catalog_game_id: i64,

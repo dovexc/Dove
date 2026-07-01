@@ -348,6 +348,18 @@ async fn main() {
             post(handlers::vote_on_review).delete(handlers::remove_review_vote),
         )
         .route(
+            "/api/games/:id/achievements",
+            get(handlers::list_game_achievements).post(handlers::upsert_game_achievement),
+        )
+        .route(
+            "/api/games/:id/achievements/:achievement_id",
+            axum::routing::delete(handlers::delete_game_achievement),
+        )
+        .route(
+            "/api/games/:id/achievements/:key/unlock",
+            post(handlers::unlock_achievement),
+        )
+        .route(
             "/api/games/:id/changelog",
             get(handlers::list_version_notes).post(handlers::upsert_version_note),
         )

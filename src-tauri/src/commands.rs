@@ -3,7 +3,7 @@ use crate::state::AppState;
 use crate::steam::SteamGame;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -384,11 +384,37 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
         running.insert(id);
     }
 
-    let spawn_result = Command::new(&exe_path).spawn();
+    // A short-lived session token, not the real JWT, so the game process can
+    // report achievement unlocks without ever holding real credentials — see
+    // `run_achievement_relay`.
+    let achievement_session_token = catalog_game_id.map(|cgid| {
+        let token = uuid::Uuid::new_v4().to_string();
+        if let Ok(mut sessions) = state.achievement_sessions.lock() {
+            sessions.insert(token.clone(), cgid);
+        }
+        token
+    });
+
+    let mut command = Command::new(&exe_path);
+    if let Some(token) = &achievement_session_token {
+        command
+            .env(
+                "DOVE_ACHIEVEMENT_URL",
+                format!("http://127.0.0.1:{}/unlock", state.achievement_port),
+            )
+            .env("DOVE_ACHIEVEMENT_TOKEN", token);
+    }
+
+    let spawn_result = command.spawn();
     let mut child = match spawn_result {
         Ok(child) => child,
         Err(e) => {
             state.running.lock().map_err(|e| e.to_string())?.remove(&id);
+            if let Some(token) = &achievement_session_token {
+                if let Ok(mut sessions) = state.achievement_sessions.lock() {
+                    sessions.remove(token);
+                }
+            }
             return Err(format!("Spiel konnte nicht gestartet werden: {e}"));
         }
     };
@@ -409,6 +435,7 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
     let running_set = state.running.clone();
     let app_handle = app.clone();
     let auth_token = state.auth_token.clone();
+    let achievement_sessions = state.achievement_sessions.clone();
 
     spawn_playtime_heartbeat(running_set.clone(), auth_token.clone(), id, catalog_game_id);
 
@@ -429,6 +456,11 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
         }
         if let Ok(mut running) = running_set.lock() {
             running.remove(&id);
+        }
+        if let Some(token) = &achievement_session_token {
+            if let Ok(mut sessions) = achievement_sessions.lock() {
+                sessions.remove(token);
+            }
         }
         app_handle.emit("game-stopped", id).ok();
         try_sync_cloud_save_up(&auth_token, catalog_game_id);
@@ -823,6 +855,74 @@ fn report_install_event(
             .send_json(body)
     {
         eprintln!("Install-Event konnte nicht gemeldet werden: {e}");
+    }
+}
+
+/// Body a game process sends to the local achievement relay — `token` is
+/// the short-lived per-launch value from `DOVE_ACHIEVEMENT_TOKEN`, never the
+/// user's real JWT (see `AppState::achievement_sessions`).
+#[derive(serde::Deserialize)]
+struct AchievementUnlockPayload {
+    token: String,
+    key: String,
+}
+
+/// Runs for the lifetime of the launcher, listening on 127.0.0.1 only. This
+/// is the one bit of infrastructure a running game needs to report an
+/// achievement unlock: it never gets `auth_token` (the real JWT) directly,
+/// only a per-launch session token that this relay maps back to a
+/// `catalog_game_id` before forwarding the unlock to the real backend with
+/// the real token — the same `ureq::post` + bearer-token shape
+/// `report_playtime_seconds` already uses. A malicious or compromised game
+/// can at most unlock achievements for the game it *is*, never impersonate
+/// the user anywhere else.
+pub fn run_achievement_relay(
+    server: tiny_http::Server,
+    sessions: Arc<Mutex<HashMap<String, i64>>>,
+    auth_token: Arc<Mutex<Option<String>>>,
+) {
+    for mut request in server.incoming_requests() {
+        let respond = |request: tiny_http::Request, status: u16| {
+            let _ = request.respond(tiny_http::Response::empty(status));
+        };
+
+        if request.method() != &tiny_http::Method::Post || request.url() != "/unlock" {
+            respond(request, 404);
+            continue;
+        }
+
+        let mut body = String::new();
+        if std::io::Read::read_to_string(request.as_reader(), &mut body).is_err() {
+            respond(request, 400);
+            continue;
+        }
+        let Ok(payload) = serde_json::from_str::<AchievementUnlockPayload>(&body) else {
+            respond(request, 400);
+            continue;
+        };
+
+        let catalog_game_id = sessions.lock().ok().and_then(|s| s.get(&payload.token).copied());
+        let Some(catalog_game_id) = catalog_game_id else {
+            respond(request, 401);
+            continue;
+        };
+        let Some(token) = auth_token.lock().ok().and_then(|t| t.clone()) else {
+            respond(request, 401);
+            continue;
+        };
+
+        let url = format!(
+            "{STORE_API_BASE}/api/games/{catalog_game_id}/achievements/{}/unlock",
+            urlencoding::encode(&payload.key)
+        );
+        let status = match ureq::post(&url).set("Authorization", &format!("Bearer {token}")).call() {
+            Ok(_) => 204,
+            Err(e) => {
+                eprintln!("Achievement-Unlock konnte nicht weitergeleitet werden: {e}");
+                502
+            }
+        };
+        respond(request, status);
     }
 }
 

@@ -3,6 +3,7 @@ import { API_BASE, getAuthHeader, useAuthStore } from "./authStore";
 import { useLibraryStore } from "./store";
 import type {
   CatalogGame,
+  GameAchievement,
   GameReview,
   GameScreenshot,
   GameVersionNote,
@@ -55,6 +56,7 @@ interface CatalogState {
   detailScreenshots: GameScreenshot[];
   detailReviews: GameReview[];
   detailChangelog: GameVersionNote[];
+  detailAchievements: GameAchievement[];
   detailLoading: boolean;
   checkoutGame: CatalogGame | null;
   orders: Order[];
@@ -103,6 +105,16 @@ interface CatalogState {
   refreshDetailChangelog: (gameId: number) => Promise<void>;
   submitVersionNote: (gameId: number, version: string, notes: string | null) => Promise<void>;
   deleteVersionNote: (gameId: number, noteId: number) => Promise<void>;
+  refreshDetailAchievements: (gameId: number) => Promise<void>;
+  submitAchievement: (
+    gameId: number,
+    key: string,
+    title: string,
+    description: string | null,
+    icon: string | null,
+    hidden: boolean
+  ) => Promise<void>;
+  deleteAchievement: (gameId: number, achievementId: number) => Promise<void>;
 }
 
 export const useCatalogStore = create<CatalogState>((set, get) => ({
@@ -122,6 +134,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   detailScreenshots: [],
   detailReviews: [],
   detailChangelog: [],
+  detailAchievements: [],
   detailLoading: false,
   checkoutGame: null,
   orders: [],
@@ -443,20 +456,24 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       detailScreenshots: [],
       detailReviews: [],
       detailChangelog: [],
+      detailAchievements: [],
       detailLoading: true,
     });
     try {
-      const [screenshotsRes, reviewsRes, changelogRes] = await Promise.all([
+      const headers = getAuthHeader();
+      const [screenshotsRes, reviewsRes, changelogRes, achievementsRes] = await Promise.all([
         fetch(`${API_BASE}/api/games/${game.id}/screenshots`),
-        fetch(`${API_BASE}/api/games/${game.id}/reviews`),
+        // Auth header needed so `my_vote`/`unlocked` come back populated.
+        fetch(`${API_BASE}/api/games/${game.id}/reviews`, { headers }),
         fetch(`${API_BASE}/api/games/${game.id}/changelog`),
+        fetch(`${API_BASE}/api/games/${game.id}/achievements`, { headers }),
       ]);
       const detailScreenshots = screenshotsRes.ok ? await screenshotsRes.json() : [];
       const detailReviews = reviewsRes.ok ? await reviewsRes.json() : [];
       const detailChangelog = changelogRes.ok ? await changelogRes.json() : [];
-      set({ detailScreenshots, detailReviews, detailChangelog, detailLoading: false });
+      const detailAchievements = achievementsRes.ok ? await achievementsRes.json() : [];
+      set({ detailScreenshots, detailReviews, detailChangelog, detailAchievements, detailLoading: false });
 
-      const headers = getAuthHeader();
       if (headers.Authorization) {
         fetch(`${API_BASE}/api/games/${game.id}/view?source=${source}`, {
           method: "POST",
@@ -469,11 +486,20 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   },
 
   closeGameDetail: () =>
-    set({ detailGame: null, detailScreenshots: [], detailReviews: [], detailChangelog: [] }),
+    set({
+      detailGame: null,
+      detailScreenshots: [],
+      detailReviews: [],
+      detailChangelog: [],
+      detailAchievements: [],
+    }),
 
   refreshDetailReviews: async (gameId) => {
     try {
-      const response = await fetch(`${API_BASE}/api/games/${gameId}/reviews`);
+      // Auth header needed so `my_vote` comes back populated for a logged-in viewer.
+      const response = await fetch(`${API_BASE}/api/games/${gameId}/reviews`, {
+        headers: getAuthHeader(),
+      });
       if (!response.ok) throw new Error(await errorMessage(response));
       const detailReviews: GameReview[] = await response.json();
       set({ detailReviews });
@@ -606,6 +632,49 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       });
       if (!response.ok && response.status !== 404) throw new Error(await errorMessage(response));
       set({ detailChangelog: get().detailChangelog.filter((n) => n.id !== noteId) });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  refreshDetailAchievements: async (gameId) => {
+    try {
+      // Auth header needed so `unlocked` comes back populated for a logged-in viewer.
+      const response = await fetch(`${API_BASE}/api/games/${gameId}/achievements`, {
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const detailAchievements: GameAchievement[] = await response.json();
+      set({ detailAchievements });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  submitAchievement: async (gameId, key, title, description, icon, hidden) => {
+    set({ error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/games/${gameId}/achievements`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify({ key, title, description, icon, hidden }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      await get().refreshDetailAchievements(gameId);
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  deleteAchievement: async (gameId, achievementId) => {
+    set({ error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/games/${gameId}/achievements/${achievementId}`, {
+        method: "DELETE",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok && response.status !== 404) throw new Error(await errorMessage(response));
+      set({ detailAchievements: get().detailAchievements.filter((a) => a.id !== achievementId) });
     } catch (e) {
       set({ error: String(e) });
     }

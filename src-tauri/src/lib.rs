@@ -21,11 +21,31 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to resolve app data dir");
             let conn = db::init(&app_data_dir);
+            let auth_token = Arc::new(Mutex::new(None));
+            let achievement_sessions = Arc::new(Mutex::new(Default::default()));
+
+            // Local-only relay so a running game can report achievement
+            // unlocks without ever holding the user's real JWT — see
+            // `commands::run_achievement_relay`. Binds to port 0 (OS picks
+            // a free one) so there's no fixed-port collision risk.
+            let relay_server = tiny_http::Server::http("127.0.0.1:0")
+                .expect("failed to bind achievement relay");
+            let achievement_port = relay_server.server_addr().to_ip().expect("relay must be TCP").port();
+            {
+                let sessions = achievement_sessions.clone();
+                let auth_token = auth_token.clone();
+                std::thread::spawn(move || {
+                    commands::run_achievement_relay(relay_server, sessions, auth_token);
+                });
+            }
+
             app.manage(AppState {
                 db: Arc::new(Mutex::new(conn)),
                 running: Arc::new(Mutex::new(Default::default())),
                 downloads: Arc::new(Mutex::new(Default::default())),
-                auth_token: Arc::new(Mutex::new(None)),
+                auth_token,
+                achievement_sessions,
+                achievement_port,
             });
             Ok(())
         })

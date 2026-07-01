@@ -10,8 +10,9 @@ use crate::auth::{create_token, hash_password, user_id_from_headers, verify_pass
 use crate::badges::{find_badge, Badge};
 use crate::models::{
     AuthResponse, BracketEntry, CatalogGame, CloudSave, DailyStat, EventBracket, EventMatch,
-    EventTeam, GameEvent, GameReview, GameScreenshot, GameVersionNote, ImageUpload, LoginRequest,
-    NewCatalogGame, NewEventTeam, NewGameEvent, NewGameReview, NewGameVersionNote, NewWalletTopup,
+    EventTeam, GameAchievement, GameEvent, GameReview, GameScreenshot, GameVersionNote, ImageUpload,
+    LoginRequest, NewCatalogGame, NewEventTeam, NewGameAchievement, NewGameEvent, NewGameReview,
+    NewGameVersionNote, NewWalletTopup,
     Notification, NewUserReport, Order, ProfileScreenshot, PublicProfile, PublisherGameStats,
     PublisherGameStatsDetail, RatingBucket, RegisterRequest, ReportedUserSummary, ReviewVoteRequest,
     SetBadgeRequest, SetLanguageRequest, SetMatchWinner, SetPlayingRequest, SourceCount, TagRanking,
@@ -1250,6 +1251,266 @@ pub async fn remove_review_vote(
         .execute(&state.db)
         .await
         .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `viewer_placeholder` is the bind position of the viewer's user id (-1
+/// when unauthenticated) used to compute `unlocked`/`unlocked_at` — see
+/// `game_review_columns` for why this is a function instead of a constant.
+/// Redaction of hidden-and-not-yet-unlocked achievements happens afterward
+/// in `row_to_game_achievement`, not here, since it needs both `hidden` and
+/// `unlocked` from the same row.
+fn game_achievement_columns(viewer_placeholder: i32) -> String {
+    format!(
+        "game_achievements.id, game_achievements.catalog_game_id, game_achievements.key, \
+         game_achievements.title, game_achievements.description, game_achievements.icon_url, \
+         game_achievements.hidden, \
+         EXISTS(SELECT 1 FROM user_achievement_unlocks \
+             WHERE user_achievement_unlocks.game_achievement_id = game_achievements.id \
+             AND user_achievement_unlocks.user_id = ${viewer_placeholder}) AS unlocked, \
+         (SELECT unlocked_at::TEXT FROM user_achievement_unlocks \
+             WHERE user_achievement_unlocks.game_achievement_id = game_achievements.id \
+             AND user_achievement_unlocks.user_id = ${viewer_placeholder}) AS unlocked_at"
+    )
+}
+
+/// Redacts `title`/`description`/`icon_url` for a hidden achievement the
+/// viewer hasn't unlocked yet — Steam-style "???" — so a curious player
+/// can't just read the API response to spoil it.
+fn row_to_game_achievement(row: &PgRow) -> Result<GameAchievement, sqlx::Error> {
+    let hidden: bool = row.try_get(6)?;
+    let unlocked: bool = row.try_get(7)?;
+    let redact = hidden && !unlocked;
+    let title: String = row.try_get(3)?;
+    let description: Option<String> = row.try_get(4)?;
+    let icon_url: Option<String> = row.try_get(5)?;
+    Ok(GameAchievement {
+        id: row.try_get(0)?,
+        catalog_game_id: row.try_get(1)?,
+        key: row.try_get(2)?,
+        title: if redact { None } else { Some(title) },
+        description: if redact { None } else { description },
+        icon_url: if redact { None } else { icon_url },
+        hidden,
+        unlocked,
+        unlocked_at: row.try_get(8)?,
+    })
+}
+
+const GAME_ACHIEVEMENT_DEFINITION_COLUMNS: &str =
+    "id, catalog_game_id, key, title, description, icon_url, hidden";
+
+/// Un-redacted view of an achievement, for the publisher managing their own
+/// definitions — they need to see the real title/description they just
+/// wrote, not the "???" a player would see before unlocking it.
+fn row_to_game_achievement_definition(row: &PgRow) -> Result<GameAchievement, sqlx::Error> {
+    Ok(GameAchievement {
+        id: row.try_get(0)?,
+        catalog_game_id: row.try_get(1)?,
+        key: row.try_get(2)?,
+        title: Some(row.try_get(3)?),
+        description: row.try_get(4)?,
+        icon_url: row.try_get(5)?,
+        hidden: row.try_get(6)?,
+        unlocked: false,
+        unlocked_at: None,
+    })
+}
+
+/// Achievement list for a game's store page. Public + optional-auth (like
+/// `list_game_reviews`) so it can also surface the viewer's own unlock
+/// status without requiring an account to browse.
+pub async fn list_game_achievements(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(game_id): Path<i64>,
+) -> Result<Json<Vec<GameAchievement>>, ApiError> {
+    let current_user_id = user_id_from_headers(&headers, &state.jwt_secret).unwrap_or(-1);
+    let columns = game_achievement_columns(2);
+    let rows = sqlx::query(&format!(
+        "SELECT {columns} FROM game_achievements \
+         WHERE game_achievements.catalog_game_id = $1 \
+         ORDER BY game_achievements.created_at ASC"
+    ))
+    .bind(game_id)
+    .bind(current_user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let achievements = rows.iter().filter_map(|r| row_to_game_achievement(r).ok()).collect();
+    Ok(Json(achievements))
+}
+
+/// Creates or updates a per-game achievement definition. Publisher-only,
+/// upserts by `key` so re-saving the same achievement (e.g. fixing a typo)
+/// overwrites it instead of duplicating — same idea as `upsert_version_note`.
+/// Skipping a new `icon` on an edit keeps the existing icon via `COALESCE`
+/// rather than clearing it.
+pub async fn upsert_game_achievement(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(game_id): Path<i64>,
+    Json(req): Json<NewGameAchievement>,
+) -> Result<Json<GameAchievement>, ApiError> {
+    let key = req.key.trim();
+    if key.is_empty() || req.title.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Key und Titel dürfen nicht leer sein".to_string(),
+        ));
+    }
+
+    let publisher_id: i64 = sqlx::query_scalar("SELECT publisher_user_id FROM catalog_games WHERE id = $1")
+        .bind(game_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+    if publisher_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur der Publisher kann Achievements verwalten".to_string(),
+        ));
+    }
+
+    let icon_url: Option<String> = match &req.icon {
+        Some(data_url) => Some(save_data_url_image(&state.storage, data_url).await?),
+        None => None,
+    };
+
+    sqlx::query(
+        "INSERT INTO game_achievements (catalog_game_id, key, title, description, icon_url, hidden) \
+         VALUES ($1, $2, $3, $4, $5, $6) \
+         ON CONFLICT (catalog_game_id, key) DO UPDATE SET \
+         title = excluded.title, description = excluded.description, \
+         icon_url = COALESCE(excluded.icon_url, game_achievements.icon_url), hidden = excluded.hidden",
+    )
+    .bind(game_id)
+    .bind(key)
+    .bind(req.title.trim())
+    .bind(&req.description)
+    .bind(&icon_url)
+    .bind(req.hidden)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    let row = sqlx::query(&format!(
+        "SELECT {GAME_ACHIEVEMENT_DEFINITION_COLUMNS} FROM game_achievements \
+         WHERE catalog_game_id = $1 AND key = $2"
+    ))
+    .bind(game_id)
+    .bind(key)
+    .fetch_one(&state.db)
+    .await
+    .map_err(internal_error)?;
+    row_to_game_achievement_definition(&row).map(Json).map_err(internal_error)
+}
+
+pub async fn delete_game_achievement(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path((game_id, achievement_id)): Path<(i64, i64)>,
+) -> Result<StatusCode, ApiError> {
+    let publisher_id: i64 = sqlx::query_scalar("SELECT publisher_user_id FROM catalog_games WHERE id = $1")
+        .bind(game_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+    if publisher_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur der Publisher kann Achievements entfernen".to_string(),
+        ));
+    }
+
+    // No FK cascade on user_achievement_unlocks — clear them first, same
+    // reasoning as `delete_game_review`'s `review_votes` cleanup.
+    let _ = sqlx::query("DELETE FROM user_achievement_unlocks WHERE game_achievement_id = $1")
+        .bind(achievement_id)
+        .execute(&state.db)
+        .await;
+
+    let result = sqlx::query("DELETE FROM game_achievements WHERE id = $1 AND catalog_game_id = $2")
+        .bind(achievement_id)
+        .bind(game_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+    if result.rows_affected() == 0 {
+        return Err((StatusCode::NOT_FOUND, "Achievement nicht gefunden".to_string()));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Marks an achievement as unlocked for the caller. Called by the Tauri
+/// launcher's local relay — never by the game process directly, which only
+/// ever sees a short-lived per-launch session token, not this real JWT (see
+/// `src-tauri/src/commands.rs`). The relay forwards here with the user's
+/// real token exactly the way `report_playtime_seconds` already reports
+/// playtime. Ownership-gated like reviews; idempotent via `ON CONFLICT DO
+/// NOTHING`, and only notifies on the unlock that actually happened —
+/// mirrors `award_badge`'s philosophy.
+pub async fn unlock_achievement(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path((game_id, key)): Path<(i64, String)>,
+) -> Result<StatusCode, ApiError> {
+    let owns: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM ownerships WHERE user_id = $1 AND catalog_game_id = $2)",
+    )
+    .bind(user_id)
+    .bind(game_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
+    if !owns {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Du musst das Spiel besitzen, um Achievements freizuschalten".to_string(),
+        ));
+    }
+
+    let achievement: Option<(i64, String)> = sqlx::query_as(
+        "SELECT id, title FROM game_achievements WHERE catalog_game_id = $1 AND key = $2",
+    )
+    .bind(game_id)
+    .bind(&key)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let Some((achievement_id, title)) = achievement else {
+        return Err((StatusCode::NOT_FOUND, "Achievement nicht gefunden".to_string()));
+    };
+
+    let inserted = sqlx::query(
+        "INSERT INTO user_achievement_unlocks (user_id, game_achievement_id) VALUES ($1, $2) \
+         ON CONFLICT (user_id, game_achievement_id) DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(achievement_id)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?
+    .rows_affected()
+        > 0;
+
+    if inserted {
+        let game_title: String = sqlx::query_scalar("SELECT title FROM catalog_games WHERE id = $1")
+            .bind(game_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or_default();
+        create_notification(
+            &state.db,
+            user_id,
+            "achievement_unlocked",
+            &format!("🏆 Achievement freigeschaltet: \"{title}\" in {game_title}"),
+            None,
+            None,
+        )
+        .await;
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 

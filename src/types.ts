@@ -261,6 +261,19 @@ export interface GameVersionNote {
   created_at: string;
 }
 
+export interface GameAchievement {
+  id: number;
+  catalog_game_id: number;
+  key: string;
+  // `null` when hidden and not yet unlocked by the viewer — redacted server-side.
+  title: string | null;
+  description: string | null;
+  icon_url: string | null;
+  hidden: boolean;
+  unlocked: boolean;
+  unlocked_at: string | null;
+}
+
 export interface GameEvent {
   id: number;
   host_user_id: number;
