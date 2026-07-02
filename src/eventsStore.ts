@@ -36,6 +36,7 @@ interface EventsState {
   leaveEvent: (eventId: number) => Promise<void>;
   createTeam: (eventId: number, name: string) => Promise<void>;
   joinTeam: (eventId: number, teamId: number) => Promise<void>;
+  removeParticipant: (eventId: number, userId: number) => Promise<void>;
   startTournament: (eventId: number) => Promise<void>;
   setMatchWinner: (eventId: number, matchId: number, winnerEntryId: number) => Promise<void>;
   findEventByCode: (code: string) => Promise<void>;
@@ -208,6 +209,24 @@ export const useEventsStore = create<EventsState>((set, get) => ({
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeader() },
         body: JSON.stringify({ name, code }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const extras = await fetchDetailExtras(eventId);
+      set(extras);
+      await get().fetchEvents();
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ teamActionPending: false });
+    }
+  },
+
+  removeParticipant: async (eventId, userId) => {
+    set({ error: null, teamActionPending: true });
+    try {
+      const response = await fetch(`${API_BASE}/api/events/${eventId}/participants/${userId}`, {
+        method: "DELETE",
+        headers: getAuthHeader(),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
       const extras = await fetchDetailExtras(eventId);

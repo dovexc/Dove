@@ -3,6 +3,7 @@ import { useAuthStore } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
 import { formatSize } from "../../utils";
 import type { CatalogGame } from "../../types";
+import { CartButton } from "./CartButton";
 import { GameDetailPage } from "./GameDetailPage";
 import { PriceTag, SaleBadge } from "./PriceTag";
 import { Stars } from "./Stars";
@@ -521,6 +522,7 @@ export function StoreView() {
                     </span>
                     <div className="flex items-center gap-2">
                       {renderWishlistButton(hero, ownedIds.has(hero.id))}
+                      <CartButton game={hero} owned={ownedIds.has(hero.id)} size="lg" />
                       {renderPurchaseControl(hero, ownedIds.has(hero.id), "lg")}
                     </div>
                   </div>
@@ -601,7 +603,10 @@ export function StoreView() {
                           <span className="text-sm font-bold text-zinc-100">
                             <PriceTag priceCents={game.price_cents} salePriceCents={game.sale_price_cents} t={t} />
                           </span>
-                          {renderPurchaseControl(game, owned, "sm")}
+                          <div className="flex items-center gap-1.5">
+                            <CartButton game={game} owned={owned} />
+                            {renderPurchaseControl(game, owned, "sm")}
+                          </div>
                         </div>
                       </div>
                     );
@@ -748,7 +753,12 @@ export function StoreView() {
                           <span className="text-sm font-bold text-zinc-100">
                             <PriceTag priceCents={game.price_cents} salePriceCents={game.sale_price_cents} t={t} />
                           </span>
-                          {game.status === "approved" && renderPurchaseControl(game, owned, "sm")}
+                          {game.status === "approved" && (
+                            <div className="flex items-center gap-1.5">
+                              <CartButton game={game} owned={owned} />
+                              {renderPurchaseControl(game, owned, "sm")}
+                            </div>
+                          )}
                         </div>
                         {isPublisher && (
                           <button

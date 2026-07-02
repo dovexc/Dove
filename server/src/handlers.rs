@@ -4080,6 +4080,92 @@ pub async fn leave_event(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Host-only removal of a participant (or team member) — same team-cleanup
+/// logic as `leave_event`, just gated to the host and aimed at someone else.
+/// Blocked once the tournament has started: a generated bracket already has
+/// fixed `entry_a_id`/`entry_b_id` slots, and pulling a participant out from
+/// under a live match would need forfeit/reseeding logic this doesn't
+/// attempt — hosts can still remove pre-tournament, same as the existing
+/// "can't start twice" guard in `start_event_tournament`.
+pub async fn remove_event_participant(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path((event_id, target_user_id)): Path<(i64, i64)>,
+) -> Result<StatusCode, ApiError> {
+    let row = sqlx::query("SELECT host_user_id, title FROM events WHERE id = $1")
+        .bind(event_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|_| (StatusCode::NOT_FOUND, "Event nicht gefunden".to_string()))?;
+    let host_user_id: i64 = row.try_get(0).map_err(internal_error)?;
+    let event_title: String = row.try_get(1).map_err(internal_error)?;
+    if host_user_id != user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Nur der Host kann Teilnehmer entfernen".to_string(),
+        ));
+    }
+
+    let started: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM event_matches WHERE event_id = $1)")
+            .bind(event_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(false);
+    if started {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Turnier läuft bereits — Teilnehmer können nicht mehr entfernt werden".to_string(),
+        ));
+    }
+
+    let team_id: Option<i64> = sqlx::query_scalar(
+        "SELECT team_id FROM event_participants WHERE event_id = $1 AND user_id = $2",
+    )
+    .bind(event_id)
+    .bind(target_user_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let result = sqlx::query("DELETE FROM event_participants WHERE event_id = $1 AND user_id = $2")
+        .bind(event_id)
+        .bind(target_user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+    if result.rows_affected() == 0 {
+        return Err((StatusCode::NOT_FOUND, "Teilnehmer nicht gefunden".to_string()));
+    }
+
+    if let Some(team_id) = team_id {
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_participants WHERE team_id = $1")
+            .bind(team_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
+        if remaining == 0 {
+            let _ = sqlx::query("DELETE FROM event_teams WHERE id = $1")
+                .bind(team_id)
+                .execute(&state.db)
+                .await;
+        }
+    }
+
+    create_notification(
+        &state.db,
+        target_user_id,
+        "removed_from_event",
+        &format!("Du wurdest vom Host aus dem Turnier \"{event_title}\" entfernt"),
+        Some(event_id),
+        None,
+    )
+    .await;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn load_event_team(pool: &PgPool, team_id: i64) -> Result<EventTeam, ApiError> {
     let row = sqlx::query("SELECT event_id, name, created_by FROM event_teams WHERE id = $1")
         .bind(team_id)

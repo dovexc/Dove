@@ -1680,3 +1680,126 @@ async fn chat_rate_limit_is_shared_across_dm_and_event_chat_but_per_sender(pool:
     .await
     .unwrap();
 }
+
+#[sqlx::test]
+async fn host_can_remove_a_solo_participant_but_not_after_the_tournament_starts(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let host = register_user(&state, "host@test.de", "password123", "Host").await;
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+    let bob = register_user(&state, "bob@test.de", "password123", "Bob").await;
+    let carol = register_user(&state, "carol@test.de", "password123", "Carol").await;
+
+    let event = create_event(
+        State(state.clone()),
+        AuthUser(host.id),
+        Json(new_event_req("Solo Cup", 1, None, "knockout", false)),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    let _ = join_event(State(state.clone()), AuthUser(alice.id), Path(event.id), Json(JoinWithCode::default()))
+        .await
+        .unwrap();
+    let _ = join_event(State(state.clone()), AuthUser(bob.id), Path(event.id), Json(JoinWithCode::default()))
+        .await
+        .unwrap();
+    // A third participant so 2 remain for `start_event_tournament` after bob is removed.
+    let _ = join_event(State(state.clone()), AuthUser(carol.id), Path(event.id), Json(JoinWithCode::default()))
+        .await
+        .unwrap();
+
+    // Only the host can remove someone.
+    let denied = remove_event_participant(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Path((event.id, bob.id)),
+    )
+    .await;
+    assert_eq!(denied.unwrap_err().0, StatusCode::FORBIDDEN);
+
+    remove_event_participant(State(state.clone()), AuthUser(host.id), Path((event.id, bob.id)))
+        .await
+        .unwrap();
+
+    let participants = list_event_participants(State(state.clone()), Path(event.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(participants.iter().all(|p| p.id != bob.id), "bob should be removed");
+    assert!(participants.iter().any(|p| p.id == alice.id), "alice stays");
+
+    let bob_notifications = list_notifications(State(state.clone()), AuthUser(bob.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(bob_notifications.iter().any(|n| n.kind == "removed_from_event"));
+
+    // Removing the same person twice — nothing left to remove.
+    let already_gone = remove_event_participant(
+        State(state.clone()),
+        AuthUser(host.id),
+        Path((event.id, bob.id)),
+    )
+    .await;
+    assert_eq!(already_gone.unwrap_err().0, StatusCode::NOT_FOUND);
+
+    // Once the bracket exists, removal is blocked entirely.
+    let _ = start_event_tournament(State(state.clone()), AuthUser(host.id), Path(event.id))
+        .await
+        .unwrap();
+    let after_start = remove_event_participant(
+        State(state.clone()),
+        AuthUser(host.id),
+        Path((event.id, alice.id)),
+    )
+    .await;
+    assert_eq!(after_start.unwrap_err().0, StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn removing_the_last_team_member_deletes_the_team(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let host = register_user(&state, "host@test.de", "password123", "Host").await;
+    let a1 = register_user(&state, "a1@test.de", "password123", "A1").await;
+    let a2 = register_user(&state, "a2@test.de", "password123", "A2").await;
+
+    let event = create_event(
+        State(state.clone()),
+        AuthUser(host.id),
+        Json(new_event_req("Team Cup", 2, None, "knockout", false)),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    let team = create_event_team(
+        State(state.clone()),
+        AuthUser(a1.id),
+        Path(event.id),
+        Json(NewEventTeam { name: "Team A".to_string(), code: None }),
+    )
+    .await
+    .unwrap()
+    .0;
+    let _ = join_event_team(
+        State(state.clone()),
+        AuthUser(a2.id),
+        Path((event.id, team.id)),
+        Json(JoinWithCode::default()),
+    )
+    .await
+    .unwrap();
+
+    remove_event_participant(State(state.clone()), AuthUser(host.id), Path((event.id, a1.id)))
+        .await
+        .unwrap();
+    let teams = list_event_teams(State(state.clone()), Path(event.id)).await.unwrap().0;
+    assert_eq!(teams[0].members.len(), 1, "team survives with one member left");
+
+    remove_event_participant(State(state.clone()), AuthUser(host.id), Path((event.id, a2.id)))
+        .await
+        .unwrap();
+    let teams_after = list_event_teams(State(state.clone()), Path(event.id)).await.unwrap().0;
+    assert!(teams_after.is_empty(), "team is deleted once its last member is removed");
+}

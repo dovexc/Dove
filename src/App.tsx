@@ -14,6 +14,8 @@ import { GameContextMenu } from "./components/GameContextMenu";
 import { StoreView } from "./components/store/StoreView";
 import { LoginDialog } from "./components/store/LoginDialog";
 import { CheckoutDialog } from "./components/store/CheckoutDialog";
+import { CartAddedDialog } from "./components/store/CartAddedDialog";
+import { CartDialog } from "./components/store/CartDialog";
 import { WalletTopUpDialog } from "./components/store/WalletTopUpDialog";
 import { PublisherAnalyticsPage } from "./components/store/PublisherAnalyticsPage";
 import { ProfilePage } from "./components/profile/ProfilePage";
@@ -29,6 +31,7 @@ import { EventsPage } from "./components/events/EventsPage";
 import { NotificationsBell } from "./components/NotificationsBell";
 import { UpdateChecker } from "./components/UpdateChecker";
 import { useEventsStore } from "./eventsStore";
+import { useCartStore } from "./cartStore";
 import { useT } from "./translations";
 
 const SIDEBAR_WIDTH_KEY = "library_sidebar_width";
@@ -139,6 +142,8 @@ function App() {
   const deletingGame = games.find((g) => g.id === deletingGameId) ?? null;
   const removingAccountGame = games.find((g) => g.id === removingAccountGameId) ?? null;
   const checkoutGame = useCatalogStore((s) => s.checkoutGame);
+  const cartItems = useCartStore((s) => s.items);
+  const openCart = useCartStore((s) => s.openCart);
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
@@ -243,6 +248,18 @@ function App() {
                 {t("add_game")}
               </button>
             </>
+          )}
+          {cartItems.length > 0 && (
+            <button
+              onClick={openCart}
+              title={t("cart_open_title")}
+              className="relative flex h-9 w-9 items-center justify-center rounded bg-zinc-800 text-base hover:bg-zinc-700"
+            >
+              🛒
+              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-sky-600 px-1 text-[10px] font-bold text-white">
+                {cartItems.length}
+              </span>
+            </button>
           )}
           {authToken && authUser ? (
             <button
@@ -408,6 +425,8 @@ function App() {
       {isLoginOpen && <LoginDialog onClose={() => setIsLoginOpen(false)} />}
       {checkoutGame && <CheckoutDialog game={checkoutGame} />}
       {showWalletTopUp && <WalletTopUpDialog onClose={() => setShowWalletTopUp(false)} />}
+      <CartDialog />
+      <CartAddedDialog />
       <GameContextMenu />
       <UpdateChecker />
     </div>

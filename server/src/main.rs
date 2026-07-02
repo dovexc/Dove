@@ -315,6 +315,10 @@ async fn main() {
             get(handlers::list_event_participants),
         )
         .route(
+            "/api/events/:id/participants/:user_id",
+            axum::routing::delete(handlers::remove_event_participant),
+        )
+        .route(
             "/api/events/:id/teams",
             get(handlers::list_event_teams).post(handlers::create_event_team),
         )

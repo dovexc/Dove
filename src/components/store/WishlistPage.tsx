@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useAuthStore } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
+import { CartButton } from "./CartButton";
 import { GameDetailPage } from "./GameDetailPage";
 import { PriceTag } from "./PriceTag";
 import { Stars } from "./Stars";
@@ -102,16 +103,19 @@ export function WishlistPage({ onClose }: Props) {
                     <span className="text-sm font-bold text-zinc-100">
                       <PriceTag priceCents={game.price_cents} salePriceCents={game.sale_price_cents} t={t} />
                     </span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openCheckout(game);
-                      }}
-                      disabled={purchasingId === game.id}
-                      className="rounded bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
-                    >
-                      {purchasingId === game.id ? "..." : t("store_buy")}
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <CartButton game={game} owned={ownedIds.has(game.id)} />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openCheckout(game);
+                        }}
+                        disabled={purchasingId === game.id}
+                        className="rounded bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+                      >
+                        {purchasingId === game.id ? "..." : t("store_buy")}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

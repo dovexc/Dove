@@ -71,6 +71,7 @@ export function EventDetailPage() {
   const deleteEvent = useEventsStore((s) => s.deleteEvent);
   const createTeam = useEventsStore((s) => s.createTeam);
   const joinTeam = useEventsStore((s) => s.joinTeam);
+  const removeParticipant = useEventsStore((s) => s.removeParticipant);
   const startTournament = useEventsStore((s) => s.startTournament);
   const setMatchWinner = useEventsStore((s) => s.setMatchWinner);
   const token = useAuthStore((s) => s.token);
@@ -359,9 +360,19 @@ export function EventDetailPage() {
                             {team.members.map((m) => (
                               <span
                                 key={m.id}
-                                className="rounded bg-white/5 px-2 py-1 text-xs text-zinc-300"
+                                className="flex items-center gap-1.5 rounded bg-white/5 px-2 py-1 text-xs text-zinc-300"
                               >
                                 {m.display_name}
+                                {isHost && !bracket && (
+                                  <button
+                                    onClick={() => removeParticipant(event.id, m.id)}
+                                    disabled={teamActionPending}
+                                    title={t("evt_kick_participant")}
+                                    className="text-red-400 hover:text-red-300 disabled:opacity-50"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
                               </span>
                             ))}
                           </div>
@@ -402,9 +413,21 @@ export function EventDetailPage() {
                             )}
                           </div>
                           <span className="text-sm font-semibold text-[#e8f1f8]">{p.display_name}</span>
-                          {p.online && (
-                            <span className="ml-auto h-2 w-2 rounded-full bg-emerald-400" title={t("fr_online")} />
-                          )}
+                          <div className="ml-auto flex items-center gap-2.5">
+                            {p.online && (
+                              <span className="h-2 w-2 rounded-full bg-emerald-400" title={t("fr_online")} />
+                            )}
+                            {isHost && !bracket && (
+                              <button
+                                onClick={() => removeParticipant(event.id, p.id)}
+                                disabled={teamActionPending}
+                                title={t("evt_kick_participant")}
+                                className="rounded bg-red-900/30 px-2 py-1 text-xs font-semibold text-red-300 hover:bg-red-900/50 disabled:opacity-50"
+                              >
+                                {t("evt_kick_participant")}
+                              </button>
+                            )}
+                          </div>
                         </div>
                       );
                     })}

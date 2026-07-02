@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useAuthStore } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
 import { formatSize } from "../../utils";
+import { CartButton } from "./CartButton";
 import { PriceTag, SaleBadge } from "./PriceTag";
 import { RatingPicker, Stars } from "./Stars";
 import { RichNotes } from "./RichNotes";
@@ -652,13 +653,16 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                 {t("store_owned")}
               </span>
             ) : (
-              <button
-                onClick={onPurchase}
-                disabled={purchasing}
-                className="rounded bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
-              >
-                {purchasing ? "..." : t("store_buy")}
-              </button>
+              <>
+                <button
+                  onClick={onPurchase}
+                  disabled={purchasing}
+                  className="rounded bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+                >
+                  {purchasing ? "..." : t("store_buy")}
+                </button>
+                <CartButton game={game} owned={owned} size="lg" />
+              </>
             )}
             {!owned && token && (
               <button
