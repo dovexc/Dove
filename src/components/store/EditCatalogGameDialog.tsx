@@ -168,7 +168,10 @@ export function EditCatalogGameDialog({ game, onClose }: Props) {
           />
         </label>
 
-        <TagInput tags={tags} onChange={setTags} suggestions={[]} />
+        <div className="flex flex-col gap-1 text-sm text-zinc-300">
+          {t("pub_tags_label")}
+          <TagInput tags={tags} onChange={setTags} suggestions={[]} />
+        </div>
 
         <div className="flex flex-col gap-1 text-sm text-zinc-300">
           {t("pub_languages_label")}

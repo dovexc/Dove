@@ -6,6 +6,7 @@ import { BadgeIcon, badgeColor } from "../icons";
 import { AchievementTile } from "./AchievementTile";
 
 const MAX_SHOWCASE_ACHIEVEMENTS = 4;
+const MAX_PROFILE_SCREENSHOTS = 3;
 
 function resolveUrl(url: string | null): string | null {
   if (!url) return null;
@@ -388,13 +389,23 @@ export function ProfileEditPage({ onClose }: Props) {
             <h2 className="text-sm font-semibold uppercase tracking-wide text-sky-400">
               {t("profile_screenshots")}
             </h2>
-            <button
-              onClick={() => screenshotInputRef.current?.click()}
-              disabled={loading}
-              className="rounded-md border border-sky-400/30 bg-sky-500/10 px-3.5 py-1.5 text-[13px] font-bold text-sky-300 hover:bg-sky-500/20 hover:text-white disabled:opacity-50"
-            >
-              {t("profile_add_screenshot")}
-            </button>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-zinc-500">
+                {screenshots.length}/{MAX_PROFILE_SCREENSHOTS}
+              </span>
+              <button
+                onClick={() => screenshotInputRef.current?.click()}
+                disabled={loading || screenshots.length >= MAX_PROFILE_SCREENSHOTS}
+                title={
+                  screenshots.length >= MAX_PROFILE_SCREENSHOTS
+                    ? t("profile_screenshots_limit_hint")
+                    : undefined
+                }
+                className="rounded-md border border-sky-400/30 bg-sky-500/10 px-3.5 py-1.5 text-[13px] font-bold text-sky-300 hover:bg-sky-500/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {t("profile_add_screenshot")}
+              </button>
+            </div>
             <input
               ref={screenshotInputRef}
               type="file"

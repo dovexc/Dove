@@ -207,14 +207,17 @@ export function PublisherGameDetailDialog({ gameId, onClose }: Props) {
                 <p className="text-sm text-zinc-500">{t("analytics_detail_no_tags")}</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
-                  {detail.tag_rankings.map((tr) => (
-                    <span
-                      key={tr.tag}
-                      className="rounded bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200"
-                    >
-                      {tr.tag}: {t("analytics_detail_rank_prefix")} {tr.rank} / {tr.total}
-                    </span>
-                  ))}
+                  {detail.tag_rankings.map((tr) => {
+                    const percentile = Math.max(1, Math.ceil((tr.rank / tr.total) * 100));
+                    return (
+                      <span
+                        key={tr.tag}
+                        className="rounded bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200"
+                      >
+                        {tr.tag}: {t("analytics_detail_top_percent_prefix")} {percentile}%
+                      </span>
+                    );
+                  })}
                 </div>
               )}
             </section>

@@ -31,6 +31,8 @@ export function NotificationsBell({ onOpenEvent, onOpenFriends, onOpenProfile }:
   const fetchNotifications = useNotificationsStore((s) => s.fetchNotifications);
   const markRead = useNotificationsStore((s) => s.markRead);
   const markAllRead = useNotificationsStore((s) => s.markAllRead);
+  const deleteNotification = useNotificationsStore((s) => s.deleteNotification);
+  const deleteAllNotifications = useNotificationsStore((s) => s.deleteAllNotifications);
 
   const unreadCount = useMemo(() => notifications.filter((n) => !n.is_read).length, [notifications]);
 
@@ -102,52 +104,82 @@ export function NotificationsBell({ onOpenEvent, onOpenFriends, onOpenProfile }:
         <div className="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-md border border-zinc-700 bg-zinc-900 shadow-xl">
           <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
             <span className="text-sm font-semibold text-zinc-200">{t("notif_title")}</span>
-            {unreadCount > 0 && (
-              <button
-                onClick={markAllRead}
-                className="text-xs font-semibold text-sky-400 hover:underline"
-              >
-                {t("notif_mark_all_read")}
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {unreadCount > 0 && (
+                <button
+                  onClick={markAllRead}
+                  className="text-xs font-semibold text-sky-400 hover:underline"
+                >
+                  {t("notif_mark_all_read")}
+                </button>
+              )}
+              {notifications.length > 0 && (
+                <button
+                  onClick={deleteAllNotifications}
+                  className="text-xs font-semibold text-zinc-500 hover:text-red-400 hover:underline"
+                >
+                  {t("notif_delete_all")}
+                </button>
+              )}
+            </div>
           </div>
           <div className="max-h-96 overflow-y-auto">
             {notifications.length === 0 ? (
               <p className="px-3 py-6 text-center text-sm text-zinc-500">{t("notif_none")}</p>
             ) : (
-              notifications.map((n) => (
-                <button
-                  key={n.id}
-                  onClick={() => {
-                    if (!n.is_read) markRead(n.id);
-                    if (n.event_id) {
-                      setOpen(false);
-                      onOpenEvent(n.event_id);
-                    } else if (n.kind.startsWith("friend")) {
-                      setOpen(false);
-                      onOpenFriends();
-                    } else if (n.kind === "badge_earned") {
-                      setOpen(false);
-                      onOpenProfile();
-                    }
-                  }}
-                  className={`block w-full border-b border-zinc-800/60 px-3 py-2.5 text-left text-sm last:border-b-0 hover:bg-zinc-800 ${
-                    n.is_read ? "text-zinc-400" : "text-zinc-100"
-                  }`}
-                >
-                  <div className="flex items-start gap-2">
+              notifications.map((n) => {
+                function activate() {
+                  if (!n.is_read) markRead(n.id);
+                  if (n.event_id) {
+                    setOpen(false);
+                    onOpenEvent(n.event_id);
+                  } else if (n.kind.startsWith("friend")) {
+                    setOpen(false);
+                    onOpenFriends();
+                  } else if (n.kind === "badge_earned") {
+                    setOpen(false);
+                    onOpenProfile();
+                  }
+                }
+                return (
+                  <div
+                    key={n.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={activate}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        activate();
+                      }
+                    }}
+                    className={`group flex w-full items-start gap-2 border-b border-zinc-800/60 px-3 py-2.5 text-left text-sm last:border-b-0 hover:bg-zinc-800 ${
+                      n.is_read ? "text-zinc-400" : "text-zinc-100"
+                    }`}
+                  >
                     {!n.is_read && (
                       <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-sky-400" />
                     )}
-                    <div className={n.is_read ? "" : "flex-1"}>
+                    <div className="flex-1">
                       <p>{n.message}</p>
                       <p className="mt-0.5 text-xs text-zinc-500">
                         {formatRelativeTime(n.created_at, t)}
                       </p>
                     </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteNotification(n.id);
+                      }}
+                      title={t("notif_delete_one")}
+                      aria-label={t("notif_delete_one")}
+                      className="shrink-0 rounded p-1 text-zinc-600 opacity-0 hover:bg-zinc-700 hover:text-red-400 group-hover:opacity-100"
+                    >
+                      ✕
+                    </button>
                   </div>
-                </button>
-              ))
+                );
+              })
             )}
           </div>
         </div>

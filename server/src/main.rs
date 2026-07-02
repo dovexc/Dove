@@ -285,7 +285,7 @@ async fn main() {
         .route("/api/me/playing", axum::routing::patch(handlers::set_playing))
         .route(
             "/api/me/notifications",
-            get(handlers::list_notifications),
+            get(handlers::list_notifications).delete(handlers::delete_all_notifications),
         )
         .route(
             "/api/me/notifications/read-all",
@@ -294,6 +294,10 @@ async fn main() {
         .route(
             "/api/me/notifications/:id/read",
             post(handlers::mark_notification_read),
+        )
+        .route(
+            "/api/me/notifications/:id",
+            axum::routing::delete(handlers::delete_notification),
         )
         .route(
             "/api/events",

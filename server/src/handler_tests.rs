@@ -452,6 +452,68 @@ async fn friend_request_and_accept_each_notify_the_other_party(pool: sqlx::PgPoo
 }
 
 #[sqlx::test]
+async fn notifications_can_be_deleted_individually_or_all_at_once(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let alice = register_user(&state, "ndalice@test.de", "password123", "Alice").await;
+    let bob = register_user(&state, "ndbob@test.de", "password123", "Bob").await;
+
+    send_friend_request(State(state.clone()), AuthUser(alice.id), Path(bob.id))
+        .await
+        .unwrap();
+    accept_friend_request(State(state.clone()), AuthUser(bob.id), Path(alice.id))
+        .await
+        .unwrap();
+    // Bob now has one notification (the friend request); alice has one too
+    // (the accept, sent when bob accepted above).
+
+    let bob_notifications = list_notifications(State(state.clone()), AuthUser(bob.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(bob_notifications.len(), 1);
+
+    // Deleting with the wrong caller must not remove someone else's row.
+    let deleted = delete_notification(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Path(bob_notifications[0].id),
+    )
+    .await;
+    assert_eq!(deleted.unwrap(), StatusCode::NO_CONTENT);
+    let bob_after_wrong_owner = list_notifications(State(state.clone()), AuthUser(bob.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(bob_after_wrong_owner.len(), 1, "another user can't delete bob's notification");
+
+    // The actual owner can delete it.
+    delete_notification(State(state.clone()), AuthUser(bob.id), Path(bob_notifications[0].id))
+        .await
+        .unwrap();
+    let bob_after_own_delete = list_notifications(State(state.clone()), AuthUser(bob.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(bob_after_own_delete.is_empty());
+
+    // Alice's notification is untouched by any of bob's deletes.
+    let alice_notifications = list_notifications(State(state.clone()), AuthUser(alice.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(alice_notifications.len(), 1);
+
+    delete_all_notifications(State(state.clone()), AuthUser(alice.id))
+        .await
+        .unwrap();
+    let alice_after_delete_all = list_notifications(State(state.clone()), AuthUser(alice.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(alice_after_delete_all.is_empty());
+}
+
+#[sqlx::test]
 async fn match_result_notifies_both_sides_and_team_join_notifies_teammates(pool: sqlx::PgPool) {
     let state = AppState::for_tests(pool).await;
     let host = register_user(&state, "mnhost@test.de", "password123", "Host").await;
@@ -2041,4 +2103,45 @@ async fn refund_ignores_someone_elses_order(pool: sqlx::PgPool) {
 
     let balance = me(State(state.clone()), AuthUser(alice.id)).await.unwrap().0.wallet_balance_cents;
     assert_eq!(balance, 500, "alice's order is untouched");
+}
+
+#[sqlx::test]
+async fn add_screenshot_rejects_a_fourth_screenshot(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let alice = register_user(&state, "shotalice@test.de", "password123", "Alice").await;
+    let bob = register_user(&state, "shotbob@test.de", "password123", "Bob").await;
+
+    // Insert 3 screenshots directly — the limit check runs before the real
+    // image upload, so this exercises it without needing live R2 storage.
+    for i in 0..3 {
+        sqlx::query("INSERT INTO profile_screenshots (user_id, image_url) VALUES ($1, $2)")
+            .bind(alice.id)
+            .bind(format!("https://cdn.example.com/shot{i}.png"))
+            .execute(&state.db)
+            .await
+            .unwrap();
+    }
+
+    let result = add_screenshot(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Json(ImageUpload { image: "data:image/png;base64,xx".to_string() }),
+    )
+    .await;
+    assert_eq!(result.unwrap_err().0, StatusCode::BAD_REQUEST);
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM profile_screenshots WHERE user_id = $1")
+        .bind(alice.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 3, "the 4th screenshot must not have been inserted");
+
+    // The limit is per-account — bob still has room for his own.
+    let bob_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM profile_screenshots WHERE user_id = $1")
+        .bind(bob.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(bob_count, 0);
 }

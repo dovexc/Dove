@@ -14,6 +14,8 @@ interface NotificationsState {
   fetchNotifications: () => Promise<void>;
   markRead: (id: number) => Promise<void>;
   markAllRead: () => Promise<void>;
+  deleteNotification: (id: number) => Promise<void>;
+  deleteAllNotifications: () => Promise<void>;
 }
 
 export const useNotificationsStore = create<NotificationsState>((set, get) => ({
@@ -55,6 +57,32 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
     try {
       const response = await fetch(`${API_BASE}/api/me/notifications/read-all`, {
         method: "POST",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  deleteNotification: async (id) => {
+    set({ notifications: get().notifications.filter((n) => n.id !== id) });
+    try {
+      const response = await fetch(`${API_BASE}/api/me/notifications/${id}`, {
+        method: "DELETE",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  deleteAllNotifications: async () => {
+    set({ notifications: [] });
+    try {
+      const response = await fetch(`${API_BASE}/api/me/notifications`, {
+        method: "DELETE",
         headers: getAuthHeader(),
       });
       if (!response.ok) throw new Error(await errorMessage(response));

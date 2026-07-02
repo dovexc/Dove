@@ -70,13 +70,12 @@ export function TagInput({
   }, [suggestions, tags, draft]);
 
   return (
-    <div className="relative flex flex-col gap-1 text-sm text-zinc-300">
-      Tags
+    <div className="relative">
       <div className="flex flex-wrap items-center gap-2 rounded bg-zinc-800 px-2 py-2 ring-1 ring-zinc-700 focus-within:ring-sky-500">
         {tags.map((tag) => (
           <span
             key={tag}
-            className="flex items-center gap-1.5 rounded bg-sky-900/60 px-2 py-1 text-xs font-semibold text-sky-200"
+            className="flex items-center gap-1.5 rounded-full bg-sky-500/15 px-3 py-1 text-xs font-semibold text-sky-200 ring-1 ring-sky-400/30"
           >
             {tag}
             <button

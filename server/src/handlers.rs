@@ -584,12 +584,26 @@ fn row_to_screenshot(row: &PgRow) -> Result<ProfileScreenshot, sqlx::Error> {
 }
 
 const SCREENSHOT_COLUMNS: &str = "id, user_id, image_url, created_at::TEXT";
+const MAX_PROFILE_SCREENSHOTS: i64 = 3;
 
 pub async fn add_screenshot(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
     Json(req): Json<ImageUpload>,
 ) -> Result<Json<ProfileScreenshot>, ApiError> {
+    let existing_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM profile_screenshots WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(internal_error)?;
+    if existing_count >= MAX_PROFILE_SCREENSHOTS {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("Höchstens {MAX_PROFILE_SCREENSHOTS} Screenshots können gleichzeitig gespeichert werden"),
+        ));
+    }
+
     let url = save_data_url_image(&state.storage, &req.image).await?;
     let row = sqlx::query(&format!(
         "INSERT INTO profile_screenshots (user_id, image_url) VALUES ($1, $2) RETURNING {SCREENSHOT_COLUMNS}"
@@ -5265,6 +5279,32 @@ pub async fn mark_all_notifications_read(
     AuthUser(user_id): AuthUser,
 ) -> Result<StatusCode, ApiError> {
     sqlx::query("UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND NOT is_read")
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn delete_notification(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(notification_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    sqlx::query("DELETE FROM notifications WHERE id = $1 AND user_id = $2")
+        .bind(notification_id)
+        .bind(user_id)
+        .execute(&state.db)
+        .await
+        .map_err(internal_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn delete_all_notifications(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<StatusCode, ApiError> {
+    sqlx::query("DELETE FROM notifications WHERE user_id = $1")
         .bind(user_id)
         .execute(&state.db)
         .await
