@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuthStore } from "../../authStore";
+import { useCartStore } from "../../cartStore";
 import { useCatalogStore } from "../../catalogStore";
 import { formatSize } from "../../utils";
 import type { CatalogGame } from "../../types";
-import { CartButton } from "./CartButton";
 import { GameDetailPage } from "./GameDetailPage";
 import { PriceTag, SaleBadge } from "./PriceTag";
+import { PublishGamePage } from "./PublishGamePage";
 import { Stars } from "./Stars";
 import { useT } from "../../translations";
 
@@ -129,7 +130,6 @@ export function StoreView() {
   const library = useCatalogStore((s) => s.library);
   const wishlist = useCatalogStore((s) => s.wishlist);
   const loading = useCatalogStore((s) => s.loading);
-  const purchasingId = useCatalogStore((s) => s.purchasingId);
   const uploadingId = useCatalogStore((s) => s.uploadingId);
   const error = useCatalogStore((s) => s.error);
   const clearError = useCatalogStore((s) => s.clearError);
@@ -140,8 +140,6 @@ export function StoreView() {
   const removeFromWishlist = useCatalogStore((s) => s.removeFromWishlist);
   const wishlistOnly = useCatalogStore((s) => s.wishlistOnly);
   const setWishlistOnly = useCatalogStore((s) => s.setWishlistOnly);
-  const publishGame = useCatalogStore((s) => s.publishGame);
-  const openCheckout = useCatalogStore((s) => s.openCheckout);
   const uploadGameFile = useCatalogStore((s) => s.uploadGameFile);
   const storageUsage = useCatalogStore((s) => s.storageUsage);
   const fetchStorageUsage = useCatalogStore((s) => s.fetchStorageUsage);
@@ -152,6 +150,9 @@ export function StoreView() {
   const fetchRecommendations = useCatalogStore((s) => s.fetchRecommendations);
   const token = useAuthStore((s) => s.token);
   const authUser = useAuthStore((s) => s.user);
+  const cartItems = useCartStore((s) => s.items);
+  const addToCart = useCartStore((s) => s.addToCart);
+  const removeFromCart = useCartStore((s) => s.removeFromCart);
 
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [uploadTargetId, setUploadTargetId] = useState<number | null>(null);
@@ -159,13 +160,7 @@ export function StoreView() {
   const [versionDialogGame, setVersionDialogGame] = useState<CatalogGame | null>(null);
   const [versionDraft, setVersionDraft] = useState("1.0.0");
 
-  const [showPublishForm, setShowPublishForm] = useState(false);
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [newTags, setNewTags] = useState<string[]>([]);
-  const [minSpecs, setMinSpecs] = useState("");
-  const [recommendedSpecs, setRecommendedSpecs] = useState("");
-  const [savePathHint, setSavePathHint] = useState("");
+  const [showPublishPage, setShowPublishPage] = useState(false);
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(t("store_category_all"));
@@ -174,6 +169,7 @@ export function StoreView() {
 
   const ownedIds = useMemo(() => new Set(library.map((g) => g.id)), [library]);
   const wishlistIds = useMemo(() => new Set(wishlist.map((g) => g.id)), [wishlist]);
+  const cartIds = useMemo(() => new Set(cartItems.map((g) => g.id)), [cartItems]);
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -242,27 +238,6 @@ export function StoreView() {
     fetchRecommendations();
   }, [fetchRecommendations, token]);
 
-  async function handlePublish(e: React.FormEvent) {
-    e.preventDefault();
-    if (!title.trim()) return;
-    await publishGame({
-      title: title.trim(),
-      description: description.trim() || null,
-      cover_url: null,
-      tags: newTags.length > 0 ? newTags.join(",") : null,
-      min_specs: minSpecs.trim() || null,
-      recommended_specs: recommendedSpecs.trim() || null,
-      save_path_hint: savePathHint.trim() || null,
-    });
-    setTitle("");
-    setDescription("");
-    setNewTags([]);
-    setSavePathHint("");
-    setMinSpecs("");
-    setRecommendedSpecs("");
-    setShowPublishForm(false);
-  }
-
   function startUpload(game: CatalogGame) {
     setVersionDraft(game.version || "1.0.0");
     setVersionDialogGame(game);
@@ -300,17 +275,21 @@ export function StoreView() {
     if (!token) {
       return <span className="text-xs text-zinc-500">{t("store_login_to_buy")}</span>;
     }
+    const inCart = cartIds.has(game.id);
     return (
       <button
         onClick={(e) => {
           e.stopPropagation();
-          openCheckout(game);
+          if (inCart) removeFromCart(game.id);
+          else addToCart(game);
         }}
-        className={`rounded font-semibold text-white bg-sky-600 hover:bg-sky-500 ${
-          size === "lg" ? "px-5 py-2.5 text-sm" : "px-3 py-1 text-xs"
-        }`}
+        className={`rounded font-semibold ${
+          inCart
+            ? "bg-sky-900/60 text-sky-300"
+            : "text-white bg-sky-600 hover:bg-sky-500"
+        } ${size === "lg" ? "px-5 py-2.5 text-sm" : "px-3 py-1 text-xs"}`}
       >
-        {t("store_buy")}
+        {inCart ? t("cart_in_cart") : t("cart_add_title")}
       </button>
     );
   }
@@ -351,87 +330,16 @@ export function StoreView() {
         </h2>
         {token && (
           <button
-            onClick={() => setShowPublishForm((v) => !v)}
+            onClick={() => setShowPublishPage(true)}
             className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
           >
-            {showPublishForm ? t("store_publish_cancel") : t("store_publish")}
+            {t("store_publish")}
           </button>
         )}
       </div>
 
       {!token && (
         <p className="text-sm text-zinc-500">{t("store_login_hint")}</p>
-      )}
-
-      {showPublishForm && (
-        <form
-          onSubmit={handlePublish}
-          className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
-        >
-          <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            {t("evt_title_label")}
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-              className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            {t("evt_description")}
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
-            />
-          </label>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              {t("store_min_specs_label")}
-              <textarea
-                value={minSpecs}
-                onChange={(e) => setMinSpecs(e.target.value)}
-                rows={4}
-                placeholder={t("store_specs_placeholder")}
-                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-zinc-300">
-              {t("store_recommended_specs_label")}
-              <textarea
-                value={recommendedSpecs}
-                onChange={(e) => setRecommendedSpecs(e.target.value)}
-                rows={4}
-                placeholder={t("store_specs_placeholder")}
-                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
-              />
-            </label>
-          </div>
-          <label className="flex flex-col gap-1 text-sm text-zinc-300">
-            {t("store_save_path_label")}
-            <input
-              value={savePathHint}
-              onChange={(e) => setSavePathHint(e.target.value)}
-              placeholder={t("store_save_path_placeholder")}
-              className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
-            />
-            <span className="text-xs text-zinc-500">
-              {t("store_save_path_hint")}
-            </span>
-          </label>
-          <TagInput
-            tags={newTags}
-            onChange={setNewTags}
-            suggestions={categories.filter((c) => c !== t("store_category_all"))}
-          />
-          <button
-            type="submit"
-            className="self-end rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
-          >
-            {t("evt_publish")}
-          </button>
-        </form>
       )}
 
       {error && (
@@ -514,7 +422,7 @@ export function StoreView() {
                 <div className="flex w-[340px] flex-none flex-col bg-gradient-to-b from-[#1a2735] to-[#141d28] p-6">
                   <div className="mb-1 text-xl font-extrabold text-white">{hero.title}</div>
                   <p className="mb-auto mt-2 line-clamp-6 text-sm text-zinc-400">
-                    {hero.description || t("gdp_no_description")}
+                    {hero.short_description || hero.description || t("gdp_no_description")}
                   </p>
                   <div className="mt-4 flex items-center justify-between gap-3">
                     <span className="text-base font-bold text-sky-400">
@@ -522,7 +430,6 @@ export function StoreView() {
                     </span>
                     <div className="flex items-center gap-2">
                       {renderWishlistButton(hero, ownedIds.has(hero.id))}
-                      <CartButton game={hero} owned={ownedIds.has(hero.id)} size="lg" />
                       {renderPurchaseControl(hero, ownedIds.has(hero.id), "lg")}
                     </div>
                   </div>
@@ -603,10 +510,7 @@ export function StoreView() {
                           <span className="text-sm font-bold text-zinc-100">
                             <PriceTag priceCents={game.price_cents} salePriceCents={game.sale_price_cents} t={t} />
                           </span>
-                          <div className="flex items-center gap-1.5">
-                            <CartButton game={game} owned={owned} />
-                            {renderPurchaseControl(game, owned, "sm")}
-                          </div>
+                          {renderPurchaseControl(game, owned, "sm")}
                         </div>
                       </div>
                     );
@@ -753,12 +657,7 @@ export function StoreView() {
                           <span className="text-sm font-bold text-zinc-100">
                             <PriceTag priceCents={game.price_cents} salePriceCents={game.sale_price_cents} t={t} />
                           </span>
-                          {game.status === "approved" && (
-                            <div className="flex items-center gap-1.5">
-                              <CartButton game={game} owned={owned} />
-                              {renderPurchaseControl(game, owned, "sm")}
-                            </div>
-                          )}
+                          {game.status === "approved" && renderPurchaseControl(game, owned, "sm")}
                         </div>
                         {isPublisher && (
                           <button
@@ -790,10 +689,10 @@ export function StoreView() {
         <GameDetailPage
           owned={ownedIds.has(detailGame.id)}
           isPublisher={authUser?.id === detailGame.publisher_user_id}
-          purchasing={purchasingId === detailGame.id}
-          onPurchase={() => openCheckout(detailGame)}
         />
       )}
+
+      {showPublishPage && <PublishGamePage onClose={() => setShowPublishPage(false)} />}
 
       <input
         ref={uploadInputRef}

@@ -38,6 +38,19 @@ pub fn init(app_data_dir: &PathBuf) -> Connection {
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS collections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS collection_games (
+            collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+            game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+            added_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (collection_id, game_id)
+        );
         ",
     )
     .expect("failed to initialize schema");

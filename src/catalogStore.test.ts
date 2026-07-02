@@ -34,39 +34,27 @@ const game: CatalogGame = {
 
 beforeEach(() => {
   useAuthStore.setState({ token: null, user: null });
-  useCatalogStore.setState({ checkoutGame: null, error: null, purchasingId: null });
+  useCatalogStore.setState({ error: null, purchasingId: null });
   vi.restoreAllMocks();
 });
 
-describe("catalogStore checkout flow", () => {
-  it("opens and closes the checkout dialog for a given game", () => {
-    useCatalogStore.getState().openCheckout(game);
-    expect(useCatalogStore.getState().checkoutGame).toEqual(game);
-
-    useCatalogStore.getState().closeCheckout();
-    expect(useCatalogStore.getState().checkoutGame).toBeNull();
-  });
-
-  it("purchaseGame closes the checkout dialog and clears purchasingId on success", async () => {
+describe("catalogStore purchaseGame", () => {
+  it("clears purchasingId and error on success", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(game)));
-    useCatalogStore.getState().openCheckout(game);
 
     await useCatalogStore.getState().purchaseGame(game.id);
 
     const state = useCatalogStore.getState();
-    expect(state.checkoutGame).toBeNull();
     expect(state.purchasingId).toBeNull();
     expect(state.error).toBeNull();
   });
 
-  it("purchaseGame keeps the checkout dialog open and records an error on failure", async () => {
+  it("records an error and clears purchasingId on failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("Fehler", false, 500)));
-    useCatalogStore.getState().openCheckout(game);
 
     await useCatalogStore.getState().purchaseGame(game.id);
 
     const state = useCatalogStore.getState();
-    expect(state.checkoutGame).toEqual(game);
     expect(state.purchasingId).toBeNull();
     expect(state.error).not.toBeNull();
   });

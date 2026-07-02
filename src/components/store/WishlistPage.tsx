@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useAuthStore } from "../../authStore";
+import { useCartStore } from "../../cartStore";
 import { useCatalogStore } from "../../catalogStore";
-import { CartButton } from "./CartButton";
 import { GameDetailPage } from "./GameDetailPage";
 import { PriceTag } from "./PriceTag";
 import { Stars } from "./Stars";
@@ -17,13 +17,15 @@ export function WishlistPage({ onClose }: Props) {
   const library = useCatalogStore((s) => s.library);
   const fetchWishlist = useCatalogStore((s) => s.fetchWishlist);
   const removeFromWishlist = useCatalogStore((s) => s.removeFromWishlist);
-  const purchasingId = useCatalogStore((s) => s.purchasingId);
   const openGameDetail = useCatalogStore((s) => s.openGameDetail);
-  const openCheckout = useCatalogStore((s) => s.openCheckout);
   const detailGame = useCatalogStore((s) => s.detailGame);
   const authUser = useAuthStore((s) => s.user);
+  const cartItems = useCartStore((s) => s.items);
+  const addToCart = useCartStore((s) => s.addToCart);
+  const removeFromCart = useCartStore((s) => s.removeFromCart);
 
   const ownedIds = useMemo(() => new Set(library.map((g) => g.id)), [library]);
+  const cartIds = useMemo(() => new Set(cartItems.map((g) => g.id)), [cartItems]);
 
   useEffect(() => {
     fetchWishlist();
@@ -103,19 +105,22 @@ export function WishlistPage({ onClose }: Props) {
                     <span className="text-sm font-bold text-zinc-100">
                       <PriceTag priceCents={game.price_cents} salePriceCents={game.sale_price_cents} t={t} />
                     </span>
-                    <div className="flex items-center gap-1.5">
-                      <CartButton game={game} owned={ownedIds.has(game.id)} />
+                    {!ownedIds.has(game.id) && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          openCheckout(game);
+                          if (cartIds.has(game.id)) removeFromCart(game.id);
+                          else addToCart(game);
                         }}
-                        disabled={purchasingId === game.id}
-                        className="rounded bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+                        className={`rounded px-3 py-1 text-xs font-semibold ${
+                          cartIds.has(game.id)
+                            ? "bg-sky-900/60 text-sky-300"
+                            : "bg-sky-600 text-white hover:bg-sky-500"
+                        }`}
                       >
-                        {purchasingId === game.id ? "..." : t("store_buy")}
+                        {cartIds.has(game.id) ? t("cart_in_cart") : t("cart_add_title")}
                       </button>
-                    </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -128,8 +133,6 @@ export function WishlistPage({ onClose }: Props) {
         <GameDetailPage
           owned={ownedIds.has(detailGame.id)}
           isPublisher={authUser?.id === detailGame.publisher_user_id}
-          purchasing={purchasingId === detailGame.id}
-          onPurchase={() => openCheckout(detailGame)}
         />
       )}
     </div>

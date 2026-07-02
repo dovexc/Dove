@@ -981,6 +981,12 @@ fn row_to_game(row: &PgRow) -> Result<CatalogGame, sqlx::Error> {
         review_count: row.try_get(16)?,
         sale_price_cents: row.try_get(17)?,
         sale_ends_at: row.try_get(18)?,
+        short_description: row.try_get(19)?,
+        trailer_url: row.try_get(20)?,
+        supported_languages: row.try_get(21)?,
+        content_warnings: row.try_get(22)?,
+        is_early_access: row.try_get(23)?,
+        early_access_note: row.try_get(24)?,
     })
 }
 
@@ -994,7 +1000,9 @@ const GAME_COLUMNS: &str = "catalog_games.id, catalog_games.publisher_user_id, c
     CASE WHEN catalog_games.sale_price_cents IS NOT NULL AND catalog_games.sale_ends_at > now() \
         THEN catalog_games.sale_price_cents ELSE NULL END, \
     CASE WHEN catalog_games.sale_price_cents IS NOT NULL AND catalog_games.sale_ends_at > now() \
-        THEN catalog_games.sale_ends_at::TEXT ELSE NULL END";
+        THEN catalog_games.sale_ends_at::TEXT ELSE NULL END, \
+    catalog_games.short_description, catalog_games.trailer_url, catalog_games.supported_languages, \
+    catalog_games.content_warnings, catalog_games.is_early_access, catalog_games.early_access_note";
 
 const GAME_SCREENSHOT_COLUMNS: &str = "id, catalog_game_id, image_url, created_at::TEXT";
 
@@ -2284,17 +2292,26 @@ pub async fn create_game(
     Json(req): Json<NewCatalogGame>,
 ) -> Result<Json<CatalogGame>, ApiError> {
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO catalog_games (publisher_user_id, title, description, cover_url, tags, min_specs, recommended_specs, save_path_hint) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+        "INSERT INTO catalog_games (publisher_user_id, title, short_description, description, \
+            cover_url, tags, min_specs, recommended_specs, save_path_hint, price_cents, \
+            trailer_url, supported_languages, content_warnings, is_early_access, early_access_note) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id",
     )
     .bind(user_id)
     .bind(&req.title)
+    .bind(&req.short_description)
     .bind(&req.description)
     .bind(&req.cover_url)
     .bind(&req.tags)
     .bind(&req.min_specs)
     .bind(&req.recommended_specs)
     .bind(&req.save_path_hint)
+    .bind(req.price_cents)
+    .bind(&req.trailer_url)
+    .bind(&req.supported_languages)
+    .bind(&req.content_warnings)
+    .bind(req.is_early_access)
+    .bind(&req.early_access_note)
     .fetch_one(&state.db)
     .await
     .map_err(internal_error)?;
@@ -2328,8 +2345,10 @@ pub async fn update_game(
     sqlx::query(
         "UPDATE catalog_games SET title = $1, description = $2, cover_url = $3, tags = $4, \
             min_specs = $5, recommended_specs = $6, save_path_hint = $7, price_cents = $8, \
-            sale_price_cents = $9, sale_ends_at = $10::timestamptz \
-         WHERE id = $11",
+            sale_price_cents = $9, sale_ends_at = $10::timestamptz, short_description = $11, \
+            trailer_url = $12, supported_languages = $13, content_warnings = $14, \
+            is_early_access = $15, early_access_note = $16 \
+         WHERE id = $17",
     )
     .bind(&req.title)
     .bind(&req.description)
@@ -2341,6 +2360,12 @@ pub async fn update_game(
     .bind(req.price_cents)
     .bind(req.sale_price_cents)
     .bind(&req.sale_ends_at)
+    .bind(&req.short_description)
+    .bind(&req.trailer_url)
+    .bind(&req.supported_languages)
+    .bind(&req.content_warnings)
+    .bind(req.is_early_access)
+    .bind(&req.early_access_note)
     .bind(game_id)
     .execute(&state.db)
     .await

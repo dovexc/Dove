@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useCatalogStore } from "../../catalogStore";
 import { useT } from "../../translations";
+import { CONTENT_WARNING_OPTIONS } from "./PublishGamePage";
 import { TagInput } from "./StoreView";
 import type { CatalogGame } from "../../types";
 
@@ -42,12 +43,20 @@ export function EditCatalogGameDialog({ game, onClose }: Props) {
   const clearError = useCatalogStore((s) => s.clearError);
 
   const [title, setTitle] = useState(game.title);
+  const [shortDescription, setShortDescription] = useState(game.short_description ?? "");
   const [description, setDescription] = useState(game.description ?? "");
   const [coverUrl, setCoverUrl] = useState(game.cover_url ?? "");
   const [tags, setTags] = useState<string[]>(parseTags(game.tags));
+  const [languages, setLanguages] = useState<string[]>(parseTags(game.supported_languages));
+  const [trailerUrl, setTrailerUrl] = useState(game.trailer_url ?? "");
   const [minSpecs, setMinSpecs] = useState(game.min_specs ?? "");
   const [recommendedSpecs, setRecommendedSpecs] = useState(game.recommended_specs ?? "");
   const [savePathHint, setSavePathHint] = useState(game.save_path_hint ?? "");
+  const [contentWarnings, setContentWarnings] = useState<Set<string>>(
+    new Set(parseTags(game.content_warnings))
+  );
+  const [isEarlyAccess, setIsEarlyAccess] = useState(game.is_early_access);
+  const [earlyAccessNote, setEarlyAccessNote] = useState(game.early_access_note ?? "");
   const [price, setPrice] = useState(centsToEuroInput(game.price_cents));
   const [offerEnabled, setOfferEnabled] = useState(game.sale_price_cents != null);
   const [salePrice, setSalePrice] = useState(
@@ -66,6 +75,7 @@ export function EditCatalogGameDialog({ game, onClose }: Props) {
     try {
       await updateGame(game.id, {
         title: title.trim(),
+        short_description: shortDescription.trim() || null,
         description: description.trim() || null,
         cover_url: coverUrl.trim() || null,
         tags: tags.length > 0 ? tags.join(",") : null,
@@ -75,6 +85,11 @@ export function EditCatalogGameDialog({ game, onClose }: Props) {
         price_cents: euroInputToCents(price),
         sale_price_cents: offerEnabled && salePrice ? euroInputToCents(salePrice) : null,
         sale_ends_at: offerEnabled && saleEndsAt ? new Date(saleEndsAt).toISOString() : null,
+        trailer_url: trailerUrl.trim() || null,
+        supported_languages: languages.length > 0 ? languages.join(",") : null,
+        content_warnings: contentWarnings.size > 0 ? Array.from(contentWarnings).join(",") : null,
+        is_early_access: isEarlyAccess,
+        early_access_note: isEarlyAccess ? earlyAccessNote.trim() || null : null,
       });
       onClose();
     } catch {
@@ -82,6 +97,15 @@ export function EditCatalogGameDialog({ game, onClose }: Props) {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function toggleContentWarning(key: string) {
+    setContentWarnings((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   return (
@@ -113,6 +137,16 @@ export function EditCatalogGameDialog({ game, onClose }: Props) {
         </label>
 
         <label className="flex flex-col gap-1 text-sm text-zinc-300">
+          {t("pub_short_description_label")}
+          <input
+            value={shortDescription}
+            onChange={(e) => setShortDescription(e.target.value)}
+            placeholder={t("pub_short_description_placeholder")}
+            className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+          />
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm text-zinc-300">
           {t("evt_description")}
           <textarea
             value={description}
@@ -133,6 +167,64 @@ export function EditCatalogGameDialog({ game, onClose }: Props) {
         </label>
 
         <TagInput tags={tags} onChange={setTags} suggestions={[]} />
+
+        <div className="flex flex-col gap-1 text-sm text-zinc-300">
+          {t("pub_languages_label")}
+          <TagInput tags={languages} onChange={setLanguages} suggestions={["Deutsch", "English"]} />
+        </div>
+
+        <label className="flex flex-col gap-1 text-sm text-zinc-300">
+          {t("pub_trailer_label")}
+          <input
+            value={trailerUrl}
+            onChange={(e) => setTrailerUrl(e.target.value)}
+            placeholder={t("pub_trailer_placeholder")}
+            className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+          />
+        </label>
+
+        <div className="flex flex-col gap-1">
+          <span className="text-sm text-zinc-300">{t("pub_content_warnings_label")}</span>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {CONTENT_WARNING_OPTIONS.map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => toggleContentWarning(opt.key)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                  contentWarnings.has(opt.key)
+                    ? "border-amber-400/60 bg-amber-900/40 text-amber-300"
+                    : "border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10"
+                }`}
+              >
+                {t(opt.label)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 rounded border border-zinc-800 p-3">
+          <label className="flex items-center gap-2 text-sm font-semibold text-zinc-200">
+            <input
+              type="checkbox"
+              checked={isEarlyAccess}
+              onChange={(e) => setIsEarlyAccess(e.target.checked)}
+            />
+            {t("pub_early_access_label")}
+          </label>
+          {isEarlyAccess && (
+            <label className="flex flex-col gap-1 text-sm text-zinc-300">
+              {t("pub_early_access_note_label")}
+              <textarea
+                value={earlyAccessNote}
+                onChange={(e) => setEarlyAccessNote(e.target.value)}
+                rows={3}
+                placeholder={t("pub_early_access_note_placeholder")}
+                className="rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+              />
+            </label>
+          )}
+        </div>
 
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1 text-sm text-zinc-300">

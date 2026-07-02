@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLibraryStore, registerGameEventListeners } from "./store";
 import { useAuthStore } from "./authStore";
-import { useCatalogStore } from "./catalogStore";
 import { GameCard } from "./components/GameCard";
 import { GameDetail } from "./components/GameDetail";
 import { AddGameDialog } from "./components/AddGameDialog";
@@ -13,7 +12,6 @@ import { LibraryHome } from "./components/LibraryHome";
 import { GameContextMenu } from "./components/GameContextMenu";
 import { StoreView } from "./components/store/StoreView";
 import { LoginDialog } from "./components/store/LoginDialog";
-import { CheckoutDialog } from "./components/store/CheckoutDialog";
 import { CartAddedDialog } from "./components/store/CartAddedDialog";
 import { CartDialog } from "./components/store/CartDialog";
 import { WalletTopUpDialog } from "./components/store/WalletTopUpDialog";
@@ -32,6 +30,7 @@ import { NotificationsBell } from "./components/NotificationsBell";
 import { UpdateChecker } from "./components/UpdateChecker";
 import { useEventsStore } from "./eventsStore";
 import { useCartStore } from "./cartStore";
+import { useCollectionsStore } from "./collectionsStore";
 import { useT } from "./translations";
 
 const SIDEBAR_WIDTH_KEY = "library_sidebar_width";
@@ -100,6 +99,7 @@ function App() {
   const isSteamImportOpen = useLibraryStore((s) => s.isSteamImportOpen);
   const error = useLibraryStore((s) => s.error);
   const fetchGames = useLibraryStore((s) => s.fetchGames);
+  const fetchCollections = useCollectionsStore((s) => s.fetchCollections);
   const selectGame = useLibraryStore((s) => s.selectGame);
   const launchGame = useLibraryStore((s) => s.launchGame);
   const openAddDialog = useLibraryStore((s) => s.openAddDialog);
@@ -119,6 +119,7 @@ function App() {
     registerGameEventListeners();
     registerDownloadEventListeners();
     fetchGames();
+    fetchCollections();
     hydrateUser();
 
     // The backend can still be starting up right as the window opens; retry
@@ -135,13 +136,12 @@ function App() {
       hydrateUser();
     }, 2000);
     return () => clearInterval(retry);
-  }, [fetchGames, hydrateUser]);
+  }, [fetchGames, fetchCollections, hydrateUser]);
 
   const selectedGame = games.find((g) => g.id === selectedGameId) ?? null;
   const editingGame = games.find((g) => g.id === editingGameId) ?? null;
   const deletingGame = games.find((g) => g.id === deletingGameId) ?? null;
   const removingAccountGame = games.find((g) => g.id === removingAccountGameId) ?? null;
-  const checkoutGame = useCatalogStore((s) => s.checkoutGame);
   const cartItems = useCartStore((s) => s.items);
   const openCart = useCartStore((s) => s.openCart);
 
@@ -423,7 +423,6 @@ function App() {
       {removingAccountGame && <RemoveFromAccountDialog game={removingAccountGame} />}
       {isSteamImportOpen && <SteamImportDialog />}
       {isLoginOpen && <LoginDialog onClose={() => setIsLoginOpen(false)} />}
-      {checkoutGame && <CheckoutDialog game={checkoutGame} />}
       {showWalletTopUp && <WalletTopUpDialog onClose={() => setShowWalletTopUp(false)} />}
       <CartDialog />
       <CartAddedDialog />

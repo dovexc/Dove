@@ -1,4 +1,4 @@
-use crate::models::{Game, NewGame, UpdateAvailable, UpdateGame};
+use crate::models::{Collection, Game, NewGame, UpdateAvailable, UpdateGame};
 use crate::state::AppState;
 use crate::steam::SteamGame;
 use chrono::Utc;
@@ -106,6 +106,118 @@ pub fn list_games(state: State<AppState>) -> Result<Vec<Game>, String> {
     Ok(games)
 }
 
+fn collection_games(
+    conn: &Connection,
+    running: &HashSet<i64>,
+    collection_id: i64,
+) -> rusqlite::Result<Vec<Game>> {
+    let mut stmt = conn.prepare(&format!(
+        "{GAME_SELECT} JOIN collection_games cg ON cg.game_id = g.id \
+         WHERE cg.collection_id = ?1 ORDER BY cg.added_at"
+    ))?;
+    let games = stmt
+        .query_map(params![collection_id], |row| row_to_game(row, running))?
+        .filter_map(|g| g.ok())
+        .collect();
+    Ok(games)
+}
+
+#[tauri::command]
+pub fn list_collections(state: State<AppState>) -> Result<Vec<Collection>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let running = state.running.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, name, created_at FROM collections ORDER BY id")
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<(i64, String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+    rows.into_iter()
+        .map(|(id, name, created_at)| {
+            let games = collection_games(&conn, &running, id).map_err(|e| e.to_string())?;
+            Ok(Collection { id, name, created_at, games })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn create_collection(state: State<AppState>, name: String) -> Result<Collection, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Der Name darf nicht leer sein".into());
+    }
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute("INSERT INTO collections (name) VALUES (?1)", params![trimmed])
+        .map_err(|e| e.to_string())?;
+    let id = conn.last_insert_rowid();
+    let created_at: String = conn
+        .query_row(
+            "SELECT created_at FROM collections WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(Collection { id, name: trimmed.to_string(), created_at, games: Vec::new() })
+}
+
+#[tauri::command]
+pub fn rename_collection(state: State<AppState>, id: i64, name: String) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Der Name darf nicht leer sein".into());
+    }
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE collections SET name = ?1 WHERE id = ?2",
+        params![trimmed, id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn delete_collection(state: State<AppState>, id: i64) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM collection_games WHERE collection_id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM collections WHERE id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn add_game_to_collection(
+    state: State<AppState>,
+    collection_id: i64,
+    game_id: i64,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT OR IGNORE INTO collection_games (collection_id, game_id) VALUES (?1, ?2)",
+        params![collection_id, game_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_game_from_collection(
+    state: State<AppState>,
+    collection_id: i64,
+    game_id: i64,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM collection_games WHERE collection_id = ?1 AND game_id = ?2",
+        params![collection_id, game_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_game(state: State<AppState>, id: i64) -> Result<Game, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -167,6 +279,11 @@ pub fn delete_game(state: State<AppState>, id: i64, delete_files: bool) -> Resul
             .map_err(|e| e.to_string())?;
         conn.execute(
             "DELETE FROM installed_files WHERE game_id = ?1",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            "DELETE FROM collection_games WHERE game_id = ?1",
             params![id],
         )
         .map_err(|e| e.to_string())?;

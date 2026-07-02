@@ -207,6 +207,19 @@ pub struct CatalogGame {
     /// without any cleanup job.
     pub sale_price_cents: Option<i64>,
     pub sale_ends_at: Option<String>,
+    /// One-line pitch shown on store cards, separate from the full
+    /// `description` — mirrors Steam's "short description" vs. "about this
+    /// game" split.
+    pub short_description: Option<String>,
+    pub trailer_url: Option<String>,
+    /// Comma-separated, same convention as `tags`.
+    pub supported_languages: Option<String>,
+    /// Comma-separated content-warning labels (e.g. "Gewalt, Kraftausdrücke")
+    /// — a lightweight stand-in for Steam's content survey. No formal
+    /// age-rating computation; just surfaced as a warning badge.
+    pub content_warnings: Option<String>,
+    pub is_early_access: bool,
+    pub early_access_note: Option<String>,
 }
 
 /// Ledger entry for a game purchase. Today `purchase_game` creates and
@@ -244,15 +257,26 @@ pub struct TournamentPayout {
     pub created_at: String,
 }
 
-#[derive(Debug, Deserialize)]
+/// The full Steam-Direct-inspired submission payload — see
+/// `PublishGamePage.tsx` on the frontend for the form this backs. `Default`
+/// exists so tests that only care about a couple of fields can spread the
+/// rest (`..Default::default()`) instead of listing all of them.
+#[derive(Debug, Deserialize, Default)]
 pub struct NewCatalogGame {
     pub title: String,
+    pub short_description: Option<String>,
     pub description: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<String>,
     pub min_specs: Option<String>,
     pub recommended_specs: Option<String>,
     pub save_path_hint: Option<String>,
+    pub price_cents: i64,
+    pub trailer_url: Option<String>,
+    pub supported_languages: Option<String>,
+    pub content_warnings: Option<String>,
+    pub is_early_access: bool,
+    pub early_access_note: Option<String>,
 }
 
 /// Full-replace edit payload — the publisher's edit dialog always sends the
@@ -263,6 +287,7 @@ pub struct NewCatalogGame {
 #[derive(Debug, Deserialize)]
 pub struct UpdateCatalogGame {
     pub title: String,
+    pub short_description: Option<String>,
     pub description: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<String>,
@@ -272,6 +297,11 @@ pub struct UpdateCatalogGame {
     pub price_cents: i64,
     pub sale_price_cents: Option<i64>,
     pub sale_ends_at: Option<String>,
+    pub trailer_url: Option<String>,
+    pub supported_languages: Option<String>,
+    pub content_warnings: Option<String>,
+    pub is_early_access: bool,
+    pub early_access_note: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]

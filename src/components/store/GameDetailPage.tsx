@@ -1,9 +1,10 @@
 import { useMemo, useRef, useState } from "react";
 import { useAuthStore } from "../../authStore";
+import { useCartStore } from "../../cartStore";
 import { useCatalogStore } from "../../catalogStore";
 import { formatSize } from "../../utils";
-import { CartButton } from "./CartButton";
 import { PriceTag, SaleBadge } from "./PriceTag";
+import { CONTENT_WARNING_OPTIONS } from "./PublishGamePage";
 import { RatingPicker, Stars } from "./Stars";
 import { RichNotes } from "./RichNotes";
 import { useT } from "../../translations";
@@ -28,13 +29,14 @@ function fileToDataUrl(file: File): Promise<string> {
 interface Props {
   owned: boolean;
   isPublisher: boolean;
-  onPurchase: () => void;
-  purchasing: boolean;
 }
 
-export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: Props) {
+export function GameDetailPage({ owned, isPublisher }: Props) {
   const t = useT();
   const game = useCatalogStore((s) => s.detailGame);
+  const cartItems = useCartStore((s) => s.items);
+  const addToCart = useCartStore((s) => s.addToCart);
+  const removeFromCart = useCartStore((s) => s.removeFromCart);
   const screenshots = useCatalogStore((s) => s.detailScreenshots);
   const reviews = useCatalogStore((s) => s.detailReviews);
   const detailLoading = useCatalogStore((s) => s.detailLoading);
@@ -89,6 +91,8 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
 
   const heroImage = activeImage ?? game.cover_url;
   const tags = parseTags(game.tags);
+  const languages = parseTags(game.supported_languages);
+  const contentWarnings = parseTags(game.content_warnings);
 
   async function handleScreenshotChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -205,9 +209,21 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                 {tags.join(" · ")}
               </div>
             )}
-            <h1 className="text-4xl font-black tracking-tight text-white drop-shadow-lg">
-              {game.title}
-            </h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-4xl font-black tracking-tight text-white drop-shadow-lg">
+                {game.title}
+              </h1>
+              {game.is_early_access && (
+                <span className="rounded bg-amber-600 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-white">
+                  {t("pub_early_access_badge")}
+                </span>
+              )}
+            </div>
+            {game.short_description && (
+              <p className="mt-2 max-w-2xl text-sm text-white/80 drop-shadow">
+                {game.short_description}
+              </p>
+            )}
           </div>
         </div>
 
@@ -265,6 +281,17 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                 {game.description || t("gdp_no_description")}
               </p>
             </section>
+
+            {game.is_early_access && game.early_access_note && (
+              <section>
+                <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-amber-400">
+                  {t("pub_early_access_note_display")}
+                </h2>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
+                  {game.early_access_note}
+                </p>
+              </section>
+            )}
 
             {(game.min_specs || game.recommended_specs) && (
               <section>
@@ -652,17 +679,23 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
               <span className="rounded bg-emerald-900/60 px-4 py-2 text-center text-sm font-semibold text-emerald-300">
                 {t("store_owned")}
               </span>
+            ) : !token ? (
+              <span className="text-center text-xs text-zinc-500">{t("store_login_to_buy")}</span>
             ) : (
-              <>
-                <button
-                  onClick={onPurchase}
-                  disabled={purchasing}
-                  className="rounded bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
-                >
-                  {purchasing ? "..." : t("store_buy")}
-                </button>
-                <CartButton game={game} owned={owned} size="lg" />
-              </>
+              <button
+                onClick={() => {
+                  const inCart = cartItems.some((g) => g.id === game.id);
+                  if (inCart) removeFromCart(game.id);
+                  else addToCart(game);
+                }}
+                className={`rounded px-4 py-2.5 text-sm font-semibold ${
+                  cartItems.some((g) => g.id === game.id)
+                    ? "bg-sky-900/60 text-sky-300"
+                    : "bg-sky-600 text-white hover:bg-sky-500"
+                }`}
+              >
+                {cartItems.some((g) => g.id === game.id) ? t("cart_in_cart") : t("cart_add_title")}
+              </button>
             )}
             {!owned && token && (
               <button
@@ -683,6 +716,34 @@ export function GameDetailPage({ owned, isPublisher, onPurchase, purchasing }: P
                 {t("gdp_download")}: {formatSize(game.file_size_bytes)}
                 <br />
                 Version: {game.version}
+              </div>
+            )}
+            {game.trailer_url && (
+              <a
+                href={game.trailer_url}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded border border-white/10 px-4 py-2 text-center text-sm font-semibold text-zinc-200 hover:bg-white/5"
+              >
+                ▶ {t("pub_watch_trailer")}
+              </a>
+            )}
+            {languages.length > 0 && (
+              <div className="text-xs text-zinc-500">
+                <span className="font-semibold text-zinc-400">{t("pub_supported_languages_display")}:</span>{" "}
+                {languages.join(", ")}
+              </div>
+            )}
+            {contentWarnings.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {contentWarnings.map((w) => (
+                  <span
+                    key={w}
+                    className="rounded-full border border-amber-400/40 bg-amber-900/30 px-2.5 py-1 text-[11px] font-semibold text-amber-300"
+                  >
+                    ⚠ {t(CONTENT_WARNING_OPTIONS.find((opt) => opt.key === w)?.label ?? "pub_content_warnings_label")}
+                  </span>
+                ))}
               </div>
             )}
           </aside>

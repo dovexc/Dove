@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { useCollectionsStore } from "./collectionsStore";
 import type { Game, NewGame, UpdateGame, SteamGame, UpdateAvailable } from "./types";
 
 interface LibraryState {
@@ -103,6 +104,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       }
       set({ deletingGameId: null, removingAccountGameId: null });
       await get().fetchGames();
+      await useCollectionsStore.getState().fetchCollections();
     } catch (e) {
       set({ error: String(e) });
     }

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { API_BASE } from "../../authStore";
+import { useCartStore } from "../../cartStore";
 import { useCatalogStore } from "../../catalogStore";
 import { GameDetailPage } from "../store/GameDetailPage";
 import { PriceTag } from "../store/PriceTag";
@@ -17,12 +18,14 @@ interface Props {
 export function PublicWishlistView({ ownerName, games, onBack }: Props) {
   const t = useT();
   const library = useCatalogStore((s) => s.library);
-  const purchasingId = useCatalogStore((s) => s.purchasingId);
   const openGameDetail = useCatalogStore((s) => s.openGameDetail);
-  const openCheckout = useCatalogStore((s) => s.openCheckout);
   const detailGame = useCatalogStore((s) => s.detailGame);
   const authUser = useAuthStore((s) => s.user);
+  const cartItems = useCartStore((s) => s.items);
+  const addToCart = useCartStore((s) => s.addToCart);
+  const removeFromCart = useCartStore((s) => s.removeFromCart);
   const [ownedIds] = useState(() => new Set(library.map((g) => g.id)));
+  const cartIds = useMemo(() => new Set(cartItems.map((g) => g.id)), [cartItems]);
 
   return (
     <div className="fixed inset-0 z-[60] overflow-y-auto bg-zinc-950">
@@ -88,12 +91,16 @@ export function PublicWishlistView({ ownerName, games, onBack }: Props) {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          openCheckout(game);
+                          if (cartIds.has(game.id)) removeFromCart(game.id);
+                          else addToCart(game);
                         }}
-                        disabled={purchasingId === game.id}
-                        className="rounded bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+                        className={`rounded px-3 py-1 text-xs font-semibold ${
+                          cartIds.has(game.id)
+                            ? "bg-sky-900/60 text-sky-300"
+                            : "bg-sky-600 text-white hover:bg-sky-500"
+                        }`}
                       >
-                        {purchasingId === game.id ? "..." : t("store_buy")}
+                        {cartIds.has(game.id) ? t("cart_in_cart") : t("cart_add_title")}
                       </button>
                     )}
                   </div>
@@ -108,8 +115,6 @@ export function PublicWishlistView({ ownerName, games, onBack }: Props) {
         <GameDetailPage
           owned={ownedIds.has(detailGame.id)}
           isPublisher={authUser?.id === detailGame.publisher_user_id}
-          purchasing={purchasingId === detailGame.id}
-          onPurchase={() => openCheckout(detailGame)}
         />
       )}
     </div>

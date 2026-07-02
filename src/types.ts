@@ -38,6 +38,13 @@ export interface UpdateGame {
   size_on_disk_bytes?: number | null;
 }
 
+export interface Collection {
+  id: number;
+  name: string;
+  created_at: string;
+  games: Game[];
+}
+
 export interface SteamGame {
   appid: string;
   name: string;
@@ -184,10 +191,17 @@ export interface CatalogGame {
   review_count: number;
   sale_price_cents: number | null;
   sale_ends_at: string | null;
+  short_description: string | null;
+  trailer_url: string | null;
+  supported_languages: string | null;
+  content_warnings: string | null;
+  is_early_access: boolean;
+  early_access_note: string | null;
 }
 
 export interface UpdateCatalogGame {
   title: string;
+  short_description: string | null;
   description: string | null;
   cover_url: string | null;
   tags: string | null;
@@ -197,6 +211,11 @@ export interface UpdateCatalogGame {
   price_cents: number;
   sale_price_cents: number | null;
   sale_ends_at: string | null;
+  trailer_url: string | null;
+  supported_languages: string | null;
+  content_warnings: string | null;
+  is_early_access: boolean;
+  early_access_note: string | null;
 }
 
 export interface PublisherGameStats {
@@ -247,12 +266,19 @@ export interface PublisherGameStatsDetail {
 
 export interface NewCatalogGame {
   title: string;
+  short_description: string | null;
   description: string | null;
   cover_url: string | null;
   tags: string | null;
   min_specs: string | null;
   recommended_specs: string | null;
   save_path_hint: string | null;
+  price_cents: number;
+  trailer_url: string | null;
+  supported_languages: string | null;
+  content_warnings: string | null;
+  is_early_access: boolean;
+  early_access_note: string | null;
 }
 
 export interface GameScreenshot {

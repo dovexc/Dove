@@ -112,6 +112,7 @@ async fn new_games_are_pending_and_hidden_from_public_catalog_until_approved(poo
             min_specs: None,
             recommended_specs: None,
             save_path_hint: None,
+            ..Default::default()
         }),
     )
     .await
@@ -1052,6 +1053,7 @@ async fn export_my_data_includes_orders_and_library(pool: sqlx::PgPool) {
             min_specs: None,
             recommended_specs: None,
             save_path_hint: None,
+            ..Default::default()
         }),
     )
     .await
@@ -1089,6 +1091,7 @@ async fn sales_milestones_notify_the_publisher(pool: sqlx::PgPool) {
             min_specs: None,
             recommended_specs: None,
             save_path_hint: None,
+            ..Default::default()
         }),
     )
     .await
@@ -1153,6 +1156,7 @@ async fn review_votes_track_helpful_counts_and_reject_self_votes(pool: sqlx::PgP
             min_specs: None,
             recommended_specs: None,
             save_path_hint: None,
+            ..Default::default()
         }),
     )
     .await
@@ -1265,6 +1269,7 @@ async fn achievements_unlock_idempotently_and_redact_hidden_ones(pool: sqlx::PgP
             min_specs: None,
             recommended_specs: None,
             save_path_hint: None,
+            ..Default::default()
         }),
     )
     .await
@@ -1385,6 +1390,7 @@ async fn achievement_showcase_only_accepts_unlocked_achievements_and_replaces_wh
             min_specs: None,
             recommended_specs: None,
             save_path_hint: None,
+            ..Default::default()
         }),
     )
     .await
@@ -1514,6 +1520,7 @@ async fn cannot_repurchase_an_already_owned_game(pool: sqlx::PgPool) {
             min_specs: None,
             recommended_specs: None,
             save_path_hint: None,
+            ..Default::default()
         }),
     )
     .await
@@ -1551,6 +1558,7 @@ async fn recent_games_excludes_stale_play_and_caps_at_three(pool: sqlx::PgPool) 
                 min_specs: None,
                 recommended_specs: None,
                 save_path_hint: None,
+                ..Default::default()
             }),
         )
         .await

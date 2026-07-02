@@ -43,3 +43,13 @@ pub struct UpdateGame {
     pub description: Option<String>,
     pub size_on_disk_bytes: Option<i64>,
 }
+
+/// A user-defined grouping of library games (e.g. "Couch Co-op", "Backlog")
+/// — purely local organization, unrelated to the server-side store catalog.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Collection {
+    pub id: i64,
+    pub name: String,
+    pub created_at: String,
+    pub games: Vec<Game>,
+}

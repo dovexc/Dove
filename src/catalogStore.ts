@@ -58,7 +58,6 @@ interface CatalogState {
   detailChangelog: GameVersionNote[];
   detailAchievements: GameAchievement[];
   detailLoading: boolean;
-  checkoutGame: CatalogGame | null;
   orders: Order[];
   ordersLoading: boolean;
   recommendations: CatalogGame[];
@@ -78,11 +77,9 @@ interface CatalogState {
   addToWishlist: (gameId: number) => Promise<void>;
   removeFromWishlist: (gameId: number) => Promise<void>;
   fetchStorageUsage: () => Promise<void>;
-  publishGame: (game: NewCatalogGame) => Promise<void>;
+  publishGame: (game: NewCatalogGame) => Promise<CatalogGame | null>;
   updateGame: (gameId: number, fields: UpdateCatalogGame) => Promise<void>;
   purchaseGame: (gameId: number) => Promise<void>;
-  openCheckout: (game: CatalogGame) => void;
-  closeCheckout: () => void;
   uploadGameFile: (gameId: number, file: File, version: string) => Promise<void>;
   revokeOwnership: (gameId: number) => Promise<void>;
   fetchPendingGames: () => Promise<void>;
@@ -136,7 +133,6 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   detailChangelog: [],
   detailAchievements: [],
   detailLoading: false,
-  checkoutGame: null,
   orders: [],
   ordersLoading: false,
   recommendations: [],
@@ -303,9 +299,12 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
         body: JSON.stringify(game),
       });
       if (!response.ok) throw new Error(`Fehler (${response.status})`);
+      const created: CatalogGame = await response.json();
       await get().fetchCatalog();
+      return created;
     } catch (e) {
       set({ error: String(e) });
+      return null;
     }
   },
 
@@ -340,16 +339,12 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       await get().fetchWishlist();
       await ensureInLocalLibrary(game);
       await useAuthStore.getState().hydrateUser();
-      set({ checkoutGame: null });
     } catch (e) {
       set({ error: String(e) });
     } finally {
       set({ purchasingId: null });
     }
   },
-
-  openCheckout: (game) => set({ checkoutGame: game, error: null }),
-  closeCheckout: () => set({ checkoutGame: null }),
 
   fetchStorageUsage: async () => {
     const headers = getAuthHeader();
