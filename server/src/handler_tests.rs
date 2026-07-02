@@ -1107,9 +1107,12 @@ async fn sales_milestones_notify_the_publisher(pool: sqlx::PgPool) {
     assert_eq!(notifications[0].kind, "sales_milestone");
     assert!(notifications[0].message.contains("zum ersten Mal"));
 
-    // Sales 2 through 9 are not round numbers and shouldn't add another notification.
-    for _ in 2..10 {
-        let _ = purchase_game(State(state.clone()), AuthUser(alice.id), Path(game.id))
+    // Sales 2 through 9 are not round numbers and shouldn't add another
+    // notification. Each "sale" needs its own buyer now that repurchasing
+    // an already-owned game is rejected.
+    for n in 2..10 {
+        let buyer = register_user(&state, &format!("buyer{n}@test.de"), "password123", "Buyer").await;
+        let _ = purchase_game(State(state.clone()), AuthUser(buyer.id), Path(game.id))
             .await
             .unwrap();
     }
@@ -1120,7 +1123,8 @@ async fn sales_milestones_notify_the_publisher(pool: sqlx::PgPool) {
     assert_eq!(notifications.len(), 1, "no milestone between the 2nd and 9th sale");
 
     // The 10th sale crosses the next milestone.
-    let _ = purchase_game(State(state.clone()), AuthUser(alice.id), Path(game.id))
+    let buyer10 = register_user(&state, "buyer10@test.de", "password123", "Buyer").await;
+    let _ = purchase_game(State(state.clone()), AuthUser(buyer10.id), Path(game.id))
         .await
         .unwrap();
     let notifications = list_notifications(State(state.clone()), AuthUser(publisher.id))
@@ -1491,4 +1495,40 @@ async fn achievement_showcase_only_accepts_unlocked_achievements_and_replaces_wh
         .0;
     assert_eq!(profile.achievement_showcase.len(), 1);
     assert_eq!(profile.achievement_showcase[0].title, "Speedrunner");
+}
+
+#[sqlx::test]
+async fn cannot_repurchase_an_already_owned_game(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+
+    let game = create_game(
+        State(state.clone()),
+        AuthUser(publisher.id),
+        Json(NewCatalogGame {
+            title: "Pixel Knights".to_string(),
+            description: None,
+            cover_url: None,
+            tags: None,
+            min_specs: None,
+            recommended_specs: None,
+            save_path_hint: None,
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    let _ = purchase_game(State(state.clone()), AuthUser(alice.id), Path(game.id))
+        .await
+        .expect("first purchase should succeed");
+
+    // Repurchasing a free game was previously a free way to spam yourself
+    // unlimited purchase-confirmation emails and pile up junk orders.
+    let second = purchase_game(State(state.clone()), AuthUser(alice.id), Path(game.id)).await;
+    assert_eq!(second.unwrap_err().0, StatusCode::CONFLICT);
+
+    let orders = list_my_orders(State(state.clone()), AuthUser(alice.id)).await.unwrap().0;
+    assert_eq!(orders.len(), 1, "the rejected repurchase must not create a second order");
 }

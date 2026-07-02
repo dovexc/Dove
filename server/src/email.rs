@@ -7,11 +7,22 @@ use crate::state::AppState;
 /// `handlers.rs`: a missed email shouldn't roll back or fail the request
 /// that triggered it. With no `RESEND_API_KEY` configured this just logs,
 /// so the server runs fine without a Resend account (e.g. local dev).
+///
+/// Every caller funnels through here, so this is also the one place a
+/// per-recipient rate limit (`state.email_rate_limiter`) can cover every
+/// email type at once — a bug or abuse loop that keeps re-triggering the
+/// same email (e.g. repeatedly buying a free game) gets throttled instead
+/// of flooding an inbox or running up the Resend bill.
 pub async fn send_email(state: &AppState, to: &str, subject: &str, html: String) {
     let Some(api_key) = &state.resend_api_key else {
         tracing::info!("E-Mail (kein RESEND_API_KEY): an {to}: {subject}");
         return;
     };
+
+    if !state.email_rate_limiter.check(&to.to_lowercase()) {
+        tracing::warn!("E-Mail an {to} unterdrückt (Rate-Limit erreicht): {subject}");
+        return;
+    }
 
     let resend = Resend::new(api_key);
     let to_addrs = [to];

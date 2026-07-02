@@ -2397,6 +2397,23 @@ pub async fn purchase_game(
         .await
         .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
 
+    // Without this, repurchasing an already-owned (e.g. free) game was a
+    // free way to spam yourself unlimited purchase-confirmation emails and
+    // pile up junk `orders` rows — `send_email`'s rate limit now catches
+    // the email flood, but this stops the underlying abuse loop instead of
+    // just muting its side effect.
+    let already_owns: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM ownerships WHERE user_id = $1 AND catalog_game_id = $2)",
+    )
+    .bind(user_id)
+    .bind(game_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
+    if already_owns {
+        return Err((StatusCode::CONFLICT, "Du besitzt dieses Spiel bereits".to_string()));
+    }
+
     // No real payment provider is wired up yet — `purchase_game` instead
     // settles against the player's wallet balance (see the `User` doc
     // comment), which itself is only ever topped up via the simulated

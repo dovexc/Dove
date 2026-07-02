@@ -25,6 +25,11 @@ use tower_http::cors::{Any, CorsLayer};
 
 const AUTH_RATE_LIMIT_MAX_REQUESTS: usize = 10;
 const AUTH_RATE_LIMIT_WINDOW_SECS: u64 = 60;
+/// Per-recipient cap on outbound email — generous enough for a legitimate
+/// burst (e.g. buying several games back to back) while still shutting down
+/// a loop that keeps triggering the same email.
+const EMAIL_RATE_LIMIT_MAX_PER_RECIPIENT: usize = 5;
+const EMAIL_RATE_LIMIT_WINDOW_SECS: u64 = 600;
 const MAX_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_GAME_FILE_BYTES: usize = 5 * 1024 * 1024 * 1024;
 const MAX_CLOUD_SAVE_BYTES: usize = 100 * 1024 * 1024;
@@ -177,6 +182,10 @@ async fn main() {
         auth_rate_limiter: Arc::new(RateLimiter::new(
             AUTH_RATE_LIMIT_MAX_REQUESTS,
             Duration::from_secs(AUTH_RATE_LIMIT_WINDOW_SECS),
+        )),
+        email_rate_limiter: Arc::new(RateLimiter::new(
+            EMAIL_RATE_LIMIT_MAX_PER_RECIPIENT,
+            Duration::from_secs(EMAIL_RATE_LIMIT_WINDOW_SECS),
         )),
         admin_emails,
         resend_api_key,

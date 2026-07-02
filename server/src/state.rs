@@ -11,6 +11,11 @@ pub struct AppState {
     pub jwt_secret: String,
     /// Throttles `/api/auth/*` attempts per client IP.
     pub auth_rate_limiter: Arc<RateLimiter>,
+    /// Throttles outbound email per recipient address (see
+    /// `email::send_email`) — a bug or abuse loop that keeps triggering the
+    /// same email (e.g. repeatedly buying a free game) shouldn't be able to
+    /// flood one inbox or run up the Resend bill.
+    pub email_rate_limiter: Arc<RateLimiter>,
     /// Default per-publisher storage quota (bytes) applied to newly
     /// registered users. Existing users keep whatever quota is stored on
     /// their row, so this can be raised/lowered for new signups without a
@@ -44,6 +49,7 @@ impl AppState {
             storage: Arc::new(Storage::init().await),
             jwt_secret: "test-secret".to_string(),
             auth_rate_limiter: Arc::new(RateLimiter::new(1000, std::time::Duration::from_secs(60))),
+            email_rate_limiter: Arc::new(RateLimiter::new(1000, std::time::Duration::from_secs(60))),
             default_quota_bytes: 5 * 1024 * 1024 * 1024,
             clamd_address: None,
             admin_emails: Vec::new(),
