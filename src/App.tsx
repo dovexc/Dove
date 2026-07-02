@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useLibraryStore, registerGameEventListeners } from "./store";
 import { useAuthStore } from "./authStore";
-import { CartIcon } from "./components/icons";
-import { GameCard } from "./components/GameCard";
-import { GameDetail } from "./components/GameDetail";
+import { CartIcon, SteamImportIcon } from "./components/icons";
+import { LibrarySidebar } from "./components/library/LibrarySidebar";
+import { LibraryOverview } from "./components/library/LibraryOverview";
+import { LibraryGameView } from "./components/library/LibraryGameView";
 import { AddGameDialog } from "./components/AddGameDialog";
 import { EditGameDialog } from "./components/EditGameDialog";
 import { DeleteGameDialog } from "./components/DeleteGameDialog";
 import { RemoveFromAccountDialog } from "./components/RemoveFromAccountDialog";
 import { SteamImportDialog } from "./components/SteamImportDialog";
-import { LibraryHome } from "./components/LibraryHome";
 import { GameContextMenu } from "./components/GameContextMenu";
 import { StoreView } from "./components/store/StoreView";
 import { LoginDialog } from "./components/store/LoginDialog";
@@ -56,7 +56,7 @@ function App() {
   const [showWalletTopUp, setShowWalletTopUp] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-    return stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH ? stored : 288;
+    return stored >= SIDEBAR_MIN_WIDTH && stored <= SIDEBAR_MAX_WIDTH ? stored : 250;
   });
   const isResizingRef = useRef(false);
   const sidebarWidthRef = useRef(sidebarWidth);
@@ -104,8 +104,6 @@ function App() {
   const selectGame = useLibraryStore((s) => s.selectGame);
   const launchGame = useLibraryStore((s) => s.launchGame);
   const openAddDialog = useLibraryStore((s) => s.openAddDialog);
-  const openEditDialog = useLibraryStore((s) => s.openEditDialog);
-  const openDeleteDialog = useLibraryStore((s) => s.openDeleteDialog);
   const openSteamImport = useLibraryStore((s) => s.openSteamImport);
   const clearError = useLibraryStore((s) => s.clearError);
 
@@ -238,13 +236,15 @@ function App() {
             <>
               <button
                 onClick={openSteamImport}
-                className="rounded bg-zinc-800 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700"
+                className="flex h-[38px] items-center gap-2 rounded-[9px] border border-white/10 bg-white/5 px-4 text-[13px] font-bold text-[#dbe7f2] hover:bg-white/10 hover:text-white"
               >
+                <SteamImportIcon size={15} />
                 {t("steam_import")}
               </button>
               <button
                 onClick={openAddDialog}
-                className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
+                className="flex h-[38px] items-center rounded-[9px] px-4 text-[13px] font-bold text-white shadow-[0_6px_16px_rgba(40,120,200,.3)] hover:brightness-110"
+                style={{ background: "linear-gradient(180deg,#3aa0ff,#2475c7)" }}
               >
                 {t("add_game")}
               </button>
@@ -321,27 +321,13 @@ function App() {
 
       {activeTab === "library" ? (
         <div className="flex flex-1 overflow-hidden">
-          <div
-            style={{ width: sidebarWidth }}
-            className="shrink-0 overflow-y-auto p-4"
-          >
-            {games.length === 0 ? (
-              <p className="text-sm text-zinc-500">
-                {t("lib_no_games_yet")}
-              </p>
-            ) : (
-              <div className="grid grid-cols-2 gap-3">
-                {games.map((game) => (
-                  <GameCard
-                    key={game.id}
-                    game={game}
-                    isSelected={game.id === selectedGameId}
-                    onSelect={() => selectGame(game.id)}
-                    onPlay={() => launchGame(game.id)}
-                  />
-                ))}
-              </div>
-            )}
+          <div style={{ width: sidebarWidth }} className="shrink-0 overflow-hidden">
+            <LibrarySidebar
+              games={games}
+              selectedGameId={selectedGameId}
+              onSelect={selectGame}
+              onPlay={launchGame}
+            />
           </div>
 
           <div
@@ -349,26 +335,22 @@ function App() {
             className="w-1 shrink-0 cursor-col-resize border-r border-zinc-800 bg-transparent hover:bg-sky-500/50"
           />
 
-          <div className="flex-1 overflow-y-auto">
-            {selectedGame ? (
-              <GameDetail
-                game={selectedGame}
-                onPlay={() => launchGame(selectedGame.id)}
-                onEdit={() => openEditDialog(selectedGame.id)}
-                onDelete={() => openDeleteDialog(selectedGame.id)}
-              />
-            ) : (
-              <LibraryHome
-                games={games}
-                onSelect={selectGame}
-                onPlay={launchGame}
-              />
-            )}
-          </div>
+          {selectedGame ? (
+            <LibraryGameView
+              key={selectedGame.id}
+              game={selectedGame}
+              onBack={() => selectGame(null)}
+              onOpenStorePage={() => setActiveTab("store")}
+            />
+          ) : (
+            <div className="min-w-0 flex-1 overflow-y-auto bg-[radial-gradient(1200px_600px_at_50%_-150px,#1c2c3e_0%,#0d141c_55%,#0b1016_100%)]">
+              <LibraryOverview games={games} onSelect={selectGame} onPlay={launchGame} />
+            </div>
+          )}
         </div>
       ) : activeTab === "store" ? (
         <div className="flex-1 overflow-hidden">
-          <StoreView />
+          <StoreView onBackToLibrary={() => setActiveTab("library")} />
         </div>
       ) : activeTab === "events" ? (
         <div className="flex-1 overflow-hidden">

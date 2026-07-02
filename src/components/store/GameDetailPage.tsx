@@ -34,11 +34,13 @@ function fileToDataUrl(file: File): Promise<string> {
 interface Props {
   owned: boolean;
   isPublisher: boolean;
+  onBackToLibrary?: () => void;
 }
 
-export function GameDetailPage({ owned, isPublisher }: Props) {
+export function GameDetailPage({ owned, isPublisher, onBackToLibrary }: Props) {
   const t = useT();
   const game = useCatalogStore((s) => s.detailGame);
+  const detailGameSource = useCatalogStore((s) => s.detailGameSource);
   const cartItems = useCartStore((s) => s.items);
   const addToCart = useCartStore((s) => s.addToCart);
   const removeFromCart = useCartStore((s) => s.removeFromCart);
@@ -192,10 +194,13 @@ export function GameDetailPage({ owned, isPublisher }: Props) {
     <div className="fixed inset-0 z-[70] overflow-y-auto bg-[#0b1016]">
       <div className="sticky top-0 z-10 flex items-center justify-between bg-[#0b1016]/95 px-6 py-3 backdrop-blur">
         <button
-          onClick={closeGameDetail}
+          onClick={() => {
+            closeGameDetail();
+            if (detailGameSource === "library") onBackToLibrary?.();
+          }}
           className="rounded bg-white/5 px-4 py-2 text-sm font-semibold text-zinc-300 hover:bg-white/10"
         >
-          {t("gdp_back_to_catalog")}
+          {detailGameSource === "library" ? t("gdp_back_to_game") : t("gdp_back_to_catalog")}
         </button>
         {isPublisher && (
           <button

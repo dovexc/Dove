@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuthStore } from "../../authStore";
 import { API_BASE } from "../../authStore";
 import { useFriendsStore } from "../../friendsStore";
@@ -8,8 +8,7 @@ import { useT } from "../../translations";
 import { BadgeIcon, badgeColor, PeopleIcon } from "../icons";
 import { AchievementTile } from "./AchievementTile";
 import { RecentlyPlayedList } from "./RecentlyPlayedList";
-
-const MAX_SHOWCASE_ACHIEVEMENTS = 4;
+import { ProfileEditPage } from "./ProfileEditPage";
 
 interface Props {
   onOpenFriends: () => void;
@@ -22,34 +21,14 @@ function resolveUrl(url: string | null): string | null {
   return url.startsWith("http") ? url : `${API_BASE}${url}`;
 }
 
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 export function ProfilePage({ onOpenFriends }: Props) {
   const t = useT();
   const user = useAuthStore((s) => s.user);
   const screenshots = useAuthStore((s) => s.screenshots);
-  const badges = useAuthStore((s) => s.badges);
-  const loading = useAuthStore((s) => s.loading);
   const error = useAuthStore((s) => s.error);
-  const updateProfile = useAuthStore((s) => s.updateProfile);
-  const uploadAvatar = useAuthStore((s) => s.uploadAvatar);
-  const uploadBackground = useAuthStore((s) => s.uploadBackground);
-  const addScreenshot = useAuthStore((s) => s.addScreenshot);
-  const deleteScreenshot = useAuthStore((s) => s.deleteScreenshot);
   const clearError = useAuthStore((s) => s.clearError);
   const fetchBadges = useAuthStore((s) => s.fetchBadges);
-  const setEquippedBadge = useAuthStore((s) => s.setEquippedBadge);
-  const myAchievements = useAuthStore((s) => s.myAchievements);
   const achievementShowcase = useAuthStore((s) => s.achievementShowcase);
-  const fetchMyAchievements = useAuthStore((s) => s.fetchMyAchievements);
-  const setAchievementShowcase = useAuthStore((s) => s.setAchievementShowcase);
   const recentGames = useAuthStore((s) => s.recentGames);
 
   const friends = useFriendsStore((s) => s.friends);
@@ -63,38 +42,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
     fetchBadges();
   }, [fetchFriends, fetchBadges]);
 
-  const [editMode, setEditMode] = useState(false);
-  const [editingName, setEditingName] = useState(false);
-  const [name, setName] = useState(user?.display_name ?? "");
-  const [editingBio, setEditingBio] = useState(false);
-  const [bio, setBio] = useState(user?.bio ?? "");
-  const [selectedShowcaseIds, setSelectedShowcaseIds] = useState<number[]>([]);
-
-  useEffect(() => {
-    if (!editMode) return;
-    fetchMyAchievements();
-    setSelectedShowcaseIds(achievementShowcase.map((a) => a.id));
-    // Only re-seed the selection when edit mode is freshly entered, not on
-    // every `achievementShowcase` change — that would blow away in-progress
-    // toggles as soon as a save round-trips.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode]);
-
-  function toggleShowcaseAchievement(id: number) {
-    setSelectedShowcaseIds((prev) => {
-      if (prev.includes(id)) return prev.filter((existing) => existing !== id);
-      if (prev.length >= MAX_SHOWCASE_ACHIEVEMENTS) return prev;
-      return [...prev, id];
-    });
-  }
-
-  function saveShowcase() {
-    setAchievementShowcase(selectedShowcaseIds);
-  }
-
-  const avatarInputRef = useRef<HTMLInputElement>(null);
-  const backgroundInputRef = useRef<HTMLInputElement>(null);
-  const screenshotInputRef = useRef<HTMLInputElement>(null);
+  const [isEditPageOpen, setIsEditPageOpen] = useState(false);
 
   const totalPlaytimeSeconds = useMemo(
     () => games.reduce((sum, g) => sum + g.total_playtime_seconds, 0),
@@ -102,39 +50,6 @@ export function ProfilePage({ onOpenFriends }: Props) {
   );
 
   if (!user) return null;
-
-  async function saveName() {
-    if (name.trim() && name.trim() !== user!.display_name) {
-      await updateProfile({ display_name: name.trim() });
-    }
-    setEditingName(false);
-  }
-
-  async function saveBio() {
-    await updateProfile({ bio: bio.trim() });
-    setEditingBio(false);
-  }
-
-  async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    await uploadAvatar(await fileToDataUrl(file));
-    e.target.value = "";
-  }
-
-  async function handleBackgroundChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    await uploadBackground(await fileToDataUrl(file));
-    e.target.value = "";
-  }
-
-  async function handleScreenshotChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    await addScreenshot(await fileToDataUrl(file));
-    e.target.value = "";
-  }
 
   const backgroundUrl = resolveUrl(user.background_url);
   const avatarUrl = resolveUrl(user.avatar_url);
@@ -147,6 +62,8 @@ export function ProfilePage({ onOpenFriends }: Props) {
 
   return (
     <div className="h-full overflow-y-auto bg-[#0b1016]">
+      {isEditPageOpen && <ProfileEditPage onClose={() => setIsEditPageOpen(false)} />}
+
       <div
         className="relative h-[280px] w-full bg-cover bg-center"
         style={{
@@ -156,26 +73,11 @@ export function ProfilePage({ onOpenFriends }: Props) {
         }}
       >
         <div className="absolute inset-0 bg-gradient-to-b from-[#0b1016]/15 via-[#0b1016]/55 to-[#0b1016]" />
-        {editMode && (
-          <button
-            onClick={() => backgroundInputRef.current?.click()}
-            className="absolute bottom-4 right-8 rounded-md bg-black/40 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-black/60"
-          >
-            {t("profile_change_background")}
-          </button>
-        )}
-        <input
-          ref={backgroundInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={handleBackgroundChange}
-        />
       </div>
 
       <div className="mx-auto max-w-[1180px] px-10 pb-[90px]">
         <div className="relative z-[2] -mt-[72px] flex items-end gap-6">
-          <div className="group relative shrink-0">
+          <div className="relative shrink-0">
             <div
               className="flex h-[148px] w-[148px] items-center justify-center rounded-3xl border-4 border-[#0b1016] text-5xl font-black text-white shadow-2xl"
               style={{ background: "linear-gradient(135deg,#3aa0ff,#7b4397)" }}
@@ -190,78 +92,27 @@ export function ProfilePage({ onOpenFriends }: Props) {
               className="absolute bottom-2 right-2 h-[22px] w-[22px] rounded-full border-4 border-[#0b1016] bg-[#5fd17a]"
               style={{ boxShadow: "0 0 10px #5fd17a" }}
             />
-            {editMode && (
-              <button
-                onClick={() => avatarInputRef.current?.click()}
-                className="absolute inset-0 flex items-center justify-center rounded-3xl bg-black/60 text-xs font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100"
-              >
-                {t("profile_change_avatar")}
-              </button>
-            )}
-            <input
-              ref={avatarInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleAvatarChange}
-            />
           </div>
 
           <div className="flex-1 pb-2">
-            {editingName ? (
-              <div className="flex gap-2">
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  autoFocus
-                  className="rounded bg-zinc-800 px-3 py-1.5 text-2xl font-bold text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
-                />
-                <button
-                  onClick={saveName}
-                  className="rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
+            <div className="flex flex-wrap items-center gap-3.5">
+              <h1 className="text-[38px] font-black tracking-tight text-white">{user.display_name}</h1>
+              {user.equipped_badge && (
+                <span
+                  title={user.equipped_badge.description}
+                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[13px] font-bold ${badgeColor(user.equipped_badge.key).border} ${badgeColor(user.equipped_badge.key).bg} ${badgeColor(user.equipped_badge.key).text}`}
                 >
-                  {t("dialog_save")}
-                </button>
-                <button
-                  onClick={() => {
-                    setName(user.display_name);
-                    setEditingName(false);
-                  }}
-                  className="rounded px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-800"
-                >
-                  {t("dialog_cancel")}
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-center gap-3.5">
-                <h1
-                  onClick={() => editMode && setEditingName(true)}
-                  className={`text-[38px] font-black tracking-tight text-white ${editMode ? "cursor-pointer hover:underline" : ""}`}
-                  title={editMode ? t("profile_click_to_edit_name") : undefined}
-                >
-                  {user.display_name}
-                </h1>
-                {user.equipped_badge && (
-                  <span
-                    title={user.equipped_badge.description}
-                    className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[13px] font-bold ${badgeColor(user.equipped_badge.key).border} ${badgeColor(user.equipped_badge.key).bg} ${badgeColor(user.equipped_badge.key).text}`}
-                  >
-                    <BadgeIcon badgeKey={user.equipped_badge.key} size={14} />
-                    {user.equipped_badge.label}
-                  </span>
-                )}
-                <button
-                  onClick={() => setEditMode((v) => !v)}
-                  className={`rounded-md px-3.5 py-1.5 text-[13px] font-bold ${
-                    editMode
-                      ? "bg-sky-600 text-white hover:bg-sky-500"
-                      : "border border-sky-400/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20 hover:text-white"
-                  }`}
-                >
-                  {editMode ? t("profile_done") : t("profile_edit")}
-                </button>
-              </div>
-            )}
+                  <BadgeIcon badgeKey={user.equipped_badge.key} size={14} />
+                  {user.equipped_badge.label}
+                </span>
+              )}
+              <button
+                onClick={() => setIsEditPageOpen(true)}
+                className="rounded-md border border-sky-400/30 bg-sky-500/10 px-3.5 py-1.5 text-[13px] font-bold text-sky-300 hover:bg-sky-500/20 hover:text-white"
+              >
+                {t("profile_edit")}
+              </button>
+            </div>
             <p className="mt-1.5 text-[15px] text-zinc-500">{user.email}</p>
           </div>
         </div>
@@ -293,91 +144,11 @@ export function ProfilePage({ onOpenFriends }: Props) {
 
         <div className="mt-[30px] grid grid-cols-1 gap-6 lg:grid-cols-[1.6fr_1fr]">
           <div className="flex flex-col gap-[30px]">
-            {editMode && (
-              <div>
-                <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
-                  {t("profile_badge_picker")}
-                </div>
-                {badges.length === 0 ? (
-                  <p className="text-sm text-zinc-500">
-                    {t("profile_no_badges_hint")}
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => setEquippedBadge(null)}
-                      disabled={loading}
-                      className={`rounded-full border px-3.5 py-1.5 text-[13px] font-bold disabled:opacity-50 ${
-                        !user.equipped_badge
-                          ? "border-sky-400/50 bg-sky-500/15 text-sky-300"
-                          : "border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10"
-                      }`}
-                    >
-                      {t("profile_no_badge")}
-                    </button>
-                    {badges.map((b) => {
-                      const colors = badgeColor(b.key);
-                      const isEquipped = user.equipped_badge?.key === b.key;
-                      return (
-                        <button
-                          key={b.key}
-                          onClick={() => setEquippedBadge(b.key)}
-                          disabled={loading}
-                          title={b.description}
-                          className={`flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-bold disabled:opacity-50 ${
-                            isEquipped
-                              ? `${colors.selectedBorder} ${colors.selectedBg} ${colors.text}`
-                              : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
-                          }`}
-                        >
-                          <BadgeIcon badgeKey={b.key} size={14} />
-                          {b.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
             <div>
-              <div className="mb-3 flex items-center justify-between">
-                <div className="text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
-                  {t("profile_achievement_showcase")}
-                </div>
-                {editMode && (
-                  <span className="text-xs text-zinc-500">
-                    {selectedShowcaseIds.length}/{MAX_SHOWCASE_ACHIEVEMENTS}
-                  </span>
-                )}
+              <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+                {t("profile_achievement_showcase")}
               </div>
-
-              {editMode ? (
-                myAchievements.length === 0 ? (
-                  <p className="text-sm text-zinc-500">{t("profile_no_achievements_hint")}</p>
-                ) : (
-                  <>
-                    <p className="mb-3 text-xs text-zinc-500">{t("profile_achievement_picker_hint")}</p>
-                    <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
-                      {myAchievements.map((a) => (
-                        <AchievementTile
-                          key={a.id}
-                          achievement={a}
-                          selected={selectedShowcaseIds.includes(a.id)}
-                          onClick={() => toggleShowcaseAchievement(a.id)}
-                        />
-                      ))}
-                    </div>
-                    <button
-                      onClick={saveShowcase}
-                      disabled={loading}
-                      className="mt-3 rounded bg-sky-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
-                    >
-                      {t("profile_save_showcase")}
-                    </button>
-                  </>
-                )
-              ) : achievementShowcase.length === 0 ? (
+              {achievementShowcase.length === 0 ? (
                 <p className="text-sm text-zinc-500">{t("profile_no_showcase_hint")}</p>
               ) : (
                 <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
@@ -392,91 +163,33 @@ export function ProfilePage({ onOpenFriends }: Props) {
               <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
                 {t("profile_about")}
               </div>
-              {editingBio ? (
-                <div className="flex flex-col gap-2">
-                  <textarea
-                    value={bio}
-                    onChange={(e) => setBio(e.target.value)}
-                    rows={4}
-                    autoFocus
-                    placeholder={t("profile_bio_placeholder")}
-                    className="rounded-[11px] bg-[#141d27] px-4 py-3 text-[15px] text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={saveBio}
-                      className="rounded bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-500"
-                    >
-                      {t("dialog_save")}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setBio(user.bio ?? "");
-                        setEditingBio(false);
-                      }}
-                      className="rounded px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-800"
-                    >
-                      {t("dialog_cancel")}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setEditingBio(true)}
-                  className="block w-full rounded-[11px] border border-dashed border-white/10 bg-gradient-to-b from-[#141d27] to-[#111923] px-[22px] py-[22px] text-left text-[15px] text-[#7b8794] transition-colors hover:border-sky-400/40 hover:bg-[#16212d]"
-                >
-                  {user.bio || t("profile_about_placeholder")}
-                </button>
-              )}
+              <p className="rounded-[11px] border border-white/[0.06] bg-gradient-to-b from-[#141d27] to-[#111923] px-[22px] py-[22px] text-[15px] text-[#c3ccd4]">
+                {user.bio || <span className="text-[#7b8794]">{t("profile_about_placeholder_readonly")}</span>}
+              </p>
             </div>
 
             <div>
-              <div className="mb-3 flex items-center justify-between">
-                <div className="text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
-                  {t("profile_screenshots")}
-                </div>
-                <button
-                  onClick={() => screenshotInputRef.current?.click()}
-                  disabled={loading}
-                  className="rounded-md border border-sky-400/30 bg-sky-500/10 px-3.5 py-1.5 text-[13px] font-bold text-sky-300 hover:bg-sky-500/20 hover:text-white disabled:opacity-50"
-                >
-                  {t("profile_add_screenshot")}
-                </button>
-                <input
-                  ref={screenshotInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleScreenshotChange}
-                />
+              <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+                {t("profile_screenshots")}
               </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                {screenshots.map((s) => (
-                  <div
-                    key={s.id}
-                    className="group relative aspect-[16/10] overflow-hidden rounded-[9px] bg-zinc-900"
-                  >
-                    <img
-                      src={resolveUrl(s.image_url) ?? ""}
-                      alt=""
-                      className="h-full w-full object-cover"
-                    />
-                    <button
-                      onClick={() => deleteScreenshot(s.id)}
-                      className="absolute right-1.5 top-1.5 rounded bg-black/60 px-2 py-1 text-xs font-semibold text-white opacity-0 transition-opacity hover:bg-red-900/80 group-hover:opacity-100"
+              {screenshots.length === 0 ? (
+                <p className="text-sm text-zinc-500">{t("profile_no_screenshots_hint")}</p>
+              ) : (
+                <div className="grid grid-cols-3 gap-3">
+                  {screenshots.map((s) => (
+                    <div
+                      key={s.id}
+                      className="relative aspect-[16/10] overflow-hidden rounded-[9px] bg-zinc-900"
                     >
-                      {t("del_remove")}
-                    </button>
-                  </div>
-                ))}
-                <button
-                  onClick={() => screenshotInputRef.current?.click()}
-                  className="flex aspect-[16/10] items-center justify-center rounded-[9px] border border-dashed border-white/10 bg-white/[0.02] text-3xl font-light text-[#3e4a57] transition-colors hover:border-sky-400/40 hover:text-[#5b8db8]"
-                >
-                  +
-                </button>
-              </div>
+                      <img
+                        src={resolveUrl(s.image_url) ?? ""}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 

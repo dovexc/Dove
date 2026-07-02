@@ -77,6 +77,10 @@ interface CatalogState {
   moderatingId: number | null;
   error: string | null;
   detailGame: CatalogGame | null;
+  // Where `openGameDetail` was called from — lets `GameDetailPage`'s back
+  // button return to the Library's per-game view instead of the catalog
+  // when that's where the visit originated.
+  detailGameSource: "search" | "recommendation" | "wishlist" | "catalog" | "library" | null;
   detailScreenshots: GameScreenshot[];
   detailReviews: GameReview[];
   detailChangelog: GameVersionNote[];
@@ -116,7 +120,7 @@ interface CatalogState {
   setWishlistOnly: (value: boolean) => void;
   openGameDetail: (
     game: CatalogGame,
-    source?: "search" | "recommendation" | "wishlist" | "catalog"
+    source?: "search" | "recommendation" | "wishlist" | "catalog" | "library"
   ) => Promise<void>;
   closeGameDetail: () => void;
   refreshDetailReviews: (gameId: number) => Promise<void>;
@@ -155,6 +159,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   moderatingId: null,
   error: null,
   detailGame: null,
+  detailGameSource: null,
   detailScreenshots: [],
   detailReviews: [],
   detailChangelog: [],
@@ -512,6 +517,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   openGameDetail: async (game, source = "catalog") => {
     set({
       detailGame: game,
+      detailGameSource: source,
       detailScreenshots: [],
       detailReviews: [],
       detailChangelog: [],
@@ -547,6 +553,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   closeGameDetail: () =>
     set({
       detailGame: null,
+      detailGameSource: null,
       detailScreenshots: [],
       detailReviews: [],
       detailChangelog: [],

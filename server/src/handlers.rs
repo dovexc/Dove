@@ -1556,8 +1556,10 @@ pub async fn delete_game_achievement(
 /// `src-tauri/src/commands.rs`). The relay forwards here with the user's
 /// real token exactly the way `report_playtime_seconds` already reports
 /// playtime. Ownership-gated like reviews; idempotent via `ON CONFLICT DO
-/// NOTHING`, and only notifies on the unlock that actually happened —
-/// mirrors `award_badge`'s philosophy.
+/// NOTHING`. Deliberately doesn't raise a notification — games can unlock
+/// dozens of these in a single session (e.g. on first import/replay), which
+/// would otherwise flood the bell; the showcase picker on the profile page
+/// is where unlocks surface instead.
 pub async fn unlock_achievement(
     State(state): State<AppState>,
     AuthUser(user_id): AuthUser,
@@ -1578,19 +1580,19 @@ pub async fn unlock_achievement(
         ));
     }
 
-    let achievement: Option<(i64, String)> = sqlx::query_as(
-        "SELECT id, title FROM game_achievements WHERE catalog_game_id = $1 AND key = $2",
+    let achievement_id: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM game_achievements WHERE catalog_game_id = $1 AND key = $2",
     )
     .bind(game_id)
     .bind(&key)
     .fetch_optional(&state.db)
     .await
     .map_err(internal_error)?;
-    let Some((achievement_id, title)) = achievement else {
+    let Some(achievement_id) = achievement_id else {
         return Err((StatusCode::NOT_FOUND, "Achievement nicht gefunden".to_string()));
     };
 
-    let inserted = sqlx::query(
+    sqlx::query(
         "INSERT INTO user_achievement_unlocks (user_id, game_achievement_id) VALUES ($1, $2) \
          ON CONFLICT (user_id, game_achievement_id) DO NOTHING",
     )
@@ -1598,26 +1600,7 @@ pub async fn unlock_achievement(
     .bind(achievement_id)
     .execute(&state.db)
     .await
-    .map_err(internal_error)?
-    .rows_affected()
-        > 0;
-
-    if inserted {
-        let game_title: String = sqlx::query_scalar("SELECT title FROM catalog_games WHERE id = $1")
-            .bind(game_id)
-            .fetch_one(&state.db)
-            .await
-            .unwrap_or_default();
-        create_notification(
-            &state.db,
-            user_id,
-            "achievement_unlocked",
-            &format!("🏆 Achievement freigeschaltet: \"{title}\" in {game_title}"),
-            None,
-            None,
-        )
-        .await;
-    }
+    .map_err(internal_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -2871,7 +2854,7 @@ pub struct ViewQuery {
     pub source: Option<String>,
 }
 
-const VIEW_SOURCES: &[&str] = &["search", "recommendation", "wishlist", "catalog"];
+const VIEW_SOURCES: &[&str] = &["search", "recommendation", "wishlist", "catalog", "library"];
 
 /// Logs that the player looked at a game's store page — feeds
 /// `list_recommendations` below. Upserts rather than appending so this

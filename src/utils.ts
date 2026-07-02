@@ -1,4 +1,5 @@
 import { convertFileSrc as tauriConvertFileSrc } from "@tauri-apps/api/core";
+import type { TranslationKey } from "./translations";
 
 export function convertFileSrc(path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) {
@@ -24,6 +25,17 @@ export function formatSize(bytes: number): string {
   }
   const mb = bytes / 1024 ** 2;
   return `${mb.toFixed(0)} MB`;
+}
+
+export function formatRelativeDate(
+  iso: string | null,
+  t: (key: TranslationKey) => string
+): string {
+  if (!iso) return t("lib_last_played_never");
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (days <= 0) return t("lib_last_played_today");
+  if (days === 1) return t("lib_last_played_yesterday");
+  return `${t("lib_days_ago_prefix")}${days}${t("lib_days_ago_suffix")}`;
 }
 
 export function formatSpeed(bytesPerSecond: number): string {

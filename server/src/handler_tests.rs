@@ -1415,14 +1415,6 @@ async fn achievements_unlock_idempotently_and_redact_hidden_ones(pool: sqlx::PgP
     .await
     .unwrap();
 
-    let notifications = list_notifications(State(state.clone()), AuthUser(alice.id))
-        .await
-        .unwrap()
-        .0;
-    assert_eq!(notifications.len(), 1);
-    assert_eq!(notifications[0].kind, "achievement_unlocked");
-    assert!(notifications[0].message.contains("Erster Sieg"));
-
     // Once unlocked, alice sees the real title and no longer "???".
     let achievements_after = list_game_achievements(State(state.clone()), bearer_headers(&state, alice.id), Path(game.id))
         .await
@@ -1431,7 +1423,7 @@ async fn achievements_unlock_idempotently_and_redact_hidden_ones(pool: sqlx::PgP
     assert_eq!(achievements_after[0].title.as_deref(), Some("Erster Sieg"));
     assert!(achievements_after[0].unlocked);
 
-    // Unlocking again is idempotent — no duplicate notification.
+    // Unlocking again is idempotent — no duplicate row in the unlock list.
     unlock_achievement(
         State(state.clone()),
         AuthUser(alice.id),
@@ -1439,11 +1431,11 @@ async fn achievements_unlock_idempotently_and_redact_hidden_ones(pool: sqlx::PgP
     )
     .await
     .unwrap();
-    let notifications = list_notifications(State(state.clone()), AuthUser(alice.id))
+    let unlocked = list_my_unlocked_achievements(State(state.clone()), AuthUser(alice.id))
         .await
         .unwrap()
         .0;
-    assert_eq!(notifications.len(), 1, "repeat unlock must not duplicate the notification");
+    assert_eq!(unlocked.len(), 1, "repeat unlock must not duplicate the unlock row");
 
     // Bob never unlocked it — still redacted for him.
     let bob_view = list_game_achievements(State(state.clone()), bearer_headers(&state, bob.id), Path(game.id))

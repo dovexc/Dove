@@ -126,7 +126,11 @@ export function TagInput({
   );
 }
 
-export function StoreView() {
+interface Props {
+  onBackToLibrary?: () => void;
+}
+
+export function StoreView({ onBackToLibrary }: Props) {
   const t = useT();
   const games = useCatalogStore((s) => s.games);
   const library = useCatalogStore((s) => s.library);
@@ -711,6 +715,7 @@ export function StoreView() {
         <GameDetailPage
           owned={ownedIds.has(detailGame.id)}
           isPublisher={authUser?.id === detailGame.publisher_user_id}
+          onBackToLibrary={onBackToLibrary}
         />
       )}
 
