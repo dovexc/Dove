@@ -118,6 +118,15 @@ export interface PublicProfile {
   wishlist: CatalogGame[];
   equipped_badge: Badge | null;
   achievement_showcase: ShowcasedAchievement[];
+  recent_games: RecentlyPlayedGame[];
+}
+
+export interface RecentlyPlayedGame {
+  catalog_game_id: number;
+  title: string;
+  cover_url: string | null;
+  last_played_at: string;
+  playtime_last_two_weeks_seconds: number;
 }
 
 export interface ShowcasedAchievement {

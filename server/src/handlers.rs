@@ -14,9 +14,9 @@ use crate::models::{
     LoginRequest, NewCatalogGame, NewEventTeam, NewGameAchievement, NewGameEvent, NewGameReview,
     NewGameVersionNote, NewWalletTopup,
     Notification, NewUserReport, Order, ProfileScreenshot, PublicProfile, PublisherGameStats,
-    PublisherGameStatsDetail, RatingBucket, RegisterRequest, ReportedUserSummary, ReviewVoteRequest,
-    SetAchievementShowcaseRequest, SetBadgeRequest, SetLanguageRequest, SetMatchWinner,
-    SetPlayingRequest, ShowcasedAchievement, SourceCount, TagRanking, UnbanRequest,
+    PublisherGameStatsDetail, RatingBucket, RecentlyPlayedGame, RegisterRequest, ReportedUserSummary,
+    ReviewVoteRequest, SetAchievementShowcaseRequest, SetBadgeRequest, SetLanguageRequest,
+    SetMatchWinner, SetPlayingRequest, ShowcasedAchievement, SourceCount, TagRanking, UnbanRequest,
     UpdateCatalogGame, UpdateProfileRequest, User, UserReport, WalletTopup,
 };
 use crate::state::AppState;
@@ -595,6 +595,16 @@ pub async fn delete_screenshot(
     Ok(StatusCode::NO_CONTENT)
 }
 
+fn row_to_recently_played_game(row: &PgRow) -> Result<RecentlyPlayedGame, sqlx::Error> {
+    Ok(RecentlyPlayedGame {
+        catalog_game_id: row.try_get(0)?,
+        title: row.try_get(1)?,
+        cover_url: row.try_get(2)?,
+        last_played_at: row.try_get(3)?,
+        playtime_last_two_weeks_seconds: row.try_get(4)?,
+    })
+}
+
 pub async fn get_user_profile(
     State(state): State<AppState>,
     AuthUser(current_user_id): AuthUser,
@@ -663,6 +673,29 @@ pub async fn get_user_profile(
     let achievement_showcase =
         showcase_rows.iter().filter_map(|r| row_to_showcased_achievement(r).ok()).collect();
 
+    // Steam-style "recently played": only games with playtime in the last
+    // 14 days, newest first, capped at 3. Sourced from the launcher's
+    // playtime heartbeat (`game_playtime_events`), so this only covers
+    // catalog games — a purely local, non-store game never reports here.
+    let recent_game_rows = sqlx::query(
+        "SELECT catalog_games.id, catalog_games.title, catalog_games.cover_url, \
+             MAX(game_playtime_events.created_at)::TEXT AS last_played_at, \
+             SUM(game_playtime_events.seconds)::BIGINT AS playtime_last_two_weeks_seconds \
+         FROM game_playtime_events \
+         JOIN catalog_games ON catalog_games.id = game_playtime_events.catalog_game_id \
+         WHERE game_playtime_events.user_id = $1 \
+             AND game_playtime_events.created_at >= now() - interval '14 days' \
+         GROUP BY catalog_games.id, catalog_games.title, catalog_games.cover_url \
+         ORDER BY last_played_at DESC \
+         LIMIT 3",
+    )
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let recent_games =
+        recent_game_rows.iter().filter_map(|r| row_to_recently_played_game(r).ok()).collect();
+
     Ok(Json(PublicProfile {
         id: user.id,
         display_name: user.display_name,
@@ -674,6 +707,7 @@ pub async fn get_user_profile(
         wishlist,
         equipped_badge: user.equipped_badge,
         achievement_showcase,
+        recent_games,
     }))
 }
 

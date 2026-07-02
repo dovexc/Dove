@@ -76,6 +76,20 @@ pub struct PublicProfile {
     pub wishlist: Vec<CatalogGame>,
     pub equipped_badge: Option<Badge>,
     pub achievement_showcase: Vec<ShowcasedAchievement>,
+    pub recent_games: Vec<RecentlyPlayedGame>,
+}
+
+/// A game played within the last 14 days — Steam-style "recently played",
+/// sourced from `game_playtime_events` (the launcher's 5-minute playtime
+/// heartbeat), so only catalog games report here, not locally-added ones
+/// with no store link.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RecentlyPlayedGame {
+    pub catalog_game_id: i64,
+    pub title: String,
+    pub cover_url: Option<String>,
+    pub last_played_at: String,
+    pub playtime_last_two_weeks_seconds: i64,
 }
 
 /// One achievement a user has chosen to feature on their profile — always

@@ -3,10 +3,10 @@ import { useAuthStore } from "../../authStore";
 import { API_BASE } from "../../authStore";
 import { useFriendsStore } from "../../friendsStore";
 import { useLibraryStore } from "../../store";
-import { convertFileSrc, formatPlaytime } from "../../utils";
+import { formatPlaytime } from "../../utils";
 import { useT } from "../../translations";
-import type { TranslationKey } from "../../translations";
 import { AchievementTile } from "./AchievementTile";
+import { RecentlyPlayedList } from "./RecentlyPlayedList";
 
 const MAX_SHOWCASE_ACHIEVEMENTS = 4;
 
@@ -30,19 +30,6 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-function formatRelativeTime(value: string, t: (key: TranslationKey) => string): string {
-  const diffMs = Date.now() - new Date(value).getTime();
-  const days = Math.floor(diffMs / 86_400_000);
-  if (days <= 0) return t("prof_today");
-  if (days === 1) return t("prof_one_day_ago");
-  if (days < 30) return t("prof_days_ago").replace("{n}", String(days));
-  const months = Math.floor(days / 30);
-  if (months < 12)
-    return months === 1 ? t("prof_one_month_ago") : t("prof_months_ago").replace("{n}", String(months));
-  const years = Math.floor(months / 12);
-  return years === 1 ? t("prof_one_year_ago") : t("prof_years_ago").replace("{n}", String(years));
-}
-
 export function ProfilePage({ onOpenFriends }: Props) {
   const t = useT();
   const user = useAuthStore((s) => s.user);
@@ -62,6 +49,7 @@ export function ProfilePage({ onOpenFriends }: Props) {
   const achievementShowcase = useAuthStore((s) => s.achievementShowcase);
   const fetchMyAchievements = useAuthStore((s) => s.fetchMyAchievements);
   const setAchievementShowcase = useAuthStore((s) => s.setAchievementShowcase);
+  const recentGames = useAuthStore((s) => s.recentGames);
 
   const friends = useFriendsStore((s) => s.friends);
   const loadingFriends = useFriendsStore((s) => s.loadingFriends);
@@ -109,14 +97,6 @@ export function ProfilePage({ onOpenFriends }: Props) {
 
   const totalPlaytimeSeconds = useMemo(
     () => games.reduce((sum, g) => sum + g.total_playtime_seconds, 0),
-    [games]
-  );
-
-  const lastPlayedGame = useMemo(
-    () =>
-      games
-        .filter((g): g is typeof g & { last_played_at: string } => Boolean(g.last_played_at))
-        .sort((a, b) => (a.last_played_at < b.last_played_at ? 1 : -1))[0] ?? null,
     [games]
   );
 
@@ -559,35 +539,12 @@ export function ProfilePage({ onOpenFriends }: Props) {
 
             <div>
               <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
-                {t("profile_last_activity")}
+                {t("profile_recently_played")}
               </div>
-              {lastPlayedGame ? (
-                <div className="flex items-center gap-3.5 rounded-[11px] border border-white/[0.06] bg-gradient-to-b from-[#141d27] to-[#111923] px-5 py-[18px]">
-                  <div className="h-[46px] w-[46px] shrink-0 overflow-hidden rounded-[11px] bg-zinc-800">
-                    {lastPlayedGame.cover_path ? (
-                      <img
-                        src={convertFileSrc(lastPlayedGame.cover_path)}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div
-                        className="h-full w-full"
-                        style={{ background: "linear-gradient(135deg,#2b5876,#4e4376)" }}
-                      />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-bold text-[#f0f6fb]">
-                      {lastPlayedGame.name}
-                    </div>
-                    <div className="mt-0.5 text-[13px] text-[#7b8794]">
-                      {t("lib_recently_played")} · {formatRelativeTime(lastPlayedGame.last_played_at, t)}
-                    </div>
-                  </div>
-                </div>
-              ) : (
+              {recentGames.length === 0 ? (
                 <p className="text-sm text-zinc-500">{t("profile_no_activity")}</p>
+              ) : (
+                <RecentlyPlayedList games={recentGames} />
               )}
             </div>
           </div>

@@ -3,6 +3,7 @@ import { API_BASE } from "../../authStore";
 import type { PublicProfile } from "../../types";
 import { AchievementTile } from "./AchievementTile";
 import { PublicWishlistView } from "./PublicWishlistView";
+import { RecentlyPlayedList } from "./RecentlyPlayedList";
 import { ReportUserDialog } from "./ReportUserDialog";
 import { useT } from "../../translations";
 
@@ -169,6 +170,15 @@ export function PublicProfileView({
                   <AchievementTile key={a.id} achievement={a} />
                 ))}
               </div>
+            </div>
+          )}
+
+          {profile.recent_games.length > 0 && (
+            <div>
+              <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+                {t("profile_recently_played")}
+              </div>
+              <RecentlyPlayedList games={profile.recent_games} />
             </div>
           )}
 

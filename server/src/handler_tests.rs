@@ -1532,3 +1532,88 @@ async fn cannot_repurchase_an_already_owned_game(pool: sqlx::PgPool) {
     let orders = list_my_orders(State(state.clone()), AuthUser(alice.id)).await.unwrap().0;
     assert_eq!(orders.len(), 1, "the rejected repurchase must not create a second order");
 }
+
+#[sqlx::test]
+async fn recent_games_excludes_stale_play_and_caps_at_three(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+
+    async fn make_game(state: &AppState, publisher_id: i64, title: &str) -> CatalogGame {
+        create_game(
+            State(state.clone()),
+            AuthUser(publisher_id),
+            Json(NewCatalogGame {
+                title: title.to_string(),
+                description: None,
+                cover_url: None,
+                tags: None,
+                min_specs: None,
+                recommended_specs: None,
+                save_path_hint: None,
+            }),
+        )
+        .await
+        .unwrap()
+        .0
+    }
+
+    // Backdates every `game_playtime_events` row for (alice, game) by
+    // `days_ago` — `report_playtime` always inserts at `now()`, so this is
+    // the only way to simulate a session that happened in the past.
+    async fn backdate(state: &AppState, alice_id: i64, game_id: i64, days_ago: f64) {
+        sqlx::query(
+            "UPDATE game_playtime_events SET created_at = now() - ($3 || ' days')::interval \
+             WHERE user_id = $1 AND catalog_game_id = $2",
+        )
+        .bind(alice_id)
+        .bind(game_id)
+        .bind(days_ago.to_string())
+        .execute(&state.db)
+        .await
+        .unwrap();
+    }
+
+    let game_a = make_game(&state, publisher.id, "A: one day ago, two sessions").await;
+    let game_b = make_game(&state, publisher.id, "B: three days ago").await;
+    let game_c = make_game(&state, publisher.id, "C: twenty days ago (stale)").await;
+    let game_d = make_game(&state, publisher.id, "D: five days ago (bumped out of top 3)").await;
+    let game_e = make_game(&state, publisher.id, "E: one hour ago (most recent)").await;
+
+    for (game, seconds, days_ago) in [
+        (&game_a, 100, 1.0),
+        (&game_a, 50, 1.0), // second session, same day — sums with the first
+        (&game_b, 200, 3.0),
+        (&game_c, 999, 20.0),
+        (&game_d, 50, 5.0),
+        (&game_e, 10, 1.0 / 24.0),
+    ] {
+        report_playtime(
+            State(state.clone()),
+            AuthUser(alice.id),
+            Path(game.id),
+            Json(PlaytimeReport { seconds }),
+        )
+        .await
+        .unwrap();
+        backdate(&state, alice.id, game.id, days_ago).await;
+    }
+
+    let profile = get_user_profile(State(state.clone()), AuthUser(alice.id), Path(alice.id))
+        .await
+        .unwrap()
+        .0;
+
+    assert_eq!(profile.recent_games.len(), 3, "capped at 3, and C (20 days ago) is stale");
+    let titles: Vec<&str> = profile.recent_games.iter().map(|g| g.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        vec![
+            "E: one hour ago (most recent)",
+            "A: one day ago, two sessions",
+            "B: three days ago",
+        ],
+        "most recently played first; D got bumped out of the top 3"
+    );
+    assert_eq!(profile.recent_games[1].playtime_last_two_weeks_seconds, 150, "A's two sessions sum");
+}

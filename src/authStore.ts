@@ -1,7 +1,14 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { useI18nStore } from "./i18nStore";
-import type { Badge, ProfileScreenshot, ShowcasedAchievement, StoreUser, WalletTopup } from "./types";
+import type {
+  Badge,
+  ProfileScreenshot,
+  RecentlyPlayedGame,
+  ShowcasedAchievement,
+  StoreUser,
+  WalletTopup,
+} from "./types";
 
 // Set VITE_API_BASE at build time (e.g. in a `.env.production`) to point a
 // release build at the deployed backend instead of localhost.
@@ -24,6 +31,7 @@ interface AuthState {
   badges: Badge[];
   myAchievements: ShowcasedAchievement[];
   achievementShowcase: ShowcasedAchievement[];
+  recentGames: RecentlyPlayedGame[];
   walletTopups: WalletTopup[];
   error: string | null;
   loading: boolean;
@@ -46,7 +54,7 @@ interface AuthState {
   fetchBadges: () => Promise<void>;
   setEquippedBadge: (badgeKey: string | null) => Promise<void>;
   fetchMyAchievements: () => Promise<void>;
-  fetchMyShowcase: () => Promise<void>;
+  fetchMyProfile: () => Promise<void>;
   setAchievementShowcase: (achievementIds: number[]) => Promise<void>;
   exportMyData: () => Promise<void>;
   deleteAccount: (password: string) => Promise<boolean>;
@@ -66,6 +74,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   badges: [],
   myAchievements: [],
   achievementShowcase: [],
+  recentGames: [],
   walletTopups: [],
   error: null,
   loading: false,
@@ -89,7 +98,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ token: data.token, user: data.user, loading: false });
       get().fetchScreenshots();
       get().fetchBadges();
-      get().fetchMyShowcase();
+      get().fetchMyProfile();
     } catch (e) {
       set({ error: String(e), loading: false });
     }
@@ -109,7 +118,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ token: data.token, user: data.user, loading: false });
       get().fetchScreenshots();
       get().fetchBadges();
-      get().fetchMyShowcase();
+      get().fetchMyProfile();
       syncLanguage(data.token);
     } catch (e) {
       set({ error: String(e), loading: false });
@@ -125,6 +134,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       badges: [],
       myAchievements: [],
       achievementShowcase: [],
+      recentGames: [],
       walletTopups: [],
     });
   },
@@ -148,7 +158,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ user });
       get().fetchScreenshots();
       get().fetchBadges();
-      get().fetchMyShowcase();
+      get().fetchMyProfile();
       syncLanguage(token);
     } catch {
       // Network/server error (e.g. backend not up yet) — keep the token and
@@ -351,7 +361,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  fetchMyShowcase: async () => {
+  fetchMyProfile: async () => {
     const user = get().user;
     const token = get().token;
     if (!user || !token) return;
@@ -361,7 +371,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
       if (!response.ok) throw new Error(await parseErrorMessage(response));
       const profile = await response.json();
-      set({ achievementShowcase: profile.achievement_showcase });
+      set({ achievementShowcase: profile.achievement_showcase, recentGames: profile.recent_games });
     } catch (e) {
       set({ error: String(e) });
     }
@@ -382,7 +392,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
       if (!response.ok) throw new Error(await parseErrorMessage(response));
       set({ loading: false });
-      await get().fetchMyShowcase();
+      await get().fetchMyProfile();
     } catch (e) {
       set({ error: String(e), loading: false });
     }
