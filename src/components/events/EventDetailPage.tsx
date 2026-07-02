@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { API_BASE, useAuthStore } from "../../authStore";
 import { useEventsStore } from "../../eventsStore";
-import { useChatStore } from "../../chatStore";
+import { CHAT_MESSAGE_MAX_LENGTH, useChatStore } from "../../chatStore";
 import { useT } from "../../translations";
 import type { TranslationKey } from "../../translations";
 import type { EventMatch } from "../../types";
@@ -82,6 +82,8 @@ export function EventDetailPage() {
   const closeEventChat = useChatStore((s) => s.closeEventChat);
   const refreshEventMessages = useChatStore((s) => s.refreshEventMessages);
   const sendEventMessage = useChatStore((s) => s.sendEventMessage);
+  const chatError = useChatStore((s) => s.error);
+  const clearChatError = useChatStore((s) => s.clearError);
 
   const [newTeamName, setNewTeamName] = useState("");
   const [chatDraft, setChatDraft] = useState("");
@@ -463,29 +465,49 @@ export function EventDetailPage() {
                 )}
               </div>
               {canChat && (
-                <form
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    if (!chatDraft.trim()) return;
-                    await sendEventMessage(chatDraft);
-                    setChatDraft("");
-                  }}
-                  className="flex gap-2.5 border-t border-white/[0.06] bg-black/20 p-3.5"
-                >
-                  <input
-                    value={chatDraft}
-                    onChange={(e) => setChatDraft(e.target.value)}
-                    placeholder={t("evt_message_placeholder")}
-                    className="h-11 flex-1 rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-3.5 text-sm text-[#dbe7f2] outline-none placeholder:text-zinc-500"
-                  />
-                  <button
-                    type="submit"
-                    disabled={sendingEvent || !chatDraft.trim()}
-                    className="h-11 shrink-0 rounded-[9px] bg-gradient-to-b from-sky-400 to-sky-600 px-[22px] text-sm font-bold text-white shadow-[0_6px_16px_rgba(40,120,200,0.3)] hover:from-sky-300 hover:to-sky-500 disabled:opacity-50"
+                <div className="border-t border-white/[0.06] bg-black/20 p-3.5">
+                  {chatError && (
+                    <div className="mb-2 flex items-center justify-between rounded bg-red-900/40 px-3 py-1.5 text-xs text-red-300">
+                      <span>{chatError}</span>
+                      <button onClick={clearChatError} className="font-bold">
+                        ✕
+                      </button>
+                    </div>
+                  )}
+                  {chatDraft.length > CHAT_MESSAGE_MAX_LENGTH * 0.8 && (
+                    <div
+                      className={`mb-1 text-right text-[11px] ${
+                        chatDraft.length >= CHAT_MESSAGE_MAX_LENGTH ? "text-red-400" : "text-zinc-500"
+                      }`}
+                    >
+                      {chatDraft.length}/{CHAT_MESSAGE_MAX_LENGTH}
+                    </div>
+                  )}
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!chatDraft.trim()) return;
+                      await sendEventMessage(chatDraft);
+                      setChatDraft("");
+                    }}
+                    className="flex gap-2.5"
                   >
-                    {t("chat_send")}
-                  </button>
-                </form>
+                    <input
+                      value={chatDraft}
+                      onChange={(e) => setChatDraft(e.target.value)}
+                      placeholder={t("evt_message_placeholder")}
+                      maxLength={CHAT_MESSAGE_MAX_LENGTH}
+                      className="h-11 flex-1 rounded-[9px] border border-white/[0.08] bg-[#0d141c] px-3.5 text-sm text-[#dbe7f2] outline-none placeholder:text-zinc-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={sendingEvent || !chatDraft.trim()}
+                      className="h-11 shrink-0 rounded-[9px] bg-gradient-to-b from-sky-400 to-sky-600 px-[22px] text-sm font-bold text-white shadow-[0_6px_16px_rgba(40,120,200,0.3)] hover:from-sky-300 hover:to-sky-500 disabled:opacity-50"
+                    >
+                      {t("chat_send")}
+                    </button>
+                  </form>
+                </div>
               )}
             </div>
           </div>

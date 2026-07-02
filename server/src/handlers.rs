@@ -4995,6 +4995,12 @@ pub async fn send_direct_message(
             "Nachricht ist zu lang (max. 2000 Zeichen)".to_string(),
         ));
     }
+    if !state.chat_rate_limiter.check(&user_id.to_string()) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "Du sendest zu schnell Nachrichten. Bitte warte kurz.".to_string(),
+        ));
+    }
 
     if !are_friends(&state.db, user_id, friend_id).await {
         return Err((
@@ -5100,6 +5106,12 @@ pub async fn send_event_message(
         return Err((
             StatusCode::BAD_REQUEST,
             "Nachricht ist zu lang (max. 2000 Zeichen)".to_string(),
+        ));
+    }
+    if !state.chat_rate_limiter.check(&user_id.to_string()) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "Du sendest zu schnell Nachrichten. Bitte warte kurz.".to_string(),
         ));
     }
 

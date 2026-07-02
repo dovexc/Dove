@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuthStore } from "../../authStore";
-import { useChatStore } from "../../chatStore";
+import { CHAT_MESSAGE_MAX_LENGTH, useChatStore } from "../../chatStore";
 import { useT } from "../../translations";
 import type { UserSummary } from "../../types";
 
@@ -106,21 +106,33 @@ export function DirectMessageView({ friend, onClose }: Props) {
           )}
         </div>
 
-        <form onSubmit={handleSend} className="flex gap-2 border-t border-zinc-800 p-3">
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={t("chat_placeholder")}
-            autoFocus
-            className="flex-1 rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
-          />
-          <button
-            type="submit"
-            disabled={sending || !draft.trim()}
-            className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
-          >
-            {t("chat_send")}
-          </button>
+        <form onSubmit={handleSend} className="border-t border-zinc-800 p-3">
+          {draft.length > CHAT_MESSAGE_MAX_LENGTH * 0.8 && (
+            <div
+              className={`mb-1 text-right text-[11px] ${
+                draft.length >= CHAT_MESSAGE_MAX_LENGTH ? "text-red-400" : "text-zinc-500"
+              }`}
+            >
+              {draft.length}/{CHAT_MESSAGE_MAX_LENGTH}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={t("chat_placeholder")}
+              maxLength={CHAT_MESSAGE_MAX_LENGTH}
+              autoFocus
+              className="flex-1 rounded bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+            />
+            <button
+              type="submit"
+              disabled={sending || !draft.trim()}
+              className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+            >
+              {t("chat_send")}
+            </button>
+          </div>
         </form>
       </div>
     </div>

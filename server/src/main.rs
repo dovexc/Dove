@@ -30,6 +30,11 @@ const AUTH_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 /// a loop that keeps triggering the same email.
 const EMAIL_RATE_LIMIT_MAX_PER_RECIPIENT: usize = 5;
 const EMAIL_RATE_LIMIT_WINDOW_SECS: u64 = 600;
+/// Per-sender cap on chat messages (DMs and event chat share this budget) —
+/// generous enough for a fast real conversation while still shutting down a
+/// spam loop.
+const CHAT_RATE_LIMIT_MAX_MESSAGES: usize = 8;
+const CHAT_RATE_LIMIT_WINDOW_SECS: u64 = 10;
 const MAX_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_GAME_FILE_BYTES: usize = 5 * 1024 * 1024 * 1024;
 const MAX_CLOUD_SAVE_BYTES: usize = 100 * 1024 * 1024;
@@ -186,6 +191,10 @@ async fn main() {
         email_rate_limiter: Arc::new(RateLimiter::new(
             EMAIL_RATE_LIMIT_MAX_PER_RECIPIENT,
             Duration::from_secs(EMAIL_RATE_LIMIT_WINDOW_SECS),
+        )),
+        chat_rate_limiter: Arc::new(RateLimiter::new(
+            CHAT_RATE_LIMIT_MAX_MESSAGES,
+            Duration::from_secs(CHAT_RATE_LIMIT_WINDOW_SECS),
         )),
         admin_emails,
         resend_api_key,

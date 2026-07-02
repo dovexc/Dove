@@ -2,6 +2,9 @@ import { create } from "zustand";
 import { API_BASE, getAuthHeader } from "./authStore";
 import type { DirectMessage, EventMessage } from "./types";
 
+// Mirrors the server's hard cap in `send_direct_message`/`send_event_message`.
+export const CHAT_MESSAGE_MAX_LENGTH = 2000;
+
 async function errorMessage(response: Response): Promise<string> {
   const text = await response.text();
   return text || `Fehler (${response.status})`;

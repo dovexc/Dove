@@ -1617,3 +1617,66 @@ async fn recent_games_excludes_stale_play_and_caps_at_three(pool: sqlx::PgPool) 
     );
     assert_eq!(profile.recent_games[1].playtime_last_two_weeks_seconds, 150, "A's two sessions sum");
 }
+
+#[sqlx::test]
+async fn chat_rate_limit_is_shared_across_dm_and_event_chat_but_per_sender(pool: sqlx::PgPool) {
+    use crate::rate_limit::RateLimiter;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let mut state = AppState::for_tests(pool).await;
+    state.chat_rate_limiter = Arc::new(RateLimiter::new(2, Duration::from_secs(60)));
+
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+    let bob = register_user(&state, "bob@test.de", "password123", "Bob").await;
+
+    send_friend_request(State(state.clone()), AuthUser(alice.id), Path(bob.id)).await.unwrap();
+    accept_friend_request(State(state.clone()), AuthUser(bob.id), Path(alice.id)).await.unwrap();
+
+    let event = create_event(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Json(new_event_req("Chat Cup", 1, None, "knockout", false)),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    let _ = send_direct_message(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Path(bob.id),
+        Json(NewDirectMessage { body: "1".to_string() }),
+    )
+    .await
+    .unwrap();
+    let _ = send_direct_message(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Path(bob.id),
+        Json(NewDirectMessage { body: "2".to_string() }),
+    )
+    .await
+    .unwrap();
+
+    // The budget is shared with event chat, not DM-specific — the 3rd
+    // message trips the limit even though it's a different chat entirely.
+    let blocked = send_event_message(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Path(event.id),
+        Json(NewEventMessage { body: "spam".to_string() }),
+    )
+    .await;
+    assert_eq!(blocked.unwrap_err().0, StatusCode::TOO_MANY_REQUESTS);
+
+    // Bob has his own budget, untouched by alice's spam.
+    let _ = send_direct_message(
+        State(state.clone()),
+        AuthUser(bob.id),
+        Path(alice.id),
+        Json(NewDirectMessage { body: "hi".to_string() }),
+    )
+    .await
+    .unwrap();
+}
