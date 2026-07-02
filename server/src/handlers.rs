@@ -2556,7 +2556,7 @@ pub async fn refund_order(
                  AND ownerships.catalog_game_id = orders.catalog_game_id) AS still_owned, \
              COALESCE((SELECT SUM(seconds) FROM game_playtime_events \
                  WHERE game_playtime_events.user_id = orders.user_id \
-                 AND game_playtime_events.catalog_game_id = orders.catalog_game_id), 0) \
+                 AND game_playtime_events.catalog_game_id = orders.catalog_game_id), 0)::BIGINT \
                  AS playtime_seconds \
          FROM orders WHERE orders.id = $1 AND orders.user_id = $2 FOR UPDATE"
     ))
