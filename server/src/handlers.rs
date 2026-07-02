@@ -15,8 +15,8 @@ use crate::models::{
     NewGameVersionNote, NewWalletTopup,
     Notification, NewUserReport, Order, ProfileScreenshot, PublicProfile, PublisherGameStats,
     PublisherGameStatsDetail, RatingBucket, RegisterRequest, ReportedUserSummary, ReviewVoteRequest,
-    SetBadgeRequest, SetLanguageRequest, SetMatchWinner, SetPlayingRequest, SourceCount, TagRanking,
-    UnbanRequest,
+    SetAchievementShowcaseRequest, SetBadgeRequest, SetLanguageRequest, SetMatchWinner,
+    SetPlayingRequest, ShowcasedAchievement, SourceCount, TagRanking, UnbanRequest,
     UpdateCatalogGame, UpdateProfileRequest, User, UserReport, WalletTopup,
 };
 use crate::state::AppState;
@@ -648,6 +648,21 @@ pub async fn get_user_profile(
     .map_err(internal_error)?;
     let wishlist = wishlist_rows.iter().filter_map(|r| row_to_game(r).ok()).collect();
 
+    let showcase_rows = sqlx::query(&format!(
+        "SELECT {SHOWCASED_ACHIEVEMENT_COLUMNS} FROM profile_achievement_showcase \
+         JOIN user_achievement_unlocks ON user_achievement_unlocks.id = profile_achievement_showcase.user_achievement_unlock_id \
+         JOIN game_achievements ON game_achievements.id = user_achievement_unlocks.game_achievement_id \
+         JOIN catalog_games ON catalog_games.id = game_achievements.catalog_game_id \
+         WHERE profile_achievement_showcase.user_id = $1 \
+         ORDER BY profile_achievement_showcase.position ASC"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let achievement_showcase =
+        showcase_rows.iter().filter_map(|r| row_to_showcased_achievement(r).ok()).collect();
+
     Ok(Json(PublicProfile {
         id: user.id,
         display_name: user.display_name,
@@ -658,6 +673,7 @@ pub async fn get_user_profile(
         screenshots,
         wishlist,
         equipped_badge: user.equipped_badge,
+        achievement_showcase,
     }))
 }
 
@@ -1518,6 +1534,119 @@ pub async fn unlock_achievement(
         .await;
     }
 
+    Ok(StatusCode::NO_CONTENT)
+}
+
+const SHOWCASED_ACHIEVEMENT_COLUMNS: &str =
+    "game_achievements.id, game_achievements.catalog_game_id, catalog_games.title, \
+     game_achievements.title, game_achievements.description, game_achievements.icon_url, \
+     user_achievement_unlocks.unlocked_at::TEXT, \
+     (100.0 * (SELECT COUNT(*) FROM user_achievement_unlocks u2 \
+         WHERE u2.game_achievement_id = game_achievements.id) \
+         / NULLIF((SELECT COUNT(*) FROM ownerships \
+         WHERE ownerships.catalog_game_id = game_achievements.catalog_game_id), 0) \
+     )::FLOAT8";
+
+/// Unlike `row_to_game_achievement`, never redacts — a showcased achievement
+/// is one the viewer (or the profile owner, for the picker) has already
+/// unlocked, so there's no spoiler to protect even if `hidden` is set.
+fn row_to_showcased_achievement(row: &PgRow) -> Result<ShowcasedAchievement, sqlx::Error> {
+    Ok(ShowcasedAchievement {
+        id: row.try_get(0)?,
+        catalog_game_id: row.try_get(1)?,
+        game_title: row.try_get(2)?,
+        title: row.try_get(3)?,
+        description: row.try_get(4)?,
+        icon_url: row.try_get(5)?,
+        unlocked_at: row.try_get(6)?,
+        unlock_percentage: row.try_get(7)?,
+    })
+}
+
+/// All achievements the caller has unlocked, across every game — the pool
+/// the profile showcase picker (up to `MAX_SHOWCASE_ACHIEVEMENTS`) is chosen
+/// from.
+pub async fn list_my_unlocked_achievements(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+) -> Result<Json<Vec<ShowcasedAchievement>>, ApiError> {
+    let rows = sqlx::query(&format!(
+        "SELECT {SHOWCASED_ACHIEVEMENT_COLUMNS} FROM user_achievement_unlocks \
+         JOIN game_achievements ON game_achievements.id = user_achievement_unlocks.game_achievement_id \
+         JOIN catalog_games ON catalog_games.id = game_achievements.catalog_game_id \
+         WHERE user_achievement_unlocks.user_id = $1 \
+         ORDER BY user_achievement_unlocks.unlocked_at DESC"
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(internal_error)?;
+    let achievements = rows.iter().filter_map(|r| row_to_showcased_achievement(r).ok()).collect();
+    Ok(Json(achievements))
+}
+
+const MAX_SHOWCASE_ACHIEVEMENTS: usize = 4;
+
+/// Replaces the caller's profile achievement showcase wholesale — simpler
+/// and safer than incremental add/remove/reorder endpoints, since the
+/// frontend already holds the full picker state when the user saves.
+/// Every id must be something the caller has actually unlocked; the whole
+/// request fails rather than silently dropping the ones that aren't.
+pub async fn set_achievement_showcase(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Json(req): Json<SetAchievementShowcaseRequest>,
+) -> Result<StatusCode, ApiError> {
+    if req.achievement_ids.len() > MAX_SHOWCASE_ACHIEVEMENTS {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("Höchstens {MAX_SHOWCASE_ACHIEVEMENTS} Achievements können angezeigt werden"),
+        ));
+    }
+    let unique_count = req.achievement_ids.iter().collect::<std::collections::HashSet<_>>().len();
+    if unique_count != req.achievement_ids.len() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Achievements dürfen nicht doppelt vorkommen".to_string(),
+        ));
+    }
+
+    let mut tx = state.db.begin().await.map_err(internal_error)?;
+
+    sqlx::query("DELETE FROM profile_achievement_showcase WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(internal_error)?;
+
+    for (idx, achievement_id) in req.achievement_ids.iter().enumerate() {
+        let unlock_id: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM user_achievement_unlocks WHERE user_id = $1 AND game_achievement_id = $2",
+        )
+        .bind(user_id)
+        .bind(achievement_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(internal_error)?;
+        let Some(unlock_id) = unlock_id else {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "Du kannst nur Achievements anzeigen, die du freigeschaltet hast".to_string(),
+            ));
+        };
+        sqlx::query(
+            "INSERT INTO profile_achievement_showcase (user_id, position, user_achievement_unlock_id) \
+             VALUES ($1, $2, $3)",
+        )
+        .bind(user_id)
+        .bind((idx + 1) as i16)
+        .bind(unlock_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(internal_error)?;
+    }
+
+    tx.commit().await.map_err(internal_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

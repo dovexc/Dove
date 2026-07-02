@@ -6,6 +6,9 @@ import { useLibraryStore } from "../../store";
 import { convertFileSrc, formatPlaytime } from "../../utils";
 import { useT } from "../../translations";
 import type { TranslationKey } from "../../translations";
+import { AchievementTile } from "./AchievementTile";
+
+const MAX_SHOWCASE_ACHIEVEMENTS = 4;
 
 interface Props {
   onOpenFriends: () => void;
@@ -55,6 +58,10 @@ export function ProfilePage({ onOpenFriends }: Props) {
   const clearError = useAuthStore((s) => s.clearError);
   const fetchBadges = useAuthStore((s) => s.fetchBadges);
   const setEquippedBadge = useAuthStore((s) => s.setEquippedBadge);
+  const myAchievements = useAuthStore((s) => s.myAchievements);
+  const achievementShowcase = useAuthStore((s) => s.achievementShowcase);
+  const fetchMyAchievements = useAuthStore((s) => s.fetchMyAchievements);
+  const setAchievementShowcase = useAuthStore((s) => s.setAchievementShowcase);
 
   const friends = useFriendsStore((s) => s.friends);
   const loadingFriends = useFriendsStore((s) => s.loadingFriends);
@@ -72,6 +79,29 @@ export function ProfilePage({ onOpenFriends }: Props) {
   const [name, setName] = useState(user?.display_name ?? "");
   const [editingBio, setEditingBio] = useState(false);
   const [bio, setBio] = useState(user?.bio ?? "");
+  const [selectedShowcaseIds, setSelectedShowcaseIds] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (!editMode) return;
+    fetchMyAchievements();
+    setSelectedShowcaseIds(achievementShowcase.map((a) => a.id));
+    // Only re-seed the selection when edit mode is freshly entered, not on
+    // every `achievementShowcase` change — that would blow away in-progress
+    // toggles as soon as a save round-trips.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editMode]);
+
+  function toggleShowcaseAchievement(id: number) {
+    setSelectedShowcaseIds((prev) => {
+      if (prev.includes(id)) return prev.filter((existing) => existing !== id);
+      if (prev.length >= MAX_SHOWCASE_ACHIEVEMENTS) return prev;
+      return [...prev, id];
+    });
+  }
+
+  function saveShowcase() {
+    setAchievementShowcase(selectedShowcaseIds);
+  }
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
@@ -324,6 +354,54 @@ export function ProfilePage({ onOpenFriends }: Props) {
                 )}
               </div>
             )}
+
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">
+                  {t("profile_achievement_showcase")}
+                </div>
+                {editMode && (
+                  <span className="text-xs text-zinc-500">
+                    {selectedShowcaseIds.length}/{MAX_SHOWCASE_ACHIEVEMENTS}
+                  </span>
+                )}
+              </div>
+
+              {editMode ? (
+                myAchievements.length === 0 ? (
+                  <p className="text-sm text-zinc-500">{t("profile_no_achievements_hint")}</p>
+                ) : (
+                  <>
+                    <p className="mb-3 text-xs text-zinc-500">{t("profile_achievement_picker_hint")}</p>
+                    <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+                      {myAchievements.map((a) => (
+                        <AchievementTile
+                          key={a.id}
+                          achievement={a}
+                          selected={selectedShowcaseIds.includes(a.id)}
+                          onClick={() => toggleShowcaseAchievement(a.id)}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      onClick={saveShowcase}
+                      disabled={loading}
+                      className="mt-3 rounded bg-sky-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-50"
+                    >
+                      {t("profile_save_showcase")}
+                    </button>
+                  </>
+                )
+              ) : achievementShowcase.length === 0 ? (
+                <p className="text-sm text-zinc-500">{t("profile_no_showcase_hint")}</p>
+              ) : (
+                <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+                  {achievementShowcase.map((a) => (
+                    <AchievementTile key={a.id} achievement={a} />
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div>
               <div className="mb-3 text-[13px] font-extrabold uppercase tracking-[2px] text-[#5b8db8]">

@@ -1361,3 +1361,134 @@ async fn achievements_unlock_idempotently_and_redact_hidden_ones(pool: sqlx::PgP
     .await;
     assert_eq!(deleted.unwrap(), StatusCode::NO_CONTENT);
 }
+
+#[sqlx::test]
+async fn achievement_showcase_only_accepts_unlocked_achievements_and_replaces_wholesale(
+    pool: sqlx::PgPool,
+) {
+    let state = AppState::for_tests(pool).await;
+    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+
+    let game = create_game(
+        State(state.clone()),
+        AuthUser(publisher.id),
+        Json(NewCatalogGame {
+            title: "Pixel Knights".to_string(),
+            description: None,
+            cover_url: None,
+            tags: None,
+            min_specs: None,
+            recommended_specs: None,
+            save_path_hint: None,
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    let ach_a = upsert_game_achievement(
+        State(state.clone()),
+        AuthUser(publisher.id),
+        Path(game.id),
+        Json(NewGameAchievement {
+            key: "FIRST_WIN".to_string(),
+            title: "Erster Sieg".to_string(),
+            description: None,
+            icon: None,
+            hidden: false,
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+    let ach_b = upsert_game_achievement(
+        State(state.clone()),
+        AuthUser(publisher.id),
+        Path(game.id),
+        Json(NewGameAchievement {
+            key: "SPEEDRUN".to_string(),
+            title: "Speedrunner".to_string(),
+            description: None,
+            icon: None,
+            hidden: false,
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    // Can't showcase an achievement that doesn't exist / isn't unlocked yet.
+    let denied = set_achievement_showcase(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Json(SetAchievementShowcaseRequest { achievement_ids: vec![ach_a.id] }),
+    )
+    .await;
+    assert_eq!(denied.unwrap_err().0, StatusCode::FORBIDDEN);
+
+    // More than 4 ids is rejected outright.
+    let too_many = set_achievement_showcase(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Json(SetAchievementShowcaseRequest { achievement_ids: vec![1, 2, 3, 4, 5] }),
+    )
+    .await;
+    assert_eq!(too_many.unwrap_err().0, StatusCode::BAD_REQUEST);
+
+    // Duplicate ids are rejected.
+    let duplicated = set_achievement_showcase(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Json(SetAchievementShowcaseRequest { achievement_ids: vec![ach_a.id, ach_a.id] }),
+    )
+    .await;
+    assert_eq!(duplicated.unwrap_err().0, StatusCode::BAD_REQUEST);
+
+    let _ = purchase_game(State(state.clone()), AuthUser(alice.id), Path(game.id))
+        .await
+        .unwrap();
+    unlock_achievement(State(state.clone()), AuthUser(alice.id), Path((game.id, "FIRST_WIN".to_string())))
+        .await
+        .unwrap();
+    unlock_achievement(State(state.clone()), AuthUser(alice.id), Path((game.id, "SPEEDRUN".to_string())))
+        .await
+        .unwrap();
+
+    let unlocked = list_my_unlocked_achievements(State(state.clone()), AuthUser(alice.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(unlocked.len(), 2);
+
+    set_achievement_showcase(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Json(SetAchievementShowcaseRequest { achievement_ids: vec![ach_a.id, ach_b.id] }),
+    )
+    .await
+    .unwrap();
+
+    let profile = get_user_profile(State(state.clone()), AuthUser(alice.id), Path(alice.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(profile.achievement_showcase.len(), 2);
+    assert_eq!(profile.achievement_showcase[0].title, "Erster Sieg");
+    assert_eq!(profile.achievement_showcase[1].title, "Speedrunner");
+
+    // Saving again fully replaces the showcase rather than appending.
+    set_achievement_showcase(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Json(SetAchievementShowcaseRequest { achievement_ids: vec![ach_b.id] }),
+    )
+    .await
+    .unwrap();
+    let profile = get_user_profile(State(state.clone()), AuthUser(alice.id), Path(alice.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(profile.achievement_showcase.len(), 1);
+    assert_eq!(profile.achievement_showcase[0].title, "Speedrunner");
+}

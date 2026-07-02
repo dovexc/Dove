@@ -117,6 +117,19 @@ export interface PublicProfile {
   screenshots: ProfileScreenshot[];
   wishlist: CatalogGame[];
   equipped_badge: Badge | null;
+  achievement_showcase: ShowcasedAchievement[];
+}
+
+export interface ShowcasedAchievement {
+  id: number;
+  catalog_game_id: number;
+  game_title: string;
+  title: string;
+  description: string | null;
+  icon_url: string | null;
+  unlocked_at: string;
+  // `null` for hidden achievements or when no one owns the game yet.
+  unlock_percentage: number | null;
 }
 
 export interface UserSummary {

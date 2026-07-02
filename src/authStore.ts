@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { useI18nStore } from "./i18nStore";
-import type { Badge, ProfileScreenshot, StoreUser, WalletTopup } from "./types";
+import type { Badge, ProfileScreenshot, ShowcasedAchievement, StoreUser, WalletTopup } from "./types";
 
 // Set VITE_API_BASE at build time (e.g. in a `.env.production`) to point a
 // release build at the deployed backend instead of localhost.
@@ -22,6 +22,8 @@ interface AuthState {
   user: StoreUser | null;
   screenshots: ProfileScreenshot[];
   badges: Badge[];
+  myAchievements: ShowcasedAchievement[];
+  achievementShowcase: ShowcasedAchievement[];
   walletTopups: WalletTopup[];
   error: string | null;
   loading: boolean;
@@ -43,6 +45,9 @@ interface AuthState {
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
   fetchBadges: () => Promise<void>;
   setEquippedBadge: (badgeKey: string | null) => Promise<void>;
+  fetchMyAchievements: () => Promise<void>;
+  fetchMyShowcase: () => Promise<void>;
+  setAchievementShowcase: (achievementIds: number[]) => Promise<void>;
   exportMyData: () => Promise<void>;
   deleteAccount: (password: string) => Promise<boolean>;
   topUpWallet: (amountCents: number) => Promise<void>;
@@ -59,6 +64,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   screenshots: [],
   badges: [],
+  myAchievements: [],
+  achievementShowcase: [],
   walletTopups: [],
   error: null,
   loading: false,
@@ -82,6 +89,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ token: data.token, user: data.user, loading: false });
       get().fetchScreenshots();
       get().fetchBadges();
+      get().fetchMyShowcase();
     } catch (e) {
       set({ error: String(e), loading: false });
     }
@@ -101,6 +109,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ token: data.token, user: data.user, loading: false });
       get().fetchScreenshots();
       get().fetchBadges();
+      get().fetchMyShowcase();
       syncLanguage(data.token);
     } catch (e) {
       set({ error: String(e), loading: false });
@@ -109,7 +118,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: () => {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
-    set({ token: null, user: null, screenshots: [], badges: [], walletTopups: [] });
+    set({
+      token: null,
+      user: null,
+      screenshots: [],
+      badges: [],
+      myAchievements: [],
+      achievementShowcase: [],
+      walletTopups: [],
+    });
   },
 
   hydrateUser: async () => {
@@ -131,6 +148,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ user });
       get().fetchScreenshots();
       get().fetchBadges();
+      get().fetchMyShowcase();
       syncLanguage(token);
     } catch {
       // Network/server error (e.g. backend not up yet) — keep the token and
@@ -313,6 +331,58 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (!response.ok) throw new Error(await parseErrorMessage(response));
       const user = await response.json();
       set({ user, loading: false });
+    } catch (e) {
+      set({ error: String(e), loading: false });
+    }
+  },
+
+  fetchMyAchievements: async () => {
+    const token = get().token;
+    if (!token) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/me/achievements`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      const myAchievements: ShowcasedAchievement[] = await response.json();
+      set({ myAchievements });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  fetchMyShowcase: async () => {
+    const user = get().user;
+    const token = get().token;
+    if (!user || !token) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/users/${user.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      const profile = await response.json();
+      set({ achievementShowcase: profile.achievement_showcase });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  setAchievementShowcase: async (achievementIds) => {
+    const token = get().token;
+    if (!token) return;
+    set({ loading: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/me/achievement-showcase`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ achievement_ids: achievementIds }),
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      set({ loading: false });
+      await get().fetchMyShowcase();
     } catch (e) {
       set({ error: String(e), loading: false });
     }

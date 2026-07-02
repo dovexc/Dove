@@ -75,6 +75,32 @@ pub struct PublicProfile {
     pub screenshots: Vec<ProfileScreenshot>,
     pub wishlist: Vec<CatalogGame>,
     pub equipped_badge: Option<Badge>,
+    pub achievement_showcase: Vec<ShowcasedAchievement>,
+}
+
+/// One achievement a user has chosen to feature on their profile — always
+/// something they've actually unlocked (enforced by
+/// `set_achievement_showcase`), so unlike `GameAchievement` this is never
+/// redacted even if the underlying achievement is `hidden`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ShowcasedAchievement {
+    pub id: i64,
+    pub catalog_game_id: i64,
+    pub game_title: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub icon_url: Option<String>,
+    pub unlocked_at: String,
+    /// Percentage of the game's owners who have unlocked this achievement —
+    /// drives the rare-achievement glow in the profile UI (< 1%).
+    pub unlock_percentage: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetAchievementShowcaseRequest {
+    /// Up to 4 `game_achievements.id`s, in display order. Each must be
+    /// something the caller has actually unlocked.
+    pub achievement_ids: Vec<i64>,
 }
 
 #[derive(Debug, Deserialize)]

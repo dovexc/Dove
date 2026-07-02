@@ -228,6 +228,11 @@ async fn main() {
         .route("/api/me/export", get(handlers::export_my_data))
         .route("/api/me/badge", axum::routing::patch(handlers::set_equipped_badge))
         .route("/api/users/:id/badges", get(handlers::list_user_badges))
+        .route("/api/me/achievements", get(handlers::list_my_unlocked_achievements))
+        .route(
+            "/api/me/achievement-showcase",
+            axum::routing::patch(handlers::set_achievement_showcase),
+        )
         .route("/api/me/password", post(handlers::change_password))
         .route(
             "/api/me/language",
