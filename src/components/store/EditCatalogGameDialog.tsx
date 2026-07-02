@@ -57,6 +57,7 @@ export function EditCatalogGameDialog({ game, onClose }: Props) {
   );
   const [isEarlyAccess, setIsEarlyAccess] = useState(game.is_early_access);
   const [earlyAccessNote, setEarlyAccessNote] = useState(game.early_access_note ?? "");
+  const [isBeta, setIsBeta] = useState(game.is_beta);
   const [price, setPrice] = useState(centsToEuroInput(game.price_cents));
   const [offerEnabled, setOfferEnabled] = useState(game.sale_price_cents != null);
   const [salePrice, setSalePrice] = useState(
@@ -90,6 +91,7 @@ export function EditCatalogGameDialog({ game, onClose }: Props) {
         content_warnings: contentWarnings.size > 0 ? Array.from(contentWarnings).join(",") : null,
         is_early_access: isEarlyAccess,
         early_access_note: isEarlyAccess ? earlyAccessNote.trim() || null : null,
+        is_beta: isBeta,
       });
       onClose();
     } catch {
@@ -225,6 +227,16 @@ export function EditCatalogGameDialog({ game, onClose }: Props) {
             </label>
           )}
         </div>
+
+        <label className="flex items-center gap-2 rounded border border-zinc-800 p-3 text-sm font-semibold text-zinc-200">
+          <input
+            type="checkbox"
+            checked={isBeta}
+            onChange={(e) => setIsBeta(e.target.checked)}
+          />
+          {t("pub_beta_label")}
+          <span className="font-normal text-zinc-500">— {t("pub_beta_hint")}</span>
+        </label>
 
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1 text-sm text-zinc-300">

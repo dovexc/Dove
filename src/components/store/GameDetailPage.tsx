@@ -2,7 +2,12 @@ import { useMemo, useRef, useState } from "react";
 import { useAuthStore } from "../../authStore";
 import { useCartStore } from "../../cartStore";
 import { useCatalogStore } from "../../catalogStore";
+import { useDownloadStore } from "../../downloadStore";
+import { useLibraryStore } from "../../store";
 import { formatSize } from "../../utils";
+import { LockIcon, ThumbsDownIcon, ThumbsUpIcon, TrophyIcon, WarningIcon } from "../icons";
+import { PlayIcon } from "../downloads/icons";
+import { EditCatalogGameDialog } from "./EditCatalogGameDialog";
 import { PriceTag, SaleBadge } from "./PriceTag";
 import { CONTENT_WARNING_OPTIONS } from "./PublishGamePage";
 import { RatingPicker, Stars } from "./Stars";
@@ -37,6 +42,10 @@ export function GameDetailPage({ owned, isPublisher }: Props) {
   const cartItems = useCartStore((s) => s.items);
   const addToCart = useCartStore((s) => s.addToCart);
   const removeFromCart = useCartStore((s) => s.removeFromCart);
+  const downloadDemo = useCatalogStore((s) => s.downloadDemo);
+  const libraryGames = useLibraryStore((s) => s.games);
+  const launchGame = useLibraryStore((s) => s.launchGame);
+  const downloadQueue = useDownloadStore((s) => s.queue);
   const screenshots = useCatalogStore((s) => s.detailScreenshots);
   const reviews = useCatalogStore((s) => s.detailReviews);
   const detailLoading = useCatalogStore((s) => s.detailLoading);
@@ -60,6 +69,7 @@ export function GameDetailPage({ owned, isPublisher }: Props) {
   const token = useAuthStore((s) => s.token);
 
   const [activeImage, setActiveImage] = useState<string | null>(null);
+  const [showEdit, setShowEdit] = useState(false);
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewBody, setReviewBody] = useState("");
   const screenshotInputRef = useRef<HTMLInputElement>(null);
@@ -93,6 +103,11 @@ export function GameDetailPage({ owned, isPublisher }: Props) {
   const tags = parseTags(game.tags);
   const languages = parseTags(game.supported_languages);
   const contentWarnings = parseTags(game.content_warnings);
+  const localDemoGame = libraryGames.find((g) => g.catalog_game_id === game.id && g.is_demo);
+  const demoQueueItem = localDemoGame
+    ? downloadQueue.find((i) => i.id === localDemoGame.id)
+    : undefined;
+  const demoInstalled = Boolean(localDemoGame && !localDemoGame.exe_path.startsWith("store://"));
 
   async function handleScreenshotChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -182,6 +197,14 @@ export function GameDetailPage({ owned, isPublisher }: Props) {
         >
           {t("gdp_back_to_catalog")}
         </button>
+        {isPublisher && (
+          <button
+            onClick={() => setShowEdit(true)}
+            className="rounded bg-white/5 px-4 py-2 text-sm font-semibold text-zinc-300 hover:bg-white/10"
+          >
+            {t("edit_game_open")}
+          </button>
+        )}
       </div>
 
       <div className="mx-auto max-w-5xl px-6 pb-16">
@@ -216,6 +239,11 @@ export function GameDetailPage({ owned, isPublisher }: Props) {
               {game.is_early_access && (
                 <span className="rounded bg-amber-600 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-white">
                   {t("pub_early_access_badge")}
+                </span>
+              )}
+              {game.is_beta && (
+                <span className="rounded bg-sky-600 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-white">
+                  {t("pub_beta_badge")}
                 </span>
               )}
             </div>
@@ -419,29 +447,29 @@ export function GameDetailPage({ owned, isPublisher }: Props) {
                           <>
                             <button
                               onClick={() => handleVote(r.id, r.my_vote, true)}
-                              className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+                              className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
                                 r.my_vote === true
                                   ? "bg-sky-600 text-white"
                                   : "text-zinc-400 hover:bg-zinc-800"
                               }`}
                             >
-                              👍 {t("gdp_helpful")} ({r.helpful_count})
+                              <ThumbsUpIcon size={13} /> {t("gdp_helpful")} ({r.helpful_count})
                             </button>
                             <button
                               onClick={() => handleVote(r.id, r.my_vote, false)}
-                              className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+                              className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
                                 r.my_vote === false
                                   ? "bg-red-600 text-white"
                                   : "text-zinc-400 hover:bg-zinc-800"
                               }`}
                             >
-                              👎 {t("gdp_not_helpful")} ({r.unhelpful_count})
+                              <ThumbsDownIcon size={13} /> {t("gdp_not_helpful")} ({r.unhelpful_count})
                             </button>
                           </>
                         ) : (
                           (r.helpful_count > 0 || r.unhelpful_count > 0) && (
-                            <span className="text-xs text-zinc-500">
-                              👍 {r.helpful_count} · 👎 {r.unhelpful_count}
+                            <span className="flex items-center gap-1 text-xs text-zinc-500">
+                              <ThumbsUpIcon size={13} /> {r.helpful_count} · <ThumbsDownIcon size={13} /> {r.unhelpful_count}
                             </span>
                           )
                         )}
@@ -630,8 +658,8 @@ export function GameDetailPage({ owned, isPublisher }: Props) {
                       {a.icon_url ? (
                         <img src={a.icon_url} alt="" className="h-10 w-10 rounded object-cover" />
                       ) : (
-                        <div className="flex h-10 w-10 items-center justify-center rounded bg-zinc-800 text-lg">
-                          {a.unlocked ? "🏆" : "🔒"}
+                        <div className="flex h-10 w-10 items-center justify-center rounded bg-zinc-800 text-zinc-300">
+                          {a.unlocked ? <TrophyIcon size={18} /> : <LockIcon size={18} />}
                         </div>
                       )}
                       <div className="flex-1">
@@ -697,6 +725,22 @@ export function GameDetailPage({ owned, isPublisher }: Props) {
                 {cartItems.some((g) => g.id === game.id) ? t("cart_in_cart") : t("cart_add_title")}
               </button>
             )}
+            {game.demo_file_url && !owned && (
+              <button
+                onClick={() => {
+                  if (demoInstalled && localDemoGame) launchGame(localDemoGame.id);
+                  else downloadDemo(game);
+                }}
+                disabled={Boolean(demoQueueItem)}
+                className="rounded border border-white/10 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-white/5 disabled:opacity-50"
+              >
+                {demoQueueItem
+                  ? t("pub_demo_downloading")
+                  : demoInstalled
+                    ? t("pub_play_demo")
+                    : t("pub_download_demo")}
+              </button>
+            )}
             {!owned && token && (
               <button
                 onClick={() =>
@@ -723,9 +767,9 @@ export function GameDetailPage({ owned, isPublisher }: Props) {
                 href={game.trailer_url}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded border border-white/10 px-4 py-2 text-center text-sm font-semibold text-zinc-200 hover:bg-white/5"
+                className="flex items-center justify-center gap-2 rounded border border-white/10 px-4 py-2 text-center text-sm font-semibold text-zinc-200 hover:bg-white/5"
               >
-                ▶ {t("pub_watch_trailer")}
+                <PlayIcon /> {t("pub_watch_trailer")}
               </a>
             )}
             {languages.length > 0 && (
@@ -739,9 +783,10 @@ export function GameDetailPage({ owned, isPublisher }: Props) {
                 {contentWarnings.map((w) => (
                   <span
                     key={w}
-                    className="rounded-full border border-amber-400/40 bg-amber-900/30 px-2.5 py-1 text-[11px] font-semibold text-amber-300"
+                    className="flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-900/30 px-2.5 py-1 text-[11px] font-semibold text-amber-300"
                   >
-                    ⚠ {t(CONTENT_WARNING_OPTIONS.find((opt) => opt.key === w)?.label ?? "pub_content_warnings_label")}
+                    <WarningIcon size={11} />
+                    {t(CONTENT_WARNING_OPTIONS.find((opt) => opt.key === w)?.label ?? "pub_content_warnings_label")}
                   </span>
                 ))}
               </div>
@@ -749,6 +794,8 @@ export function GameDetailPage({ owned, isPublisher }: Props) {
           </aside>
         </div>
       </div>
+
+      {showEdit && <EditCatalogGameDialog game={game} onClose={() => setShowEdit(false)} />}
     </div>
   );
 }

@@ -26,6 +26,7 @@ fn row_to_game(row: &rusqlite::Row, running: &HashSet<i64>) -> rusqlite::Result<
         is_running: running.contains(&id),
         catalog_game_id: row.get(9)?,
         installed_version: row.get(10)?,
+        is_demo: row.get(11)?,
     })
 }
 
@@ -33,7 +34,7 @@ const GAME_SELECT: &str = "
     SELECT g.id, g.name, g.exe_path, g.cover_path, g.description, g.total_playtime_seconds,
            g.created_at, g.size_on_disk_bytes,
            (SELECT MAX(started_at) FROM play_sessions ps WHERE ps.game_id = g.id) AS last_played_at,
-           g.catalog_game_id, g.installed_version
+           g.catalog_game_id, g.installed_version, g.is_demo
     FROM games g
 ";
 
@@ -69,7 +70,7 @@ pub fn add_game(state: State<AppState>, new_game: NewGame) -> Result<Game, Strin
         .size_on_disk_bytes
         .unwrap_or_else(|| compute_size_on_disk(&new_game.exe_path));
     conn.execute(
-        "INSERT INTO games (name, exe_path, cover_path, description, size_on_disk_bytes, steam_install_dir, catalog_game_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO games (name, exe_path, cover_path, description, size_on_disk_bytes, steam_install_dir, catalog_game_id, is_demo) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             new_game.name,
             new_game.exe_path,
@@ -77,7 +78,8 @@ pub fn add_game(state: State<AppState>, new_game: NewGame) -> Result<Game, Strin
             new_game.description,
             size_on_disk_bytes,
             new_game.steam_install_dir,
-            new_game.catalog_game_id
+            new_game.catalog_game_id,
+            new_game.is_demo
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -417,15 +419,21 @@ pub fn launch_game(app: AppHandle, state: State<AppState>, id: i64) -> Result<()
         .map_err(|e| e.to_string())?
     };
 
-    let catalog_game_id: Option<i64> = {
+    // A demo never reports progress upstream — no cloud-save sync, no
+    // "currently playing" status, no achievement session, no playtime
+    // heartbeat. Shadowing `catalog_game_id` with `None` here means every
+    // reporting call below this point is automatically a no-op for a demo
+    // without threading a second variable through the whole function.
+    let (catalog_game_id, is_demo): (Option<i64>, bool) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         conn.query_row(
-            "SELECT catalog_game_id FROM games WHERE id = ?1",
+            "SELECT catalog_game_id, is_demo FROM games WHERE id = ?1",
             params![id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|e| e.to_string())?
     };
+    let catalog_game_id = if is_demo { None } else { catalog_game_id };
     try_sync_cloud_save_down(&state.auth_token, catalog_game_id);
     set_remote_playing_status(&state.auth_token, catalog_game_id);
 
@@ -1176,9 +1184,10 @@ struct RemoteManifest {
     files: Vec<RemoteManifestFile>,
 }
 
-fn fetch_manifest(catalog_game_id: i64) -> Result<RemoteManifest, String> {
+fn fetch_manifest(catalog_game_id: i64, is_demo: bool) -> Result<RemoteManifest, String> {
+    let query = if is_demo { "?demo=true" } else { "" };
     ureq::get(&format!(
-        "{STORE_API_BASE}/api/games/{catalog_game_id}/manifest"
+        "{STORE_API_BASE}/api/games/{catalog_game_id}/manifest{query}"
     ))
     .call()
     .map_err(|e| format!("Spiel-Infos konnten nicht geladen werden: {e}"))?
@@ -1416,12 +1425,12 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
         id,
     };
 
-    let (catalog_game_id, current_exe_path): (Option<i64>, String) = {
+    let (catalog_game_id, current_exe_path, is_demo): (Option<i64>, String, bool) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         conn.query_row(
-            "SELECT catalog_game_id, exe_path FROM games WHERE id = ?1",
+            "SELECT catalog_game_id, exe_path, is_demo FROM games WHERE id = ?1",
             params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .map_err(|e| e.to_string())?
     };
@@ -1429,9 +1438,14 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
         catalog_game_id.ok_or("Dieses Spiel ist nicht mit dem Store verknüpft")?;
     let is_fresh_install = current_exe_path.starts_with("store://");
 
-    let manifest = fetch_manifest(catalog_game_id)?;
+    let manifest = fetch_manifest(catalog_game_id, is_demo)?;
     if manifest.files.is_empty() {
-        return Err("Für dieses Spiel wurde noch keine Datei vom Publisher hochgeladen".into());
+        let message = if is_demo {
+            "Für dieses Spiel wurde noch keine Demo vom Publisher hochgeladen"
+        } else {
+            "Für dieses Spiel wurde noch keine Datei vom Publisher hochgeladen"
+        };
+        return Err(message.into());
     }
 
     let (install_root, local_hashes) = {
@@ -1548,7 +1562,12 @@ fn install_catalog_game_blocking(app: AppHandle, state: AppState, id: i64) -> Re
         ));
     }
 
-    report_install_event(&state.auth_token, Some(catalog_game_id), "install");
+    // Demo installs aren't reported — the publisher install/uninstall
+    // counters track the real build, and there's no separate event type for
+    // "installed the demo" without conflating the two metrics.
+    if !is_demo {
+        report_install_event(&state.auth_token, Some(catalog_game_id), "install");
+    }
 
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let running = state.running.lock().map_err(|e| e.to_string())?;
@@ -1573,12 +1592,17 @@ pub async fn install_catalog_game(
 }
 
 fn check_for_update_blocking(state: AppState, id: i64) -> Result<Option<UpdateAvailable>, String> {
-    let (catalog_game_id, installed_version, exe_path): (Option<i64>, Option<String>, String) = {
+    let (catalog_game_id, installed_version, exe_path, is_demo): (
+        Option<i64>,
+        Option<String>,
+        String,
+        bool,
+    ) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         conn.query_row(
-            "SELECT catalog_game_id, installed_version, exe_path FROM games WHERE id = ?1",
+            "SELECT catalog_game_id, installed_version, exe_path, is_demo FROM games WHERE id = ?1",
             params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .map_err(|e| e.to_string())?
     };
@@ -1590,7 +1614,7 @@ fn check_for_update_blocking(state: AppState, id: i64) -> Result<Option<UpdateAv
         return Ok(None);
     }
 
-    let manifest = fetch_manifest(catalog_game_id)?;
+    let manifest = fetch_manifest(catalog_game_id, is_demo)?;
 
     let local_hashes = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;

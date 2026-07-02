@@ -94,5 +94,20 @@ pub fn init(app_data_dir: &PathBuf) -> Connection {
             .expect("failed to migrate games table");
     }
 
+    // Marks a library row as a demo build of `catalog_game_id` rather than
+    // the full game — lets a demo and a later real purchase coexist as
+    // separate rows instead of fighting over the same one.
+    let has_is_demo_column: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('games') WHERE name = 'is_demo'")
+        .and_then(|mut stmt| stmt.exists([]))
+        .unwrap_or(false);
+    if !has_is_demo_column {
+        conn.execute(
+            "ALTER TABLE games ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .expect("failed to migrate games table");
+    }
+
     conn
 }

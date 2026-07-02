@@ -11,6 +11,7 @@ export interface Game {
   is_running: boolean;
   catalog_game_id: number | null;
   installed_version: string | null;
+  is_demo: boolean;
 }
 
 export interface UpdateAvailable {
@@ -28,6 +29,7 @@ export interface NewGame {
   size_on_disk_bytes?: number | null;
   steam_install_dir?: string | null;
   catalog_game_id?: number | null;
+  is_demo?: boolean;
 }
 
 export interface UpdateGame {
@@ -76,6 +78,9 @@ export interface StoreUser {
   wallet_balance_cents: number;
   is_banned: boolean;
   language: "de" | "en";
+  is_developer: boolean;
+  developer_name: string | null;
+  developer_bio: string | null;
 }
 
 export interface ReportedUserSummary {
@@ -197,6 +202,10 @@ export interface CatalogGame {
   content_warnings: string | null;
   is_early_access: boolean;
   early_access_note: string | null;
+  demo_file_url: string | null;
+  demo_file_size_bytes: number | null;
+  demo_version: string | null;
+  is_beta: boolean;
 }
 
 export interface UpdateCatalogGame {
@@ -216,6 +225,7 @@ export interface UpdateCatalogGame {
   content_warnings: string | null;
   is_early_access: boolean;
   early_access_note: string | null;
+  is_beta: boolean;
 }
 
 export interface PublisherGameStats {
@@ -279,6 +289,7 @@ export interface NewCatalogGame {
   content_warnings: string | null;
   is_early_access: boolean;
   early_access_note: string | null;
+  is_beta: boolean;
 }
 
 export interface GameScreenshot {

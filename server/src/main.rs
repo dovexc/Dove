@@ -245,6 +245,7 @@ async fn main() {
         )
         .route("/api/me/export", get(handlers::export_my_data))
         .route("/api/me/badge", axum::routing::patch(handlers::set_equipped_badge))
+        .route("/api/me/become-developer", post(handlers::become_developer))
         .route("/api/users/:id/badges", get(handlers::list_user_badges))
         .route("/api/me/achievements", get(handlers::list_my_unlocked_achievements))
         .route(

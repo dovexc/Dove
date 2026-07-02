@@ -40,6 +40,7 @@ export function PublishGamePage({ onClose }: Props) {
   const error = useCatalogStore((s) => s.error);
   const clearError = useCatalogStore((s) => s.clearError);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const demoFileInputRef = useRef<HTMLInputElement>(null);
 
   const [title, setTitle] = useState("");
   const [shortDescription, setShortDescription] = useState("");
@@ -54,9 +55,12 @@ export function PublishGamePage({ onClose }: Props) {
   const [contentWarnings, setContentWarnings] = useState<Set<string>>(new Set());
   const [isEarlyAccess, setIsEarlyAccess] = useState(false);
   const [earlyAccessNote, setEarlyAccessNote] = useState("");
+  const [isBeta, setIsBeta] = useState(false);
   const [price, setPrice] = useState("0.00");
   const [buildVersion, setBuildVersion] = useState("1.0.0");
   const [buildFile, setBuildFile] = useState<File | null>(null);
+  const [demoVersion, setDemoVersion] = useState("1.0.0");
+  const [demoFile, setDemoFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
@@ -94,10 +98,14 @@ export function PublishGamePage({ onClose }: Props) {
         content_warnings: contentWarnings.size > 0 ? Array.from(contentWarnings).join(",") : null,
         is_early_access: isEarlyAccess,
         early_access_note: isEarlyAccess ? earlyAccessNote.trim() || null : null,
+        is_beta: isBeta,
       });
       if (!created) return;
       if (buildFile) {
         await uploadGameFile(created.id, buildFile, buildVersion.trim() || "1.0.0");
+      }
+      if (demoFile) {
+        await uploadGameFile(created.id, demoFile, demoVersion.trim() || "1.0.0", true);
       }
       onClose();
     } finally {
@@ -280,6 +288,15 @@ export function PublishGamePage({ onClose }: Props) {
               </label>
             )}
           </div>
+          <label className="flex items-center gap-2 rounded border border-zinc-800 p-3 text-sm font-semibold text-zinc-200">
+            <input
+              type="checkbox"
+              checked={isBeta}
+              onChange={(e) => setIsBeta(e.target.checked)}
+            />
+            {t("pub_beta_label")}
+            <span className="font-normal text-zinc-500">— {t("pub_beta_hint")}</span>
+          </label>
         </section>
 
         <section className="flex flex-col gap-4">
@@ -333,6 +350,45 @@ export function PublishGamePage({ onClose }: Props) {
               accept=".zip"
               className="hidden"
               onChange={(e) => setBuildFile(e.target.files?.[0] ?? null)}
+            />
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-4">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-sky-400">
+            {t("pub_section_demo")}
+          </h2>
+          <span className="-mt-2 text-xs text-zinc-500">{t("pub_demo_hint")}</span>
+          <label className="flex flex-col gap-1 text-sm text-zinc-300">
+            {t("pub_demo_version_label")}
+            <input
+              value={demoVersion}
+              onChange={(e) => setDemoVersion(e.target.value)}
+              className="w-40 rounded bg-zinc-800 px-3 py-2 text-zinc-100 outline-none ring-1 ring-zinc-700 focus:ring-sky-500"
+            />
+          </label>
+          <div className="flex flex-col gap-1 text-sm text-zinc-300">
+            {t("pub_demo_file_label")}
+            <div className="mt-1 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => demoFileInputRef.current?.click()}
+                className="rounded bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
+              >
+                {t("pub_build_choose_file")}
+              </button>
+              {demoFile && (
+                <span className="text-xs text-zinc-400">
+                  {t("pub_build_file_selected")}: {demoFile.name}
+                </span>
+              )}
+            </div>
+            <input
+              ref={demoFileInputRef}
+              type="file"
+              accept=".zip"
+              className="hidden"
+              onChange={(e) => setDemoFile(e.target.files?.[0] ?? null)}
             />
           </div>
         </section>

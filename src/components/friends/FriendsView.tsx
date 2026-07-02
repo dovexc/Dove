@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useFriendsStore } from "../../friendsStore";
 import { API_BASE } from "../../authStore";
+import { ChatIcon, SearchIcon } from "../icons";
 import { PublicProfileView, type FriendStatus } from "../profile/PublicProfileView";
 import { DirectMessageView } from "./DirectMessageView";
 import { useT } from "../../translations";
@@ -128,8 +129,9 @@ function FriendCard({
             onChat();
           }}
           title={t("fr_chat")}
-          className="shrink-0 rounded-[7px] border border-white/10 bg-white/5 px-3.5 py-2 text-[13px] font-bold text-zinc-300 hover:bg-white/10 hover:text-white"
+          className="flex shrink-0 items-center gap-1.5 rounded-[7px] border border-white/10 bg-white/5 px-3.5 py-2 text-[13px] font-bold text-zinc-300 hover:bg-white/10 hover:text-white"
         >
+          <ChatIcon size={14} />
           {t("fr_chat_label")}
         </button>
       )}
@@ -278,7 +280,7 @@ export function FriendsView({ onClose }: Props) {
           <div className="flex flex-col gap-7">
             <div className="flex gap-3">
               <div className="flex h-[50px] max-w-[560px] flex-1 items-center gap-3 rounded-lg border border-white/[0.08] bg-[#10171f] px-4">
-                <span className="text-[#5b6b7a]">🔍</span>
+                <span className="text-[#5b6b7a]"><SearchIcon size={16} /></span>
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}

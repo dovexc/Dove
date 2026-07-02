@@ -5,6 +5,7 @@ import { useFriendsStore } from "../../friendsStore";
 import { useLibraryStore } from "../../store";
 import { formatPlaytime } from "../../utils";
 import { useT } from "../../translations";
+import { BadgeIcon, badgeColor, PeopleIcon } from "../icons";
 import { AchievementTile } from "./AchievementTile";
 import { RecentlyPlayedList } from "./RecentlyPlayedList";
 
@@ -243,9 +244,9 @@ export function ProfilePage({ onOpenFriends }: Props) {
                 {user.equipped_badge && (
                   <span
                     title={user.equipped_badge.description}
-                    className="flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 text-[13px] font-bold text-amber-300"
+                    className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[13px] font-bold ${badgeColor(user.equipped_badge.key).border} ${badgeColor(user.equipped_badge.key).bg} ${badgeColor(user.equipped_badge.key).text}`}
                   >
-                    <span>{user.equipped_badge.icon}</span>
+                    <BadgeIcon badgeKey={user.equipped_badge.key} size={14} />
                     {user.equipped_badge.label}
                   </span>
                 )}
@@ -314,22 +315,26 @@ export function ProfilePage({ onOpenFriends }: Props) {
                     >
                       {t("profile_no_badge")}
                     </button>
-                    {badges.map((b) => (
-                      <button
-                        key={b.key}
-                        onClick={() => setEquippedBadge(b.key)}
-                        disabled={loading}
-                        title={b.description}
-                        className={`flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-bold disabled:opacity-50 ${
-                          user.equipped_badge?.key === b.key
-                            ? "border-amber-400/50 bg-amber-500/15 text-amber-300"
-                            : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
-                        }`}
-                      >
-                        <span>{b.icon}</span>
-                        {b.label}
-                      </button>
-                    ))}
+                    {badges.map((b) => {
+                      const colors = badgeColor(b.key);
+                      const isEquipped = user.equipped_badge?.key === b.key;
+                      return (
+                        <button
+                          key={b.key}
+                          onClick={() => setEquippedBadge(b.key)}
+                          disabled={loading}
+                          title={b.description}
+                          className={`flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-bold disabled:opacity-50 ${
+                            isEquipped
+                              ? `${colors.selectedBorder} ${colors.selectedBg} ${colors.text}`
+                              : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10"
+                          }`}
+                        >
+                          <BadgeIcon badgeKey={b.key} size={14} />
+                          {b.label}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -490,8 +495,8 @@ export function ProfilePage({ onOpenFriends }: Props) {
                 <p className="text-sm text-zinc-500">{t("fr_loading")}</p>
               ) : friends.length === 0 ? (
                 <div className="rounded-[11px] border border-white/[0.06] bg-gradient-to-b from-[#141d27] to-[#111923] px-[22px] py-[34px] text-center">
-                  <div className="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-[14px] bg-white/[0.04] text-2xl text-[#3e4a57]">
-                    👥
+                  <div className="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-[14px] bg-white/[0.04] text-[#3e4a57]">
+                    <PeopleIcon size={22} />
                   </div>
                   <div className="mb-4 text-sm text-[#7b8794]">{t("profile_no_friends")}</div>
                   <button

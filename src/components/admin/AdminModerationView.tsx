@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useCatalogStore } from "../../catalogStore";
 import { API_BASE, getAuthHeader, useAuthStore } from "../../authStore";
 import { CONTENT_WARNING_OPTIONS } from "../store/PublishGamePage";
+import { WarningIcon } from "../icons";
+import { PlayIcon } from "../downloads/icons";
 import { useT } from "../../translations";
 import type { TranslationKey } from "../../translations";
 import type { PublicProfile, StoreUser, UnbanRequest, UserReport } from "../../types";
@@ -491,6 +493,11 @@ export function AdminModerationView({ onClose }: Props) {
                               {t("pub_early_access_badge")}
                             </span>
                           )}
+                          {game.is_beta && (
+                            <span className="rounded bg-sky-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+                              {t("pub_beta_badge")}
+                            </span>
+                          )}
                           <span
                             className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
                               game.file_url
@@ -534,9 +541,10 @@ export function AdminModerationView({ onClose }: Props) {
                           return (
                             <span
                               key={key}
-                              className="rounded-full border border-amber-400/40 bg-amber-900/30 px-2.5 py-1 text-[11px] font-semibold text-amber-300"
+                              className="flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-900/30 px-2.5 py-1 text-[11px] font-semibold text-amber-300"
                             >
-                              ⚠ {opt ? t(opt.label) : key.trim()}
+                              <WarningIcon size={11} />
+                              {opt ? t(opt.label) : key.trim()}
                             </span>
                           );
                         })}
@@ -547,9 +555,9 @@ export function AdminModerationView({ onClose }: Props) {
                         href={game.trailer_url}
                         target="_blank"
                         rel="noreferrer"
-                        className="self-start text-xs text-sky-400 hover:underline"
+                        className="flex items-center gap-1.5 self-start text-xs text-sky-400 hover:underline"
                       >
-                        ▶ {t("pub_watch_trailer")}
+                        <PlayIcon /> {t("pub_watch_trailer")}
                       </a>
                     )}
                     <div className="flex justify-end gap-2 border-t border-zinc-800 pt-3">

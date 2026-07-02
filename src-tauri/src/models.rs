@@ -14,6 +14,7 @@ pub struct Game {
     pub is_running: bool,
     pub catalog_game_id: Option<i64>,
     pub installed_version: Option<String>,
+    pub is_demo: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -33,6 +34,8 @@ pub struct NewGame {
     pub size_on_disk_bytes: Option<i64>,
     pub steam_install_dir: Option<String>,
     pub catalog_game_id: Option<i64>,
+    #[serde(default)]
+    pub is_demo: bool,
 }
 
 #[derive(Debug, Deserialize)]

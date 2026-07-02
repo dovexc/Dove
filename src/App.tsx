@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLibraryStore, registerGameEventListeners } from "./store";
 import { useAuthStore } from "./authStore";
+import { CartIcon } from "./components/icons";
 import { GameCard } from "./components/GameCard";
 import { GameDetail } from "./components/GameDetail";
 import { AddGameDialog } from "./components/AddGameDialog";
@@ -253,9 +254,9 @@ function App() {
             <button
               onClick={openCart}
               title={t("cart_open_title")}
-              className="relative flex h-9 w-9 items-center justify-center rounded bg-zinc-800 text-base hover:bg-zinc-700"
+              className="relative flex h-9 w-9 items-center justify-center rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
             >
-              🛒
+              <CartIcon size={18} />
               <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-sky-600 px-1 text-[10px] font-bold text-white">
                 {cartItems.length}
               </span>

@@ -50,13 +50,16 @@ fn row_to_user(row: &PgRow) -> Result<User, sqlx::Error> {
         wallet_balance_cents: row.try_get(11)?,
         is_banned: row.try_get(12)?,
         language: row.try_get(13)?,
+        is_developer: row.try_get(14)?,
+        developer_name: row.try_get(15)?,
+        developer_bio: row.try_get(16)?,
     })
 }
 
 const USER_COLUMNS: &str = "id, email, display_name, avatar_url, background_url, bio, \
     created_at::TEXT, is_profile_hidden, is_admin, users.equipped_badge, \
     (SELECT earned_at::TEXT FROM user_badges WHERE user_id = users.id AND badge_key = users.equipped_badge), \
-    wallet_balance_cents, is_banned, language";
+    wallet_balance_cents, is_banned, language, is_developer, developer_name, developer_bio";
 
 async fn fetch_user(pool: &PgPool, user_id: i64) -> Result<User, sqlx::Error> {
     let row = sqlx::query(&format!("SELECT {USER_COLUMNS} FROM users WHERE id = $1"))
@@ -312,6 +315,39 @@ pub async fn set_equipped_badge(
         .execute(&state.db)
         .await
         .map_err(internal_error)?;
+
+    fetch_user(&state.db, user_id).await.map(Json).map_err(internal_error)
+}
+
+/// Self-serve developer signup — instant activation, no admin approval (see
+/// `is_developer` doc comment on `User`). Called once, the first time a
+/// user tries to publish a game; safe to call again later to update the
+/// developer name/bio since it's a plain upsert-by-`UPDATE`.
+pub async fn become_developer(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Json(req): Json<crate::models::BecomeDeveloperRequest>,
+) -> Result<Json<User>, ApiError> {
+    let name = req.developer_name.trim();
+    if name.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Entwicklername darf nicht leer sein".to_string(),
+        ));
+    }
+    let bio = req.developer_bio.as_deref().map(str::trim).filter(|s| !s.is_empty());
+
+    sqlx::query(
+        "UPDATE users SET is_developer = TRUE, developer_name = $1, developer_bio = $2 WHERE id = $3",
+    )
+    .bind(name)
+    .bind(bio)
+    .bind(user_id)
+    .execute(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    award_badge(&state.db, user_id, "developer").await;
 
     fetch_user(&state.db, user_id).await.map(Json).map_err(internal_error)
 }
@@ -987,6 +1023,10 @@ fn row_to_game(row: &PgRow) -> Result<CatalogGame, sqlx::Error> {
         content_warnings: row.try_get(22)?,
         is_early_access: row.try_get(23)?,
         early_access_note: row.try_get(24)?,
+        demo_file_url: row.try_get(25)?,
+        demo_file_size_bytes: row.try_get(26)?,
+        demo_version: row.try_get(27)?,
+        is_beta: row.try_get(28)?,
     })
 }
 
@@ -1002,7 +1042,9 @@ const GAME_COLUMNS: &str = "catalog_games.id, catalog_games.publisher_user_id, c
     CASE WHEN catalog_games.sale_price_cents IS NOT NULL AND catalog_games.sale_ends_at > now() \
         THEN catalog_games.sale_ends_at::TEXT ELSE NULL END, \
     catalog_games.short_description, catalog_games.trailer_url, catalog_games.supported_languages, \
-    catalog_games.content_warnings, catalog_games.is_early_access, catalog_games.early_access_note";
+    catalog_games.content_warnings, catalog_games.is_early_access, catalog_games.early_access_note, \
+    catalog_games.demo_file_url, catalog_games.demo_file_size_bytes, catalog_games.demo_version, \
+    catalog_games.is_beta";
 
 const GAME_SCREENSHOT_COLUMNS: &str = "id, catalog_game_id, image_url, created_at::TEXT";
 
@@ -2291,11 +2333,26 @@ pub async fn create_game(
     AuthUser(user_id): AuthUser,
     Json(req): Json<NewCatalogGame>,
 ) -> Result<Json<CatalogGame>, ApiError> {
+    // Mirrors the frontend's pre-publish developer-signup gate — enforced
+    // here too so it can't be bypassed by calling the API directly.
+    let is_developer: bool = sqlx::query_scalar("SELECT is_developer FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(internal_error)?;
+    if !is_developer {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Werde zuerst Entwickler, um Spiele zu veröffentlichen".to_string(),
+        ));
+    }
+
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO catalog_games (publisher_user_id, title, short_description, description, \
             cover_url, tags, min_specs, recommended_specs, save_path_hint, price_cents, \
-            trailer_url, supported_languages, content_warnings, is_early_access, early_access_note) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id",
+            trailer_url, supported_languages, content_warnings, is_early_access, early_access_note, \
+            is_beta) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id",
     )
     .bind(user_id)
     .bind(&req.title)
@@ -2312,6 +2369,7 @@ pub async fn create_game(
     .bind(&req.content_warnings)
     .bind(req.is_early_access)
     .bind(&req.early_access_note)
+    .bind(req.is_beta)
     .fetch_one(&state.db)
     .await
     .map_err(internal_error)?;
@@ -2347,8 +2405,8 @@ pub async fn update_game(
             min_specs = $5, recommended_specs = $6, save_path_hint = $7, price_cents = $8, \
             sale_price_cents = $9, sale_ends_at = $10::timestamptz, short_description = $11, \
             trailer_url = $12, supported_languages = $13, content_warnings = $14, \
-            is_early_access = $15, early_access_note = $16 \
-         WHERE id = $17",
+            is_early_access = $15, early_access_note = $16, is_beta = $17 \
+         WHERE id = $18",
     )
     .bind(&req.title)
     .bind(&req.description)
@@ -2366,6 +2424,7 @@ pub async fn update_game(
     .bind(&req.content_warnings)
     .bind(req.is_early_access)
     .bind(&req.early_access_note)
+    .bind(req.is_beta)
     .bind(game_id)
     .execute(&state.db)
     .await
@@ -3147,6 +3206,8 @@ pub async fn remove_from_wishlist(
 #[derive(serde::Deserialize)]
 pub struct UploadQuery {
     version: Option<String>,
+    #[serde(default)]
+    demo: bool,
 }
 
 fn format_bytes(bytes: i64) -> String {
@@ -3183,6 +3244,15 @@ pub async fn upload_game_file(
     }
 
     let new_version = query.version.unwrap_or_else(|| "1.0.0".to_string());
+    let is_demo = query.demo;
+    // Demo objects live under their own `demo/` prefix so a full-build
+    // upload and a demo upload never collide on the same R2 keys, and each
+    // tracks its own row in `game_file_manifest` via `is_demo`.
+    let key_prefix = if is_demo {
+        format!("games/{game_id}/demo")
+    } else {
+        format!("games/{game_id}")
+    };
     let bad_request = |msg: &str| (StatusCode::BAD_REQUEST, msg.to_string());
 
     // Read the uncompressed size of every entry from the ZIP's central
@@ -3243,11 +3313,19 @@ pub async fn upload_game_file(
             .fetch_one(&state.db)
             .await
             .map_err(internal_error)?;
+        // Quota covers both the main build and any demo across every game
+        // this publisher owns — the column this exact upload is about to
+        // replace (main build vs. demo, on this exact game) is excluded
+        // here since `precomputed_total` accounts for its new size instead.
         let usage_excluding_this_game: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(file_size_bytes), 0)::BIGINT FROM catalog_games WHERE publisher_user_id = $1 AND id != $2",
+            "SELECT COALESCE(SUM( \
+                CASE WHEN id = $2 AND NOT $3 THEN 0 ELSE COALESCE(file_size_bytes, 0) END + \
+                CASE WHEN id = $2 AND $3 THEN 0 ELSE COALESCE(demo_file_size_bytes, 0) END \
+            ), 0)::BIGINT FROM catalog_games WHERE publisher_user_id = $1",
         )
         .bind(user_id)
         .bind(game_id)
+        .bind(is_demo)
         .fetch_one(&state.db)
         .await
         .map_err(internal_error)?;
@@ -3265,13 +3343,16 @@ pub async fn upload_game_file(
         }
     }
 
-    // The manifest only ever tracks one (the current) version per game — a
-    // new upload fully replaces it, so the old rows tell us exactly which R2
-    // objects become orphaned once this upload succeeds.
+    // The manifest only ever tracks one (the current) version per
+    // game/is_demo pair — a new upload fully replaces it, so the old rows
+    // tell us exactly which R2 objects become orphaned once this upload
+    // succeeds. Filtering by `is_demo` keeps a demo upload from touching
+    // the full build's manifest rows (and vice versa).
     let old_manifest: Vec<(String, String)> = sqlx::query_as(
-        "SELECT version, relative_path FROM game_file_manifest WHERE catalog_game_id = $1",
+        "SELECT version, relative_path FROM game_file_manifest WHERE catalog_game_id = $1 AND is_demo = $2",
     )
     .bind(game_id)
+    .bind(is_demo)
     .fetch_all(&state.db)
     .await
     .map_err(internal_error)?;
@@ -3318,33 +3399,38 @@ pub async fn upload_game_file(
     let mut manifest = Vec::new();
     let mut total_size: i64 = 0;
     for (relative_path, sha256, size_bytes, contents) in extracted {
-        let key = format!("games/{game_id}/{new_version}/{relative_path}");
+        let key = format!("{key_prefix}/{new_version}/{relative_path}");
         state.storage.put(&key, contents, "application/octet-stream").await?;
         total_size += size_bytes;
         manifest.push((relative_path, sha256, size_bytes));
     }
 
-    sqlx::query("DELETE FROM game_file_manifest WHERE catalog_game_id = $1")
+    sqlx::query("DELETE FROM game_file_manifest WHERE catalog_game_id = $1 AND is_demo = $2")
         .bind(game_id)
+        .bind(is_demo)
         .execute(&state.db)
         .await
         .map_err(internal_error)?;
     for (relative_path, sha256, size_bytes) in &manifest {
         sqlx::query(
-            "INSERT INTO game_file_manifest (catalog_game_id, version, relative_path, sha256, size_bytes) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO game_file_manifest (catalog_game_id, version, relative_path, sha256, size_bytes, is_demo) VALUES ($1, $2, $3, $4, $5, $6)",
         )
         .bind(game_id)
         .bind(&new_version)
         .bind(relative_path)
         .bind(sha256)
         .bind(size_bytes)
+        .bind(is_demo)
         .execute(&state.db)
         .await
         .map_err(internal_error)?;
     }
 
-    let file_url = state.storage.public_url(&format!("games/{game_id}/{new_version}/"));
-    sqlx::query("UPDATE catalog_games SET file_url = $1, file_size_bytes = $2, version = $3 WHERE id = $4")
+    let file_url = state.storage.public_url(&format!("{key_prefix}/{new_version}/"));
+    if is_demo {
+        sqlx::query(
+            "UPDATE catalog_games SET demo_file_url = $1, demo_file_size_bytes = $2, demo_version = $3 WHERE id = $4",
+        )
         .bind(&file_url)
         .bind(total_size)
         .bind(&new_version)
@@ -3352,6 +3438,16 @@ pub async fn upload_game_file(
         .execute(&state.db)
         .await
         .map_err(internal_error)?;
+    } else {
+        sqlx::query("UPDATE catalog_games SET file_url = $1, file_size_bytes = $2, version = $3 WHERE id = $4")
+            .bind(&file_url)
+            .bind(total_size)
+            .bind(&new_version)
+            .bind(game_id)
+            .execute(&state.db)
+            .await
+            .map_err(internal_error)?;
+    }
 
     // Remove the previous version's objects now that the new version is
     // safely stored, so replacing/updating a build doesn't leak storage.
@@ -3363,7 +3459,7 @@ pub async fn upload_game_file(
         if old_version != new_version || !new_paths.contains(relative_path.as_str()) {
             state
                 .storage
-                .delete(&format!("games/{game_id}/{old_version}/{relative_path}"))
+                .delete(&format!("{key_prefix}/{old_version}/{relative_path}"))
                 .await;
         }
     }
@@ -3371,21 +3467,40 @@ pub async fn upload_game_file(
     fetch_game(&state.db, game_id).await.map(Json).map_err(internal_error)
 }
 
+#[derive(serde::Deserialize)]
+pub struct ManifestQuery {
+    #[serde(default)]
+    demo: bool,
+}
+
 pub async fn get_game_manifest(
     State(state): State<AppState>,
     Path(game_id): Path<i64>,
+    axum::extract::Query(query): axum::extract::Query<ManifestQuery>,
 ) -> Result<Json<crate::models::GameManifest>, ApiError> {
-    let (version, file_url): (String, Option<String>) =
-        sqlx::query_as("SELECT version, file_url FROM catalog_games WHERE id = $1")
+    let not_found = || (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string());
+    let (version, file_url): (Option<String>, Option<String>) = if query.demo {
+        sqlx::query_as("SELECT demo_version, demo_file_url FROM catalog_games WHERE id = $1")
             .bind(game_id)
             .fetch_one(&state.db)
             .await
-            .map_err(|_| (StatusCode::NOT_FOUND, "Spiel nicht gefunden".to_string()))?;
+            .map_err(|_| not_found())?
+    } else {
+        let (version, file_url): (String, Option<String>) =
+            sqlx::query_as("SELECT version, file_url FROM catalog_games WHERE id = $1")
+                .bind(game_id)
+                .fetch_one(&state.db)
+                .await
+                .map_err(|_| not_found())?;
+        (Some(version), file_url)
+    };
+    let version = version.ok_or_else(|| (StatusCode::NOT_FOUND, "Keine Demo verfügbar".to_string()))?;
 
     let rows: Vec<(String, String, i64)> = sqlx::query_as(
-        "SELECT relative_path, sha256, size_bytes FROM game_file_manifest WHERE catalog_game_id = $1",
+        "SELECT relative_path, sha256, size_bytes FROM game_file_manifest WHERE catalog_game_id = $1 AND is_demo = $2",
     )
     .bind(game_id)
+    .bind(query.demo)
     .fetch_all(&state.db)
     .await
     .map_err(internal_error)?;

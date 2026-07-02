@@ -4,8 +4,10 @@ import { useCartStore } from "../../cartStore";
 import { useCatalogStore } from "../../catalogStore";
 import { formatSize } from "../../utils";
 import type { CatalogGame } from "../../types";
+import { SearchIcon, TagIcon } from "../icons";
 import { GameDetailPage } from "./GameDetailPage";
 import { PriceTag, SaleBadge } from "./PriceTag";
+import { DeveloperSignupDialog } from "./DeveloperSignupDialog";
 import { PublishGamePage } from "./PublishGamePage";
 import { Stars } from "./Stars";
 import { useT } from "../../translations";
@@ -157,10 +159,13 @@ export function StoreView() {
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [uploadTargetId, setUploadTargetId] = useState<number | null>(null);
   const [uploadVersion, setUploadVersion] = useState<string | null>(null);
+  const [uploadTargetIsDemo, setUploadTargetIsDemo] = useState(false);
+  const [versionDialogIsDemo, setVersionDialogIsDemo] = useState(false);
   const [versionDialogGame, setVersionDialogGame] = useState<CatalogGame | null>(null);
   const [versionDraft, setVersionDraft] = useState("1.0.0");
 
   const [showPublishPage, setShowPublishPage] = useState(false);
+  const [showDeveloperSignup, setShowDeveloperSignup] = useState(false);
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(t("store_category_all"));
@@ -238,8 +243,9 @@ export function StoreView() {
     fetchRecommendations();
   }, [fetchRecommendations, token]);
 
-  function startUpload(game: CatalogGame) {
-    setVersionDraft(game.version || "1.0.0");
+  function startUpload(game: CatalogGame, isDemo = false) {
+    setVersionDraft((isDemo ? game.demo_version : game.version) || "1.0.0");
+    setVersionDialogIsDemo(isDemo);
     setVersionDialogGame(game);
   }
 
@@ -247,6 +253,7 @@ export function StoreView() {
     if (!versionDialogGame || !versionDraft.trim()) return;
     setUploadTargetId(versionDialogGame.id);
     setUploadVersion(versionDraft.trim());
+    setUploadTargetIsDemo(versionDialogIsDemo);
     setVersionDialogGame(null);
     uploadInputRef.current?.click();
   }
@@ -257,7 +264,7 @@ export function StoreView() {
     const version = uploadVersion;
     e.target.value = "";
     if (!file || gameId === null || !version) return;
-    await uploadGameFile(gameId, file, version);
+    await uploadGameFile(gameId, file, version, uploadTargetIsDemo);
   }
 
   function renderPurchaseControl(game: CatalogGame, owned: boolean, size: "sm" | "lg") {
@@ -330,7 +337,10 @@ export function StoreView() {
         </h2>
         {token && (
           <button
-            onClick={() => setShowPublishPage(true)}
+            onClick={() => {
+              if (authUser?.is_developer) setShowPublishPage(true);
+              else setShowDeveloperSignup(true);
+            }}
             className="rounded bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
           >
             {t("store_publish")}
@@ -530,7 +540,7 @@ export function StoreView() {
 
             <div className="flex flex-wrap gap-3">
               <div className="flex h-[46px] flex-1 min-w-[200px] items-center gap-3 rounded-lg border border-white/10 bg-[#10171f] px-4">
-                <span className="text-zinc-500">🔍</span>
+                <span className="text-zinc-500"><SearchIcon size={16} /></span>
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
@@ -556,7 +566,7 @@ export function StoreView() {
                   );
                 })}
                 <div className="flex h-[46px] w-[160px] items-center gap-2 rounded-lg border border-white/10 bg-[#10171f] px-3">
-                  <span className="text-zinc-500">🏷️</span>
+                  <span className="text-zinc-500"><TagIcon size={16} /></span>
                   <input
                     value={tagSearch}
                     onChange={(e) => setTagSearch(e.target.value)}
@@ -660,20 +670,32 @@ export function StoreView() {
                           {game.status === "approved" && renderPurchaseControl(game, owned, "sm")}
                         </div>
                         {isPublisher && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              startUpload(game);
-                            }}
-                            disabled={uploadingId === game.id}
-                            className="rounded bg-zinc-800 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
-                          >
-                            {uploadingId === game.id
-                              ? t("store_uploading")
-                              : game.file_url
-                                ? t("store_upload_new_version")
-                                : t("store_upload_file")}
-                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startUpload(game);
+                              }}
+                              disabled={uploadingId === game.id}
+                              className="rounded bg-zinc-800 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
+                            >
+                              {uploadingId === game.id
+                                ? t("store_uploading")
+                                : game.file_url
+                                  ? t("store_upload_new_version")
+                                  : t("store_upload_file")}
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startUpload(game, true);
+                              }}
+                              disabled={uploadingId === game.id}
+                              className="rounded bg-zinc-800 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-700 disabled:opacity-50"
+                            >
+                              {game.demo_file_url ? t("store_upload_new_demo_version") : t("store_upload_demo")}
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -694,6 +716,16 @@ export function StoreView() {
 
       {showPublishPage && <PublishGamePage onClose={() => setShowPublishPage(false)} />}
 
+      {showDeveloperSignup && (
+        <DeveloperSignupDialog
+          onClose={() => setShowDeveloperSignup(false)}
+          onSuccess={() => {
+            setShowDeveloperSignup(false);
+            setShowPublishPage(true);
+          }}
+        />
+      )}
+
       <input
         ref={uploadInputRef}
         type="file"
@@ -706,7 +738,9 @@ export function StoreView() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="flex w-[24rem] flex-col gap-4 rounded-lg bg-zinc-900 p-6 shadow-xl">
             <h2 className="text-lg font-bold text-zinc-100">
-              {t("store_version_dialog_title").replace("{title}", versionDialogGame.title)}
+              {t(
+                versionDialogIsDemo ? "store_demo_version_dialog_title" : "store_version_dialog_title"
+              ).replace("{title}", versionDialogGame.title)}
             </h2>
             {storageUsage && (
               <div className="text-xs text-zinc-500">

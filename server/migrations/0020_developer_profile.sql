@@ -1,0 +1,3 @@
+ALTER TABLE users ADD COLUMN is_developer BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN developer_name TEXT;
+ALTER TABLE users ADD COLUMN developer_bio TEXT;

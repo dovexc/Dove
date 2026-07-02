@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { API_BASE, getAuthHeader, useAuthStore } from "./authStore";
+import { useDownloadStore } from "./downloadStore";
 import { useLibraryStore } from "./store";
 import type {
   CatalogGame,
@@ -26,7 +27,9 @@ function placeholderExePath(catalogGameId: number): string {
 
 async function ensureInLocalLibrary(game: CatalogGame): Promise<void> {
   const libraryStore = useLibraryStore.getState();
-  const alreadyLinked = libraryStore.games.some((g) => g.catalog_game_id === game.id);
+  const alreadyLinked = libraryStore.games.some(
+    (g) => g.catalog_game_id === game.id && !g.is_demo
+  );
   if (alreadyLinked) return;
 
   await libraryStore.addGame({
@@ -36,6 +39,27 @@ async function ensureInLocalLibrary(game: CatalogGame): Promise<void> {
     description: game.description,
     size_on_disk_bytes: 0,
     catalog_game_id: game.id,
+  });
+}
+
+/// A demo gets its own local library row (kept separate from a possible
+/// later real purchase of the same `catalog_game_id`) so both can coexist
+/// and be downloaded/launched independently.
+async function ensureDemoInLocalLibrary(game: CatalogGame) {
+  const libraryStore = useLibraryStore.getState();
+  const existing = libraryStore.games.find(
+    (g) => g.catalog_game_id === game.id && g.is_demo
+  );
+  if (existing) return existing;
+
+  return libraryStore.addGame({
+    name: `${game.title} (Demo)`,
+    exe_path: placeholderExePath(game.id),
+    cover_path: game.cover_url,
+    description: game.description,
+    size_on_disk_bytes: 0,
+    catalog_game_id: game.id,
+    is_demo: true,
   });
 }
 
@@ -80,7 +104,8 @@ interface CatalogState {
   publishGame: (game: NewCatalogGame) => Promise<CatalogGame | null>;
   updateGame: (gameId: number, fields: UpdateCatalogGame) => Promise<void>;
   purchaseGame: (gameId: number) => Promise<void>;
-  uploadGameFile: (gameId: number, file: File, version: string) => Promise<void>;
+  downloadDemo: (game: CatalogGame) => Promise<void>;
+  uploadGameFile: (gameId: number, file: File, version: string, isDemo?: boolean) => Promise<void>;
   revokeOwnership: (gameId: number) => Promise<void>;
   fetchPendingGames: () => Promise<void>;
   approveGame: (gameId: number) => Promise<void>;
@@ -346,6 +371,17 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     }
   },
 
+  downloadDemo: async (game) => {
+    set({ error: null });
+    try {
+      const demoGame = await ensureDemoInLocalLibrary(game);
+      if (!demoGame) return;
+      useDownloadStore.getState().enqueue(demoGame.id, demoGame.name);
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
   fetchStorageUsage: async () => {
     const headers = getAuthHeader();
     if (!headers.Authorization) {
@@ -363,10 +399,10 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
     }
   },
 
-  uploadGameFile: async (gameId, file, version) => {
+  uploadGameFile: async (gameId, file, version, isDemo) => {
     set({ error: null, uploadingId: gameId });
     try {
-      const url = `${API_BASE}/api/games/${gameId}/upload?version=${encodeURIComponent(version)}`;
+      const url = `${API_BASE}/api/games/${gameId}/upload?version=${encodeURIComponent(version)}${isDemo ? "&demo=true" : ""}`;
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/octet-stream", ...getAuthHeader() },

@@ -17,7 +17,7 @@ interface LibraryState {
   contextMenu: { game: Game; x: number; y: number } | null;
   error: string | null;
   fetchGames: () => Promise<void>;
-  addGame: (game: NewGame) => Promise<void>;
+  addGame: (game: NewGame) => Promise<Game | null>;
   launchGame: (id: number) => Promise<void>;
   editGame: (id: number, game: UpdateGame) => Promise<void>;
   deleteGame: (id: number, deleteFiles: boolean) => Promise<void>;
@@ -69,11 +69,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   addGame: async (game) => {
     try {
-      await invoke<Game>("add_game", { newGame: game });
+      const created = await invoke<Game>("add_game", { newGame: game });
       await get().fetchGames();
       set({ isAddDialogOpen: false });
+      return created;
     } catch (e) {
       set({ error: String(e) });
+      return null;
     }
   },
 

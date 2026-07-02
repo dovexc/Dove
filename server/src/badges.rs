@@ -43,6 +43,12 @@ pub const BADGE_CATALOG: &[BadgeDef] = &[
         icon: "🎮",
     },
     BadgeDef {
+        key: "developer",
+        label: "Entwickler",
+        description: "Ein Entwickler-Profil erstellt",
+        icon: "🧑‍💻",
+    },
+    BadgeDef {
         key: "first_review",
         label: "Erster Eindruck",
         description: "Die erste Bewertung abgegeben",

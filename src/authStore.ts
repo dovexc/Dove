@@ -53,6 +53,7 @@ interface AuthState {
   changePassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
   fetchBadges: () => Promise<void>;
   setEquippedBadge: (badgeKey: string | null) => Promise<void>;
+  becomeDeveloper: (developerName: string, developerBio: string) => Promise<boolean>;
   fetchMyAchievements: () => Promise<void>;
   fetchMyProfile: () => Promise<void>;
   setAchievementShowcase: (achievementIds: number[]) => Promise<void>;
@@ -343,6 +344,32 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ user, loading: false });
     } catch (e) {
       set({ error: String(e), loading: false });
+    }
+  },
+
+  becomeDeveloper: async (developerName, developerBio) => {
+    const token = get().token;
+    if (!token) return false;
+    set({ loading: true, error: null });
+    try {
+      const response = await fetch(`${API_BASE}/api/me/become-developer`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          developer_name: developerName,
+          developer_bio: developerBio || null,
+        }),
+      });
+      if (!response.ok) throw new Error(await parseErrorMessage(response));
+      const user = await response.json();
+      set({ user, loading: false });
+      return true;
+    } catch (e) {
+      set({ error: String(e), loading: false });
+      return false;
     }
   },
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuthStore } from "../../authStore";
 import { useCatalogStore } from "../../catalogStore";
 import { useEventsStore } from "../../eventsStore";
+import { GamepadIcon, LockIcon, SearchIcon, TrophyIcon } from "../icons";
 import { EventDetailPage } from "./EventDetailPage";
 import { useT } from "../../translations";
 import type { TranslationKey } from "../../translations";
@@ -229,8 +230,8 @@ export function EventsPage() {
             <div className="relative h-[120px]" style={{ background: "linear-gradient(125deg,#2b5876,#1c3a5e)" }}>
               <div className="absolute inset-0 bg-gradient-to-b from-black/5 to-[#121a23]/70" />
               <div className="absolute bottom-3.5 left-5 flex items-center gap-2.5">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-black/[0.35] text-xl backdrop-blur-sm">
-                  🏆
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-black/[0.35] text-white backdrop-blur-sm">
+                  <TrophyIcon size={20} />
                 </div>
                 <span className="text-[22px] font-black tracking-tight text-white">
                   {t("evt_kind_tournament_title")}
@@ -249,8 +250,8 @@ export function EventsPage() {
             <div className="relative h-[120px]" style={{ background: "linear-gradient(125deg,#614385,#3a2151)" }}>
               <div className="absolute inset-0 bg-gradient-to-b from-black/5 to-[#121a23]/70" />
               <div className="absolute bottom-3.5 left-5 flex items-center gap-2.5">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-black/[0.35] text-xl backdrop-blur-sm">
-                  🎮
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-black/[0.35] text-white backdrop-blur-sm">
+                  <GamepadIcon size={20} />
                 </div>
                 <span className="text-[22px] font-black tracking-tight text-white">
                   {t("evt_kind_jam_title")}
@@ -586,7 +587,7 @@ export function EventsPage() {
       <div className="flex flex-col gap-4 rounded-[13px] border border-white/[0.06] bg-gradient-to-b from-[#141d27] to-[#111923] p-5">
         <div className="flex flex-wrap items-center gap-3.5">
           <div className="flex h-[46px] min-w-[260px] flex-1 items-center gap-2.5 rounded-lg border border-white/[0.08] bg-[#0d141c] px-4">
-            <span className="text-[#5b6b7a]">🔍</span>
+            <span className="text-[#5b6b7a]"><SearchIcon size={16} /></span>
             <input
               value={gameSearch}
               onChange={(e) => setGameSearch(e.target.value)}
@@ -753,7 +754,8 @@ export function EventsPage() {
                     <div className="flex flex-wrap items-center gap-1.5 text-[13px] text-[#8a97a5]">
                       <span>{gameName(event) || t("evt_hosted_by").replace("{name}", event.host_display_name)}</span>
                       {event.is_private && (
-                        <span className="rounded bg-amber-900/40 px-1.5 py-0.5 text-[11px] font-semibold text-amber-300">
+                        <span className="flex items-center gap-1 rounded bg-amber-900/40 px-1.5 py-0.5 text-[11px] font-semibold text-amber-300">
+                          <LockIcon size={11} />
                           {t("evt_private")}
                         </span>
                       )}

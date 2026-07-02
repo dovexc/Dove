@@ -1,3 +1,4 @@
+import { TrophyIcon } from "../icons";
 import type { ShowcasedAchievement } from "../../types";
 
 // Steam-style "rare achievement" cutoff — under 1% of a game's owners have it.
@@ -28,11 +29,11 @@ export function AchievementTile({ achievement, selected, onClick }: Props) {
         onClick ? "cursor-pointer hover:border-sky-400/40" : "cursor-default"
       }`}
     >
-      <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-zinc-800 text-xl">
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-zinc-800 text-zinc-300">
         {achievement.icon_url ? (
           <img src={achievement.icon_url} alt="" className="h-full w-full object-cover" />
         ) : (
-          "🏆"
+          <TrophyIcon size={22} />
         )}
       </div>
       <span className="line-clamp-1 w-full text-xs font-bold text-zinc-200">{achievement.title}</span>

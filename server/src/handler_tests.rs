@@ -31,6 +31,25 @@ async fn register_user(state: &AppState, email: &str, password: &str, name: &str
     .user
 }
 
+/// Registers a user and immediately runs them through the (self-serve,
+/// instant) developer signup — `create_game` requires `is_developer`, so
+/// any test that publishes a game needs this instead of plain
+/// `register_user`.
+async fn register_developer(state: &AppState, email: &str, password: &str, name: &str) -> User {
+    let user = register_user(state, email, password, name).await;
+    become_developer(
+        State(state.clone()),
+        AuthUser(user.id),
+        Json(BecomeDeveloperRequest {
+            developer_name: name.to_string(),
+            developer_bio: None,
+        }),
+    )
+    .await
+    .expect("become_developer should succeed")
+    .0
+}
+
 fn bearer_headers(state: &AppState, user_id: i64) -> HeaderMap {
     let token = create_token(user_id, &state.jwt_secret).expect("token");
     let mut headers = HeaderMap::new();
@@ -97,9 +116,70 @@ async fn admin_emails_grant_role_on_register_and_survive_relogin_without_relisti
 // ---- catalog moderation ----
 
 #[sqlx::test]
+async fn create_game_requires_developer_status_which_self_signup_grants(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let user = register_user(&state, "wannabe@test.de", "password123", "Wannabe").await;
+    assert!(!user.is_developer);
+
+    let new_game = || {
+        Json(NewCatalogGame {
+            title: "Some Game".to_string(),
+            ..Default::default()
+        })
+    };
+
+    let rejected = create_game(State(state.clone()), AuthUser(user.id), new_game()).await;
+    assert_eq!(rejected.unwrap_err().0, StatusCode::FORBIDDEN);
+
+    let developer = become_developer(
+        State(state.clone()),
+        AuthUser(user.id),
+        Json(BecomeDeveloperRequest {
+            developer_name: "Wannabe Studios".to_string(),
+            developer_bio: Some("  We make games.  ".to_string()),
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+    assert!(developer.is_developer);
+    assert_eq!(developer.developer_name.as_deref(), Some("Wannabe Studios"));
+    // Bio is trimmed.
+    assert_eq!(developer.developer_bio.as_deref(), Some("We make games."));
+
+    // Signing up as a developer awards the "developer" badge...
+    let badges = list_user_badges(State(state.clone()), Path(user.id))
+        .await
+        .unwrap()
+        .0;
+    assert!(badges.iter().any(|b| b.key == "developer"));
+
+    let allowed = create_game(State(state.clone()), AuthUser(user.id), new_game()).await;
+    assert!(allowed.is_ok());
+
+    // ...and calling become_developer again (e.g. to edit the profile) must
+    // not error out on a duplicate badge award.
+    let again = become_developer(
+        State(state.clone()),
+        AuthUser(user.id),
+        Json(BecomeDeveloperRequest {
+            developer_name: "Wannabe Studios".to_string(),
+            developer_bio: None,
+        }),
+    )
+    .await;
+    assert!(again.is_ok());
+    let badges_after = list_user_badges(State(state.clone()), Path(user.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(badges_after.iter().filter(|b| b.key == "developer").count(), 1);
+}
+
+#[sqlx::test]
 async fn new_games_are_pending_and_hidden_from_public_catalog_until_approved(pool: sqlx::PgPool) {
     let state = AppState::for_tests(pool).await;
-    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+    let publisher = register_developer(&state, "pub@test.de", "password123", "Pub").await;
 
     let game = create_game(
         State(state.clone()),
@@ -1040,7 +1120,7 @@ async fn delete_account_rejects_wrong_password_and_scrubs_pii_on_success(pool: s
 async fn export_my_data_includes_orders_and_library(pool: sqlx::PgPool) {
     let state = AppState::for_tests(pool).await;
     let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
-    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+    let publisher = register_developer(&state, "pub@test.de", "password123", "Pub").await;
 
     let game = create_game(
         State(state.clone()),
@@ -1074,11 +1154,18 @@ async fn export_my_data_includes_orders_and_library(pool: sqlx::PgPool) {
     assert_eq!(export["profile"]["display_name"], "Alice");
 }
 
+/// Scoped to "sales_milestone" — the publisher also holds a "developer"
+/// badge-earned notification from `register_developer`'s setup, which
+/// isn't what `sales_milestones_notify_the_publisher` is about.
+fn sales_notifications(all: &[Notification]) -> Vec<&Notification> {
+    all.iter().filter(|n| n.kind == "sales_milestone").collect()
+}
+
 #[sqlx::test]
 async fn sales_milestones_notify_the_publisher(pool: sqlx::PgPool) {
     let state = AppState::for_tests(pool).await;
     let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
-    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+    let publisher = register_developer(&state, "pub@test.de", "password123", "Pub").await;
 
     let game = create_game(
         State(state.clone()),
@@ -1106,9 +1193,9 @@ async fn sales_milestones_notify_the_publisher(pool: sqlx::PgPool) {
         .await
         .unwrap()
         .0;
-    assert_eq!(notifications.len(), 1, "first sale should notify the publisher");
-    assert_eq!(notifications[0].kind, "sales_milestone");
-    assert!(notifications[0].message.contains("zum ersten Mal"));
+    let sales = sales_notifications(&notifications);
+    assert_eq!(sales.len(), 1, "first sale should notify the publisher");
+    assert!(sales[0].message.contains("zum ersten Mal"));
 
     // Sales 2 through 9 are not round numbers and shouldn't add another
     // notification. Each "sale" needs its own buyer now that repurchasing
@@ -1123,7 +1210,11 @@ async fn sales_milestones_notify_the_publisher(pool: sqlx::PgPool) {
         .await
         .unwrap()
         .0;
-    assert_eq!(notifications.len(), 1, "no milestone between the 2nd and 9th sale");
+    assert_eq!(
+        sales_notifications(&notifications).len(),
+        1,
+        "no milestone between the 2nd and 9th sale"
+    );
 
     // The 10th sale crosses the next milestone.
     let buyer10 = register_user(&state, "buyer10@test.de", "password123", "Buyer").await;
@@ -1134,14 +1225,15 @@ async fn sales_milestones_notify_the_publisher(pool: sqlx::PgPool) {
         .await
         .unwrap()
         .0;
-    assert_eq!(notifications.len(), 2);
-    assert!(notifications[0].message.contains("10 Verkäufe"));
+    let sales = sales_notifications(&notifications);
+    assert_eq!(sales.len(), 2);
+    assert!(sales[0].message.contains("10 Verkäufe"));
 }
 
 #[sqlx::test]
 async fn review_votes_track_helpful_counts_and_reject_self_votes(pool: sqlx::PgPool) {
     let state = AppState::for_tests(pool).await;
-    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+    let publisher = register_developer(&state, "pub@test.de", "password123", "Pub").await;
     let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
     let bob = register_user(&state, "bob@test.de", "password123", "Bob").await;
 
@@ -1254,7 +1346,7 @@ async fn review_votes_track_helpful_counts_and_reject_self_votes(pool: sqlx::PgP
 #[sqlx::test]
 async fn achievements_unlock_idempotently_and_redact_hidden_ones(pool: sqlx::PgPool) {
     let state = AppState::for_tests(pool).await;
-    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+    let publisher = register_developer(&state, "pub@test.de", "password123", "Pub").await;
     let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
     let bob = register_user(&state, "bob@test.de", "password123", "Bob").await;
 
@@ -1376,7 +1468,7 @@ async fn achievement_showcase_only_accepts_unlocked_achievements_and_replaces_wh
     pool: sqlx::PgPool,
 ) {
     let state = AppState::for_tests(pool).await;
-    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+    let publisher = register_developer(&state, "pub@test.de", "password123", "Pub").await;
     let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
 
     let game = create_game(
@@ -1507,7 +1599,7 @@ async fn achievement_showcase_only_accepts_unlocked_achievements_and_replaces_wh
 async fn cannot_repurchase_an_already_owned_game(pool: sqlx::PgPool) {
     let state = AppState::for_tests(pool).await;
     let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
-    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+    let publisher = register_developer(&state, "pub@test.de", "password123", "Pub").await;
 
     let game = create_game(
         State(state.clone()),
@@ -1543,7 +1635,7 @@ async fn cannot_repurchase_an_already_owned_game(pool: sqlx::PgPool) {
 #[sqlx::test]
 async fn recent_games_excludes_stale_play_and_caps_at_three(pool: sqlx::PgPool) {
     let state = AppState::for_tests(pool).await;
-    let publisher = register_user(&state, "pub@test.de", "password123", "Pub").await;
+    let publisher = register_developer(&state, "pub@test.de", "password123", "Pub").await;
     let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
 
     async fn make_game(state: &AppState, publisher_id: i64, title: &str) -> CatalogGame {

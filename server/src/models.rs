@@ -25,6 +25,19 @@ pub struct User {
     /// emails in. Mirrors the frontend's `i18nStore`, synced via
     /// `PATCH /api/me/language`.
     pub language: String,
+    /// Self-serve, instant-activation flag — set via `POST
+    /// /api/me/become-developer` the first time a user tries to publish a
+    /// game. No admin approval gate: the per-game pending/approved/rejected
+    /// moderation flow is what actually protects the storefront.
+    pub is_developer: bool,
+    pub developer_name: Option<String>,
+    pub developer_bio: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BecomeDeveloperRequest {
+    pub developer_name: String,
+    pub developer_bio: Option<String>,
 }
 
 /// Minimal user info embedded in a `UserReport` for display in moderation —
@@ -220,6 +233,17 @@ pub struct CatalogGame {
     pub content_warnings: Option<String>,
     pub is_early_access: bool,
     pub early_access_note: Option<String>,
+    /// Demo build — separate from the main `file_url`/`file_size_bytes`/
+    /// `version` trio so a game can offer both a purchasable full build and
+    /// a freely downloadable demo at the same time. `None` means no demo
+    /// has been uploaded.
+    pub demo_file_url: Option<String>,
+    pub demo_file_size_bytes: Option<i64>,
+    pub demo_version: Option<String>,
+    /// Simple release-status flag a publisher can toggle at any time (set at
+    /// creation, cleared later once the game leaves beta) — deliberately
+    /// just a bool for now, no separate beta build/note attached to it.
+    pub is_beta: bool,
 }
 
 /// Ledger entry for a game purchase. Today `purchase_game` creates and
@@ -277,6 +301,7 @@ pub struct NewCatalogGame {
     pub content_warnings: Option<String>,
     pub is_early_access: bool,
     pub early_access_note: Option<String>,
+    pub is_beta: bool,
 }
 
 /// Full-replace edit payload — the publisher's edit dialog always sends the
@@ -302,6 +327,7 @@ pub struct UpdateCatalogGame {
     pub content_warnings: Option<String>,
     pub is_early_access: bool,
     pub early_access_note: Option<String>,
+    pub is_beta: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]

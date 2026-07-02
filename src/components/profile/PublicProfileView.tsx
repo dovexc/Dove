@@ -2,6 +2,7 @@ import { useState } from "react";
 import { API_BASE } from "../../authStore";
 import type { PublicProfile } from "../../types";
 import { AchievementTile } from "./AchievementTile";
+import { BadgeIcon, badgeColor, ChatIcon } from "../icons";
 import { PublicWishlistView } from "./PublicWishlistView";
 import { RecentlyPlayedList } from "./RecentlyPlayedList";
 import { ReportUserDialog } from "./ReportUserDialog";
@@ -125,9 +126,9 @@ export function PublicProfileView({
               {profile.equipped_badge && (
                 <span
                   title={profile.equipped_badge.description}
-                  className="flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-500/10 px-3 py-1 text-[13px] font-bold text-amber-300"
+                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[13px] font-bold ${badgeColor(profile.equipped_badge.key).border} ${badgeColor(profile.equipped_badge.key).bg} ${badgeColor(profile.equipped_badge.key).text}`}
                 >
-                  <span>{profile.equipped_badge.icon}</span>
+                  <BadgeIcon badgeKey={profile.equipped_badge.key} size={14} />
                   {profile.equipped_badge.label}
                 </span>
               )}
@@ -138,8 +139,9 @@ export function PublicProfileView({
             {friendStatus === "friends" && onOpenChat && (
               <button
                 onClick={onOpenChat}
-                className="rounded-md border border-white/10 bg-white/5 px-3.5 py-1.5 text-[13px] font-bold text-zinc-300 hover:bg-white/10"
+                className="flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-3.5 py-1.5 text-[13px] font-bold text-zinc-300 hover:bg-white/10"
               >
+                <ChatIcon size={14} />
                 {t("fr_chat_label")}
               </button>
             )}

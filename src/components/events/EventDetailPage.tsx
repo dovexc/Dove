@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { API_BASE, useAuthStore } from "../../authStore";
 import { useEventsStore } from "../../eventsStore";
 import { CHAT_MESSAGE_MAX_LENGTH, useChatStore } from "../../chatStore";
+import { LockIcon, MedalIcon } from "../icons";
 import { useT } from "../../translations";
 import type { TranslationKey } from "../../translations";
 import type { EventMatch } from "../../types";
@@ -182,7 +183,8 @@ export function EventDetailPage() {
             {statusLabel}
           </span>
           {event.is_private && (
-            <span className="rounded-md bg-amber-900/40 px-3.5 py-1.5 text-[13px] font-bold text-amber-300">
+            <span className="flex items-center gap-1.5 rounded-md bg-amber-900/40 px-3.5 py-1.5 text-[13px] font-bold text-amber-300">
+              <LockIcon size={13} />
               {t("evt_private")}
             </span>
           )}
@@ -214,10 +216,19 @@ export function EventDetailPage() {
               {t("evt_prize_distribution")}
             </div>
             {event.prize_mode === "split" ? (
-              <div className="flex flex-col gap-1 text-[16px] leading-[1.5] text-[#dbe7f2]">
-                <span>{t("evt_place_1").replace("{value}", formatPrize(event.prize_cents, t))}</span>
-                <span>{t("evt_place_2").replace("{value}", formatPrize(event.prize_second_cents, t))}</span>
-                <span>{t("evt_place_3").replace("{value}", formatPrize(event.prize_third_cents, t))}</span>
+              <div className="flex flex-col gap-1.5 text-[16px] leading-[1.5] text-[#dbe7f2]">
+                <span className="flex items-center gap-2">
+                  <MedalIcon size={16} className="text-amber-400" />
+                  {t("evt_place_1").replace("{value}", formatPrize(event.prize_cents, t))}
+                </span>
+                <span className="flex items-center gap-2">
+                  <MedalIcon size={16} className="text-zinc-300" />
+                  {t("evt_place_2").replace("{value}", formatPrize(event.prize_second_cents, t))}
+                </span>
+                <span className="flex items-center gap-2">
+                  <MedalIcon size={16} className="text-amber-700" />
+                  {t("evt_place_3").replace("{value}", formatPrize(event.prize_third_cents, t))}
+                </span>
               </div>
             ) : (
               <span className="text-[16px] leading-[1.5] text-[#dbe7f2]">{t("evt_winner_takes_all_desc")}</span>
