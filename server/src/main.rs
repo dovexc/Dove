@@ -433,6 +433,7 @@ async fn main() {
             post(handlers::purchase_game).delete(handlers::revoke_ownership),
         )
         .route("/api/me/orders", get(handlers::list_my_orders))
+        .route("/api/orders/:id/refund", post(handlers::refund_order))
         .route("/api/me/wallet/topup", post(handlers::top_up_wallet))
         .route("/api/me/wallet/topups", get(handlers::list_my_wallet_topups))
         .route(

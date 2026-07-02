@@ -260,6 +260,12 @@ pub struct Order {
     pub catalog_game_title: String,
     pub amount_cents: i64,
     pub status: String,
+    /// Whether `refund_order` would currently accept this order — mirrors
+    /// its eligibility check (see `REFUND_WINDOW_DAYS`/
+    /// `REFUND_MAX_PLAYTIME_SECONDS` in `handlers.rs`) so the client can
+    /// show/hide the refund button without a second round trip. Always
+    /// re-checked server-side on the actual refund, never trusted as-is.
+    pub is_refundable: bool,
     pub stripe_payment_intent_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,

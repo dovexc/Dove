@@ -84,6 +84,8 @@ interface CatalogState {
   detailLoading: boolean;
   orders: Order[];
   ordersLoading: boolean;
+  refundingOrderId: number | null;
+  refundOrder: (orderId: number) => Promise<void>;
   recommendations: CatalogGame[];
   recommendationsLoading: boolean;
   fetchRecommendations: () => Promise<void>;
@@ -160,6 +162,7 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
   detailLoading: false,
   orders: [],
   ordersLoading: false,
+  refundingOrderId: null,
   recommendations: [],
   recommendationsLoading: false,
   publisherStats: [],
@@ -429,6 +432,31 @@ export const useCatalogStore = create<CatalogState>((set, get) => ({
       await get().fetchLibrary();
     } catch (e) {
       set({ error: String(e) });
+    }
+  },
+
+  refundOrder: async (orderId) => {
+    set({ error: null, refundingOrderId: orderId });
+    try {
+      const response = await fetch(`${API_BASE}/api/orders/${orderId}/refund`, {
+        method: "POST",
+        headers: getAuthHeader(),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const order: Order = await response.json();
+      set((state) => ({ orders: state.orders.map((o) => (o.id === order.id ? order : o)) }));
+
+      const localGame = useLibraryStore
+        .getState()
+        .games.find((g) => g.catalog_game_id === order.catalog_game_id && !g.is_demo);
+      if (localGame) await useLibraryStore.getState().deleteGame(localGame.id, true);
+
+      await get().fetchLibrary();
+      await useAuthStore.getState().hydrateUser();
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ refundingOrderId: null });
     }
   },
 

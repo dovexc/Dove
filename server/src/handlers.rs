@@ -399,9 +399,10 @@ pub async fn export_my_data(
     let user = fetch_user(&state.db, user_id).await.map_err(internal_error)?;
 
     let order_rows = sqlx::query(&format!(
-        "SELECT {ORDER_COLUMNS} FROM orders \
+        "SELECT {} FROM orders \
          JOIN catalog_games ON catalog_games.id = orders.catalog_game_id \
-         WHERE orders.user_id = $1 ORDER BY orders.created_at DESC"
+         WHERE orders.user_id = $1 ORDER BY orders.created_at DESC",
+        order_columns()
     ))
     .bind(user_id)
     .fetch_all(&state.db)
@@ -2470,9 +2471,35 @@ pub async fn update_game(
     Ok(Json(game))
 }
 
-const ORDER_COLUMNS: &str = "orders.id, orders.user_id, orders.catalog_game_id, \
-    catalog_games.title, orders.amount_cents, orders.status, orders.stripe_payment_intent_id, \
-    orders.created_at::TEXT, orders.updated_at::TEXT";
+/// Refund window: a purchase can be refunded within this many days of the
+/// *order's* `created_at` (not the game's release/upload date).
+const REFUND_WINDOW_DAYS: i64 = 7;
+/// Refund playtime cap: total (all-time) `game_playtime_events` seconds for
+/// that user/game must stay under this for the order to still qualify.
+const REFUND_MAX_PLAYTIME_SECONDS: i64 = 2 * 60 * 60;
+
+/// Builds the shared `orders` column list, including the computed
+/// `is_refundable` flag. A function rather than a `const &str` so the SQL
+/// literal for the refund window/playtime cap can't drift from the
+/// `REFUND_WINDOW_DAYS`/`REFUND_MAX_PLAYTIME_SECONDS` constants that
+/// `refund_order` re-checks against on the actual refund.
+fn order_columns() -> String {
+    format!(
+        "orders.id, orders.user_id, orders.catalog_game_id, \
+         catalog_games.title, orders.amount_cents, orders.status, \
+         (orders.status = 'paid' \
+             AND orders.created_at >= now() - interval '{REFUND_WINDOW_DAYS} days' \
+             AND EXISTS(SELECT 1 FROM ownerships \
+                 WHERE ownerships.user_id = orders.user_id \
+                 AND ownerships.catalog_game_id = orders.catalog_game_id) \
+             AND COALESCE((SELECT SUM(seconds) FROM game_playtime_events \
+                 WHERE game_playtime_events.user_id = orders.user_id \
+                 AND game_playtime_events.catalog_game_id = orders.catalog_game_id), 0) \
+                 < {REFUND_MAX_PLAYTIME_SECONDS} \
+         ) AS is_refundable, \
+         orders.stripe_payment_intent_id, orders.created_at::TEXT, orders.updated_at::TEXT"
+    )
+}
 
 fn row_to_order(row: &PgRow) -> Result<Order, sqlx::Error> {
     Ok(Order {
@@ -2482,9 +2509,10 @@ fn row_to_order(row: &PgRow) -> Result<Order, sqlx::Error> {
         catalog_game_title: row.try_get(3)?,
         amount_cents: row.try_get(4)?,
         status: row.try_get(5)?,
-        stripe_payment_intent_id: row.try_get(6)?,
-        created_at: row.try_get(7)?,
-        updated_at: row.try_get(8)?,
+        is_refundable: row.try_get(6)?,
+        stripe_payment_intent_id: row.try_get(7)?,
+        created_at: row.try_get(8)?,
+        updated_at: row.try_get(9)?,
     })
 }
 
@@ -2493,9 +2521,10 @@ pub async fn list_my_orders(
     AuthUser(user_id): AuthUser,
 ) -> Result<Json<Vec<Order>>, ApiError> {
     let rows = sqlx::query(&format!(
-        "SELECT {ORDER_COLUMNS} FROM orders \
+        "SELECT {} FROM orders \
          JOIN catalog_games ON catalog_games.id = orders.catalog_game_id \
-         WHERE orders.user_id = $1 ORDER BY orders.created_at DESC"
+         WHERE orders.user_id = $1 ORDER BY orders.created_at DESC",
+        order_columns()
     ))
     .bind(user_id)
     .fetch_all(&state.db)
@@ -2504,6 +2533,105 @@ pub async fn list_my_orders(
 
     let orders = rows.iter().filter_map(|r| row_to_order(r).ok()).collect();
     Ok(Json(orders))
+}
+
+/// Refunds a `paid` order: credits the amount back to the buyer's wallet,
+/// revokes ownership, and flips the order to `refunded`. Only allowed while
+/// `is_refundable` holds (see `order_columns`) — re-checked here from
+/// scratch (locking the order row with `FOR UPDATE`) rather than trusting
+/// whatever the client last saw, since that flag can go stale the moment
+/// more playtime is reported or the window expires.
+pub async fn refund_order(
+    State(state): State<AppState>,
+    AuthUser(user_id): AuthUser,
+    Path(order_id): Path<i64>,
+) -> Result<Json<Order>, ApiError> {
+    let mut tx = state.db.begin().await.map_err(internal_error)?;
+
+    let row = sqlx::query(&format!(
+        "SELECT orders.catalog_game_id, orders.amount_cents, orders.status, \
+             orders.created_at >= now() - interval '{REFUND_WINDOW_DAYS} days' AS within_window, \
+             EXISTS(SELECT 1 FROM ownerships \
+                 WHERE ownerships.user_id = orders.user_id \
+                 AND ownerships.catalog_game_id = orders.catalog_game_id) AS still_owned, \
+             COALESCE((SELECT SUM(seconds) FROM game_playtime_events \
+                 WHERE game_playtime_events.user_id = orders.user_id \
+                 AND game_playtime_events.catalog_game_id = orders.catalog_game_id), 0) \
+                 AS playtime_seconds \
+         FROM orders WHERE orders.id = $1 AND orders.user_id = $2 FOR UPDATE"
+    ))
+    .bind(order_id)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(internal_error)?
+    .ok_or((StatusCode::NOT_FOUND, "Bestellung nicht gefunden".to_string()))?;
+
+    let catalog_game_id: i64 = row.try_get(0).map_err(internal_error)?;
+    let amount_cents: i64 = row.try_get(1).map_err(internal_error)?;
+    let status: String = row.try_get(2).map_err(internal_error)?;
+    let within_window: bool = row.try_get(3).map_err(internal_error)?;
+    let still_owned: bool = row.try_get(4).map_err(internal_error)?;
+    let playtime_seconds: i64 = row.try_get(5).map_err(internal_error)?;
+
+    if status != "paid" {
+        return Err((StatusCode::BAD_REQUEST, "Diese Bestellung kann nicht erstattet werden".to_string()));
+    }
+    if !still_owned {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Du besitzt dieses Spiel nicht mehr".to_string(),
+        ));
+    }
+    if !within_window {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Der Kauf liegt mehr als 7 Tage zurück".to_string(),
+        ));
+    }
+    if playtime_seconds >= REFUND_MAX_PLAYTIME_SECONDS {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Du hast das Spiel bereits mehr als 2 Stunden gespielt".to_string(),
+        ));
+    }
+
+    sqlx::query("UPDATE orders SET status = 'refunded', updated_at = now() WHERE id = $1")
+        .bind(order_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(internal_error)?;
+
+    sqlx::query("DELETE FROM ownerships WHERE user_id = $1 AND catalog_game_id = $2")
+        .bind(user_id)
+        .bind(catalog_game_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(internal_error)?;
+
+    if amount_cents > 0 {
+        sqlx::query("UPDATE users SET wallet_balance_cents = wallet_balance_cents + $1 WHERE id = $2")
+            .bind(amount_cents)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(internal_error)?;
+    }
+
+    tx.commit().await.map_err(internal_error)?;
+
+    let order_row = sqlx::query(&format!(
+        "SELECT {} FROM orders \
+         JOIN catalog_games ON catalog_games.id = orders.catalog_game_id \
+         WHERE orders.id = $1",
+        order_columns()
+    ))
+    .bind(order_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(internal_error)?;
+
+    row_to_order(&order_row).map(Json).map_err(internal_error)
 }
 
 pub async fn purchase_game(

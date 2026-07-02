@@ -43,6 +43,13 @@ const translations = {
     order_history_status_pending: "Ausstehend",
     order_history_status_paid: "Bezahlt",
     order_history_status_failed: "Fehlgeschlagen",
+    order_history_status_refunded: "Erstattet",
+    order_history_refund_button: "Erstatten",
+    order_history_refund_confirm:
+      "Diesen Kauf wirklich erstatten? Der Betrag wird deinem Guthaben gutgeschrieben und das Spiel aus deiner Bibliothek entfernt.",
+    order_history_refund_confirm_yes: "Ja, erstatten",
+    order_history_refund_ineligible:
+      "Nicht mehr erstattbar (Kauf älter als 7 Tage oder mehr als 2 Stunden gespielt)",
     settings_tournament_payouts: "Turniergewinne",
     settings_tournament_payouts_open: "Anzeigen",
     payouts_title: "Turniergewinne",
@@ -709,6 +716,13 @@ const translations = {
     order_history_status_pending: "Pending",
     order_history_status_paid: "Paid",
     order_history_status_failed: "Failed",
+    order_history_status_refunded: "Refunded",
+    order_history_refund_button: "Refund",
+    order_history_refund_confirm:
+      "Refund this purchase? The amount will be credited to your wallet and the game removed from your library.",
+    order_history_refund_confirm_yes: "Yes, refund",
+    order_history_refund_ineligible:
+      "No longer refundable (purchased more than 7 days ago or played for more than 2 hours)",
     settings_tournament_payouts: "Tournament winnings",
     settings_tournament_payouts_open: "View",
     payouts_title: "Tournament winnings",

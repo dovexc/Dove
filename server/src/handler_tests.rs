@@ -1903,3 +1903,150 @@ async fn removing_the_last_team_member_deletes_the_team(pool: sqlx::PgPool) {
     let teams_after = list_event_teams(State(state.clone()), Path(event.id)).await.unwrap().0;
     assert!(teams_after.is_empty(), "team is deleted once its last member is removed");
 }
+
+// ---- refunds ----
+
+/// Backdates a single order's `created_at` by `days_ago` — mirrors the
+/// `backdate` helper used for `game_playtime_events` above, needed because
+/// `purchase_game` always inserts the order at `now()`.
+async fn backdate_order(state: &AppState, order_id: i64, days_ago: f64) {
+    sqlx::query("UPDATE orders SET created_at = now() - ($2 || ' days')::interval WHERE id = $1")
+        .bind(order_id)
+        .bind(days_ago.to_string())
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+async fn buy_pixel_knights(state: &AppState, buyer_id: i64, price_cents: i64) -> (CatalogGame, Order) {
+    let publisher = register_developer(state, "pub@test.de", "password123", "Pub").await;
+
+    let game = create_game(
+        State(state.clone()),
+        AuthUser(publisher.id),
+        Json(NewCatalogGame {
+            title: "Pixel Knights".to_string(),
+            description: None,
+            cover_url: None,
+            tags: None,
+            min_specs: None,
+            recommended_specs: None,
+            save_path_hint: None,
+            price_cents,
+            ..Default::default()
+        }),
+    )
+    .await
+    .unwrap()
+    .0;
+
+    if price_cents > 0 {
+        let _ = top_up_wallet(
+            State(state.clone()),
+            AuthUser(buyer_id),
+            Json(NewWalletTopup { amount_cents: price_cents * 2 }),
+        )
+        .await
+        .unwrap();
+    }
+
+    let _ = purchase_game(State(state.clone()), AuthUser(buyer_id), Path(game.id)).await.unwrap();
+
+    let orders = list_my_orders(State(state.clone()), AuthUser(buyer_id)).await.unwrap().0;
+    let order = orders.into_iter().find(|o| o.catalog_game_id == game.id).unwrap();
+    (game, order)
+}
+
+#[sqlx::test]
+async fn refund_within_window_and_playtime_credits_wallet_and_revokes_ownership(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+    let (game, order) = buy_pixel_knights(&state, alice.id, 500).await;
+
+    let balance_after_purchase = me(State(state.clone()), AuthUser(alice.id)).await.unwrap().0.wallet_balance_cents;
+    assert_eq!(balance_after_purchase, 500, "1000 topped up, 500 charged for the game");
+    assert!(order.is_refundable, "fresh purchase with no playtime should be refundable");
+
+    let refunded = refund_order(State(state.clone()), AuthUser(alice.id), Path(order.id))
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(refunded.status, "refunded");
+    assert!(!refunded.is_refundable, "an already-refunded order can't be refunded again");
+
+    let balance_after_refund = me(State(state.clone()), AuthUser(alice.id)).await.unwrap().0.wallet_balance_cents;
+    assert_eq!(balance_after_refund, 1000, "the 500 is credited back");
+
+    let still_owns: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM ownerships WHERE user_id = $1 AND catalog_game_id = $2)",
+    )
+    .bind(alice.id)
+    .bind(game.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert!(!still_owns, "ownership is revoked on refund");
+
+    // The order is 'refunded' now, not 'paid' — refunding it again must fail.
+    let second = refund_order(State(state.clone()), AuthUser(alice.id), Path(order.id)).await;
+    assert_eq!(second.unwrap_err().0, StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn refund_rejected_when_purchase_is_older_than_seven_days(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+    let (_game, order) = buy_pixel_knights(&state, alice.id, 500).await;
+
+    backdate_order(&state, order.id, 7.5).await;
+
+    let orders = list_my_orders(State(state.clone()), AuthUser(alice.id)).await.unwrap().0;
+    assert!(
+        !orders[0].is_refundable,
+        "an 8-day-old purchase should no longer be flagged as refundable"
+    );
+
+    let result = refund_order(State(state.clone()), AuthUser(alice.id), Path(order.id)).await;
+    assert_eq!(result.unwrap_err().0, StatusCode::BAD_REQUEST);
+
+    let balance = me(State(state.clone()), AuthUser(alice.id)).await.unwrap().0.wallet_balance_cents;
+    assert_eq!(balance, 500, "rejected refund must not touch the wallet");
+}
+
+#[sqlx::test]
+async fn refund_rejected_when_playtime_exceeds_two_hours(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+    let (game, order) = buy_pixel_knights(&state, alice.id, 500).await;
+
+    // Exactly at the 2-hour cap already disqualifies the refund (the check
+    // is `< REFUND_MAX_PLAYTIME_SECONDS`, not `<=`).
+    report_playtime(
+        State(state.clone()),
+        AuthUser(alice.id),
+        Path(game.id),
+        Json(PlaytimeReport { seconds: 2 * 60 * 60 }),
+    )
+    .await
+    .unwrap();
+
+    let orders = list_my_orders(State(state.clone()), AuthUser(alice.id)).await.unwrap().0;
+    assert!(!orders[0].is_refundable, "2 hours of playtime should disqualify the refund");
+
+    let result = refund_order(State(state.clone()), AuthUser(alice.id), Path(order.id)).await;
+    assert_eq!(result.unwrap_err().0, StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn refund_ignores_someone_elses_order(pool: sqlx::PgPool) {
+    let state = AppState::for_tests(pool).await;
+    let alice = register_user(&state, "alice@test.de", "password123", "Alice").await;
+    let bob = register_user(&state, "bob@test.de", "password123", "Bob").await;
+    let (_game, order) = buy_pixel_knights(&state, alice.id, 500).await;
+
+    let result = refund_order(State(state.clone()), AuthUser(bob.id), Path(order.id)).await;
+    assert_eq!(result.unwrap_err().0, StatusCode::NOT_FOUND, "bob can't see or refund alice's order");
+
+    let balance = me(State(state.clone()), AuthUser(alice.id)).await.unwrap().0.wallet_balance_cents;
+    assert_eq!(balance, 500, "alice's order is untouched");
+}

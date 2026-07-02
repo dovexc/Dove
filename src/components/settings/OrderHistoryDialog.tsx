@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useCatalogStore } from "../../catalogStore";
 import { useT } from "../../translations";
 import type { TranslationKey } from "../../translations";
@@ -20,12 +20,14 @@ const STATUS_KEY: Record<Order["status"], TranslationKey> = {
   pending: "order_history_status_pending",
   paid: "order_history_status_paid",
   failed: "order_history_status_failed",
+  refunded: "order_history_status_refunded",
 };
 
 const STATUS_CLASS: Record<Order["status"], string> = {
   pending: "bg-amber-900/60 text-amber-300",
   paid: "bg-emerald-900/60 text-emerald-300",
   failed: "bg-red-900/60 text-red-300",
+  refunded: "bg-zinc-700/60 text-zinc-300",
 };
 
 interface Props {
@@ -38,10 +40,19 @@ export function OrderHistoryDialog({ onClose, onOpenGame }: Props) {
   const orders = useCatalogStore((s) => s.orders);
   const ordersLoading = useCatalogStore((s) => s.ordersLoading);
   const fetchOrders = useCatalogStore((s) => s.fetchOrders);
+  const refundOrder = useCatalogStore((s) => s.refundOrder);
+  const refundingOrderId = useCatalogStore((s) => s.refundingOrderId);
+  const error = useCatalogStore((s) => s.error);
+  const [confirmingOrderId, setConfirmingOrderId] = useState<number | null>(null);
 
   useEffect(() => {
     fetchOrders();
   }, [fetchOrders]);
+
+  async function handleRefund(orderId: number) {
+    await refundOrder(orderId);
+    setConfirmingOrderId(null);
+  }
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4">
@@ -65,11 +76,14 @@ export function OrderHistoryDialog({ onClose, onOpenGame }: Props) {
           ) : (
             <ul className="flex flex-col gap-2">
               {orders.map((order) => (
-                <li key={order.id}>
+                <li
+                  key={order.id}
+                  className="rounded border border-zinc-800 bg-zinc-800/40"
+                >
                   <button
                     type="button"
                     onClick={() => onOpenGame(order.catalog_game_id)}
-                    className="flex w-full items-center justify-between gap-3 rounded border border-zinc-800 bg-zinc-800/40 px-3 py-2.5 text-left hover:bg-zinc-800"
+                    className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-zinc-800"
                   >
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-zinc-100">
@@ -86,10 +100,50 @@ export function OrderHistoryDialog({ onClose, onOpenGame }: Props) {
                       {t(STATUS_KEY[order.status])}
                     </span>
                   </button>
+
+                  {order.status === "paid" && (
+                    <div className="flex items-center justify-end gap-2 border-t border-zinc-800 px-3 py-2">
+                      {!order.is_refundable ? (
+                        <span className="text-right text-xs text-zinc-600">
+                          {t("order_history_refund_ineligible")}
+                        </span>
+                      ) : confirmingOrderId === order.id ? (
+                        <>
+                          <span className="mr-auto text-xs text-zinc-400">
+                            {t("order_history_refund_confirm")}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmingOrderId(null)}
+                            className="rounded px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800"
+                          >
+                            {t("dialog_cancel")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRefund(order.id)}
+                            disabled={refundingOrderId === order.id}
+                            className="rounded bg-red-600 px-2 py-1 text-xs font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+                          >
+                            {t("order_history_refund_confirm_yes")}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingOrderId(order.id)}
+                          className="rounded px-2 py-1 text-xs font-semibold text-red-400 hover:bg-zinc-800"
+                        >
+                          {t("order_history_refund_button")}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
           )}
+          {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
         </div>
 
         <div className="flex justify-end">

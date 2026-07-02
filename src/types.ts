@@ -429,7 +429,8 @@ export interface Order {
   catalog_game_id: number;
   catalog_game_title: string;
   amount_cents: number;
-  status: "pending" | "paid" | "failed";
+  status: "pending" | "paid" | "failed" | "refunded";
+  is_refundable: boolean;
   stripe_payment_intent_id: string | null;
   created_at: string;
   updated_at: string;
